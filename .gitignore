@@ -1,0 +1,15 @@
+.env
+credentials.json
+token.json
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+.claude/
+setup_sheets.py

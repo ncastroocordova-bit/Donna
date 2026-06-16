@@ -1,0 +1,27 @@
+# Cerebro
+anthropic>=0.40.0
+
+# Canal
+python-telegram-bot[job-queue]>=21.0
+
+# Memoria
+supabase>=2.8.0
+pgvector>=0.3.0
+
+# Embeddings con contextual retrieval
+voyageai>=0.3.0
+
+# Voz
+openai>=1.40.0
+
+# Datos de módulos (Sheets + Calendar)
+google-api-python-client>=2.140.0
+google-auth>=2.30.0
+
+# Evals
+pyyaml>=6.0
+
+# Config
+pydantic>=2.8.0
+pydantic-settings>=2.4.0
+python-dotenv>=1.0.0
