@@ -4,8 +4,9 @@ Datos en Supabase (tabla `proyectos`). Permite crear, actualizar y cerrar
 proyectos de Nico. Búsqueda por nombre (ilike) para no depender de UUIDs.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
+import agenda
 from config import settings
 from memory import _get_db
 
@@ -85,6 +86,30 @@ async def _actualizar(inp: dict) -> str:
     except Exception:
         logger.exception("proy_actualizar falló")
         return "No pude actualizar el proyecto ahora."
+
+
+async def _bloquear_tiempo(inp: dict) -> str:
+    nombre = inp.get("nombre", "").strip()
+    if not nombre:
+        return "Necesito el nombre del proyecto para bloquear tiempo."
+    try:
+        duracion = float(inp.get("duracion_horas", 1.0))
+        ahora = datetime.now(settings.tz)
+        fecha_str = inp.get("fecha", (ahora + timedelta(days=1)).strftime("%Y-%m-%d"))
+        hora_str = inp.get("hora_inicio", "09:00")
+        hora, minuto = map(int, hora_str.split(":"))
+        fecha = datetime.strptime(fecha_str, "%Y-%m-%d").replace(
+            hour=hora, minute=minuto, tzinfo=settings.tz
+        )
+        fin = fecha + timedelta(hours=duracion)
+        titulo = f"[Proyecto] {nombre}"
+        link = await agenda.crear_evento(titulo, fecha, fin)
+        if link:
+            return f"Bloqueadas {duracion}h para '{nombre}' el {fecha_str} a las {hora_str}."
+        return f"No pude crear el evento en el calendario, pero el proyecto está registrado."
+    except Exception:
+        logger.exception("proy_bloquear_tiempo falló")
+        return "No pude bloquear el tiempo en el calendario ahora."
 
 
 async def _cerrar(inp: dict) -> str:
@@ -168,6 +193,20 @@ TOOLS = [
         },
     },
     {
+        "name": "proy_bloquear_tiempo",
+        "description": "Bloquea tiempo en el calendario de Nico para trabajar en un proyecto. Úsala cuando dice 'bloquea X horas para Y' o 'necesito tiempo para el proyecto Z mañana'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nombre": {"type": "string", "description": "Nombre o parte del nombre del proyecto"},
+                "duracion_horas": {"type": "number", "description": "Duración en horas (default 1.0)"},
+                "fecha": {"type": "string", "description": "Fecha YYYY-MM-DD (default mañana)"},
+                "hora_inicio": {"type": "string", "description": "Hora de inicio HH:MM (default 09:00)"},
+            },
+            "required": ["nombre"],
+        },
+    },
+    {
         "name": "proy_cerrar",
         "description": "Marca un proyecto como completado. Úsala cuando Nico dice que terminó un proyecto ('cerré X', 'terminé Y', 'entregué Z').",
         "input_schema": {
@@ -184,5 +223,6 @@ HANDLERS = {
     "proy_crear": _crear,
     "proy_listar": _listar,
     "proy_actualizar": _actualizar,
+    "proy_bloquear_tiempo": _bloquear_tiempo,
     "proy_cerrar": _cerrar,
 }

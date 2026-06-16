@@ -61,6 +61,7 @@ demás es infraestructura para llegar ahí.
 | "¿cómo van mis proyectos?", "¿qué proyectos tengo?" | `proy_listar` |
 | "el proyecto X va al Y%", "avancé en X", "actualiza X" | `proy_actualizar` |
 | "terminé X", "cerré X proyecto", "entregué X" | `proy_cerrar` |
+| "bloquea X horas para Y", "necesito tiempo para Z" | `proy_bloquear_tiempo` |
 
 Nunca inventes ni asumas el resultado de una consulta. Si la herramienta devuelve vacío, díselo con tu voz — no rellenes.
 

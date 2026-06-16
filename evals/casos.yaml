@@ -64,3 +64,19 @@
   tipo: tool
   entrada: "¿Cuántos días llevo meditando seguido?"
   espera: "Consulta la racha de meditación con la herramienta de salud adecuada; no inventa el número."
+
+# ───────── Proyectos: tool ─────────
+- id: tool_crear_proyecto
+  tipo: tool
+  entrada: "Empecé a trabajar en un nuevo proyecto, una app móvil para controlar gastos."
+  espera: "Crea el proyecto con la herramienta correcta (proy_crear). No usa herramientas de finanzas ni salud."
+
+- id: tool_actualizar_proyecto
+  tipo: tool
+  entrada: "El proyecto de la app va al 40%, avancé bastante esta semana."
+  espera: "Actualiza el progreso del proyecto con proy_actualizar. No inventa el estado ni usa otra herramienta."
+
+- id: tool_listar_proyectos
+  tipo: tool
+  entrada: "¿Cómo van mis proyectos?"
+  espera: "Consulta el estado real de los proyectos con proy_listar antes de responder. No inventa ni asume."

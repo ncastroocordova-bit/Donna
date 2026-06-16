@@ -14,7 +14,7 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
 _service = None
 
 
@@ -64,3 +64,22 @@ async def eventos_de_hoy() -> list[dict]:
     except Exception:
         logger.exception("No pude leer el calendario; sigo sin agenda.")
         return []
+
+
+async def crear_evento(titulo: str, inicio: datetime, fin: datetime) -> str:
+    """Crea un evento en el calendario de Nico. Devuelve el link o mensaje de error."""
+    def _call():
+        evento = {
+            "summary": titulo,
+            "start": {"dateTime": inicio.isoformat(), "timeZone": str(settings.tz)},
+            "end": {"dateTime": fin.isoformat(), "timeZone": str(settings.tz)},
+        }
+        r = _svc().events().insert(calendarId=settings.google_calendar_id, body=evento).execute()
+        return r.get("htmlLink", "")
+
+    try:
+        link = await asyncio.to_thread(_call)
+        return link
+    except Exception:
+        logger.exception("No pude crear el evento en el calendario.")
+        return ""
