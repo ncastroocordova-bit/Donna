@@ -33,8 +33,11 @@ donna/
 ├── voice.py         # Whisper
 ├── scheduler.py     # brief/cierre con resiliencia
 ├── modules/
-│   ├── finanzas.py  # tools fin_*  (Vision en contexto aislado)
-│   └── salud.py     # tools salud_*
+│   ├── finanzas.py     # tools fin_*  (Vision en contexto aislado)
+│   ├── salud.py        # tools salud_*
+│   ├── proyectos.py    # tools proy_*  (Calendar write)
+│   ├── proactividad.py # job diario, señales cruzadas  ← Fase 3
+│   └── aprendizaje.py  # calibración, decay            ← Fase 4
 ├── flows.py
 ├── main.py
 ├── prompts/
@@ -99,18 +102,17 @@ donna/
 
 ---
 
-## FASE 2 — Módulo Proyectos
-`modules/proyectos.py`, contrato de módulo, tools `proy_*`. `proy_registrar_avance`, `proy_get_estado`, `proy_bloquear_tiempo` (Calendar). `senal_proyectos()` avisa semanas en cero y entregas. **Agregar casos de Proyectos a los evals.**
-**Prompt Claude Code:** *"Crea modules/proyectos.py para tesis y proyectos, tools con prefijo proy_, contrato de módulo, senal_proyectos() para el brief. Agrega casos a evals/casos.yaml. No tocar núcleo ni otros módulos."*
-**Listo cuando:** Donna avisa si la tesis lleva semanas detenida, sin tocar Finanzas/Salud, y los evals pasan.
+## FASE 2 — Módulo Proyectos ✅
+`modules/proyectos.py`, contrato de módulo, tools `proy_*`. `proy_crear`, `proy_listar`, `proy_actualizar`, `proy_cerrar`, `proy_bloquear_tiempo` (Calendar write). `senal_proyectos()` avisa proyectos vencidos o sin avance. Casos de Proyectos en evals.
+**Listo cuando:** Donna crea proyectos, actualiza progreso, bloquea tiempo en Calendar, y los evals pasan.
 
-## FASE 3 — Conexión Noomi
-`modules/noomi.py`: solo lee una **señal destilada** del bot de Noomi (propuestas sin respuesta, follow-ups) y la entrega a Donna para el brief. Sin tocar la lógica de Noomi.
-**Listo cuando:** Donna menciona un follow-up de Noomi pendiente.
+## FASE 3 — Proactividad
+`modules/proactividad.py`: mensaje espontáneo (máx 1/día), presupuesto de preguntas. Un job diario revisa señales cruzadas (sueño + agenda, proyecto detenido, compromiso vencido) y, si supera el umbral, Donna escribe sin que Nico le hable.
+**Listo cuando:** Donna rompe el silencio con algo real, máx una vez al día, y no satura.
 
-## FASE 4 — Proactividad + Aprendizaje avanzado
-`modules/proactividad.py` (mensaje espontáneo, máx 1/día, presupuesto de preguntas) y `modules/aprendizaje.py` (tablas `patrones` y `calibracion`, jobs de decay, aprendizaje en 3 niveles, guardia anti-patrones-falsos). La calibración **alimenta el eval de calibración** del plan v5.
-**Listo cuando:** Donna calla las inferencias que suele errar, afina las que acierta, y rompe el silencio solo cuando vale la pena.
+## FASE 4 — Aprendizaje avanzado
+`modules/aprendizaje.py`: tablas `patrones` y `calibracion`, jobs de decay, aprendizaje en 3 niveles, guardia anti-patrones-falsos. La calibración alimenta el eval de calibración del plan v5.
+**Listo cuando:** Donna calla las inferencias que suele errar, afina las que acierta, y el eval de calibración corre automático.
 
 ---
 

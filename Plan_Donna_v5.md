@@ -36,9 +36,9 @@ Más correcciones menores: tools sin solapamiento, aislamiento de contexto de lo
         · memoria (Supabase + contextual retrieval) · inferencia validada
         · brief 8:00 / cierre 22:00 (con resiliencia) · privacidad · EVALS
                  │  interfaz de módulos (señal destilada, contexto aislado)
-   ┌─────────────┼──────────────┬──────────────┬───────────────┐
- [Finanzas]   [Salud]       [Proyectos]    [Noomi]        [Proactividad /
-  Fase 1       Fase 1        después        después        Aprendizaje av.]
+   ┌─────────────┼──────────────┬──────────────────────────────┐
+ [Finanzas]   [Salud]       [Proyectos]                  [Proactividad /
+  Fase 1       Fase 1        Fase 2                       Aprendizaje av.]
 ```
 
 ---
@@ -106,11 +106,10 @@ El brief (8:00) y el cierre (22:00) corren con JobQueue. Para que un reinicio de
 ## 10. Roadmap
 | Fase | Qué queda andando |
 |---|---|
-| **Fase 1** ⭐ | Núcleo + Finanzas + Salud + **capa de evals** (deployado) |
-| **+ Proyectos** | Tesis y proyectos |
-| **+ Noomi** | Conexión con el bot de Noomi (solo lee su señal destilada) |
-| **+ Proactividad** | Mensaje espontáneo (máx 1/día) |
-| **+ Aprendizaje avanzado** | Calibración, decay, aprendizaje en 3 niveles, guardia anti-patrones-falsos |
+| **Fase 1** ✅ | Núcleo + Finanzas + Salud + **capa de evals** (deployado) |
+| **Fase 2** ✅ | Proyectos (proy_*) + bloqueo de tiempo en Calendar |
+| **Fase 3** | Proactividad — mensaje espontáneo (máx 1/día) |
+| **Fase 4** | Aprendizaje avanzado — calibración, decay, guardia anti-patrones-falsos |
 
 **Test de promoción** (módulo → proceso propio): solo si trabaja solo, en su horario, sin que le hables a Donna.
 
@@ -126,7 +125,7 @@ El brief (8:00) y el cierre (22:00) corren con JobQueue. Para que un reinicio de
 ## 12. Costo mensual estimado (con caching, baja respecto a v4)
 | Concepto | Costo |
 |---|---|
-| Railway (compartido con Noomi) | ~$5 |
+| Railway | ~$5 |
 | Supabase (free tier) | $0 |
 | Claude API (con prompt caching) | ~$5–10 |
 | Voz + embeddings (Whisper + Voyage) | ~$2–4 |
@@ -145,7 +144,7 @@ El brief (8:00) y el cierre (22:00) corren con JobQueue. Para que un reinicio de
 1. Fase 0: dejar las llaves listas
 2. Construir Fase 1 con el runbook de Claude Code (incluye la capa de evals)
 3. Usar Donna unas semanas, mirar los evals y dónde falla
-4. Agregar Proyectos → Noomi → Proactividad → Aprendizaje avanzado, según lo que el uso real pida
+4. Agregar Proyectos → Proactividad → Aprendizaje avanzado, según lo que el uso real pida
 
 ---
 
