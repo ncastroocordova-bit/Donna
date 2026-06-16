@@ -54,6 +54,11 @@ async def _t_guardar_memoria(inp: dict) -> str:
     return "Guardado en memoria."
 
 
+async def _t_actualizar_perfil(inp: dict) -> str:
+    await memory.set_perfil(inp["clave"], inp["valor"], inp.get("categoria", ""))
+    return f"Perfil actualizado: {inp['clave']} = {inp['valor']}."
+
+
 async def _t_leer_agenda(inp: dict) -> str:
     eventos = await agenda.eventos_de_hoy()
     if not eventos:
@@ -94,6 +99,24 @@ CORE_TOOLS = [
         },
     },
     {
+        "name": "actualizar_perfil",
+        "description": (
+            "Guarda un HECHO ESTABLE de Nico en su perfil (clave-valor): cómo prefiere que le hablen, "
+            "a qué se dedica, sus metas, situación de plata/deuda, gente clave, hábitos base. "
+            "Úsala cuando aprendas algo durable sobre quién es (no un evento puntual — eso es guardar_memoria). "
+            "Ejemplos de clave: 'nombre', 'trabajo', 'meta_actual', 'deuda', 'tono_preferido'. Sobrescribe si la clave ya existe."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "clave": {"type": "string", "description": "Identificador corto del hecho, ej. 'meta_actual'"},
+                "valor": {"type": "string", "description": "El hecho en sí"},
+                "categoria": {"type": "string", "description": "Agrupador opcional: plata, trabajo, salud, personal"},
+            },
+            "required": ["clave", "valor"],
+        },
+    },
+    {
         "name": "leer_agenda",
         "description": "Lee los eventos de hoy del calendario de Nico. Úsala para el brief o cuando pregunta por su día.",
         "input_schema": {"type": "object", "properties": {}},
@@ -129,10 +152,22 @@ CORE_TOOLS = [
 _CORE_HANDLERS = {
     "buscar_memoria": _t_buscar_memoria,
     "guardar_memoria": _t_guardar_memoria,
+    "actualizar_perfil": _t_actualizar_perfil,
     "leer_agenda": _t_leer_agenda,
     "abrir_inferencia": _t_abrir_inferencia,
     "registrar_compromiso": _t_registrar_compromiso,
     "ver_compromisos": _t_ver_compromisos,
+}
+
+# Herramientas que MUTAN estado externo (Supabase/Sheets/Calendar). En modo eval
+# (dry_run) no se ejecutan: se devuelve un stub. La selección de tool igual se
+# verifica porque el nombre se registra antes de ejecutar. Así los evals no
+# contaminan la base de producción.
+WRITE_TOOLS = {
+    "guardar_memoria", "actualizar_perfil", "abrir_inferencia", "registrar_compromiso",
+    "fin_registrar_gasto", "fin_registrar_ingreso",
+    "salud_marcar_habito",
+    "proy_crear", "proy_actualizar", "proy_cerrar", "proy_bloquear_tiempo",
 }
 
 # Tools del núcleo + módulos (con prefijo, sin solapamiento).
@@ -237,11 +272,13 @@ async def responder(
     history: list[dict] | None = None,
     off_record: bool = False,
     model: str | None = None,
+    dry_run: bool = False,
     _return_tools: bool = False,
 ) -> tuple:
     """Responde con voz, memoria y tools. Devuelve (respuesta, historial_actualizado).
 
-    `model` permite forzar un modelo distinto al de config (para evals/comparación)."""
+    `model` permite forzar un modelo distinto al de config (para evals/comparación).
+    `dry_run` (evals): las tools de escritura no se ejecutan — no tocan producción."""
     history = history or []
     modelo = model or settings.model_brain
     contexto = await _armar_contexto(mensaje)
@@ -270,7 +307,10 @@ async def responder(
         for block in resp.content:
             if block.type == "tool_use":
                 tools_llamadas.append(block.name)
-                salida = await _ejecutar_tool(block.name, block.input)
+                if dry_run and block.name in WRITE_TOOLS:
+                    salida = f"(modo eval: '{block.name}' no se ejecutó)"
+                else:
+                    salida = await _ejecutar_tool(block.name, block.input)
                 resultados.append({"type": "tool_result", "tool_use_id": block.id, "content": salida})
         working.append({"role": "user", "content": resultados})
 

@@ -13,4 +13,4 @@ dist/
 build/
 .claude/
 setup_sheets.py
-eval_comparacion.txt
+eval_*.txt

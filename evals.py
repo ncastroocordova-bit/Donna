@@ -106,9 +106,10 @@ async def correr(model: str, verbose: bool = True) -> dict:
         if i > 0:
             await asyncio.sleep(5)  # breve pausa para no saturar la API
 
-        # off_record=True: los casos de eval no deben contaminar la memoria real.
+        # off_record + dry_run: los evals no escriben memoria NI ejecutan tools de
+        # escritura → cero contaminación de la base de producción.
         respuesta, _, tools_llamadas, uso = await _reintentar(
-            lambda: brain.responder(c["entrada"], [], off_record=True, model=model, _return_tools=True)
+            lambda: brain.responder(c["entrada"], [], off_record=True, model=model, dry_run=True, _return_tools=True)
         )
         for k in uso_total:
             uso_total[k] += uso[k]
