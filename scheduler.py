@@ -14,7 +14,7 @@ import brain
 import memory
 from config import settings
 from flows import preguntar_inferencia_pendiente
-from modules import finanzas, proyectos, salud
+from modules import finanzas, proactividad, proyectos, salud
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,24 @@ async def job_brief(context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Brief enviado.")
 
 
+async def job_proactividad(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mediodía: manda un mensaje espontáneo solo si hay señal real y no mandó uno hoy."""
+    if await _ya_se_envio("_ultima_proactividad"):
+        return
+    senal = await proactividad.detectar_senal()
+    if not senal:
+        return
+    prompt = (
+        f"Nico no te habló hoy todavía. Tienes esta señal concreta: {senal} "
+        "Rómpele el silencio con tu voz — una sola cosa, sin rollos. "
+        "Si requiere acción, díselo directo. Si es solo un aviso, corto y al punto."
+    )
+    texto = await brain.generar(prompt)
+    await context.bot.send_message(settings.nico_telegram_id, texto)
+    await _marcar_enviado("_ultima_proactividad")
+    logger.info("Proactividad enviada: %s", senal[:60])
+
+
 async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
     texto = await _texto_cierre()
     await context.bot.send_message(settings.nico_telegram_id, texto)
@@ -85,6 +103,7 @@ def setup_scheduler(app: Application) -> None:
         raise RuntimeError("JobQueue no disponible. Instala python-telegram-bot[job-queue].")
     tz = settings.tz
     jq.run_daily(job_brief, time=time(8, 0, tzinfo=tz))
+    jq.run_daily(job_proactividad, time=time(12, 0, tzinfo=tz))
     jq.run_daily(job_cierre, time=time(22, 0, tzinfo=tz))
     jq.run_once(check_pendientes, when=10)  # recupera el toque perdido tras un reinicio
-    logger.info("Scheduler listo (%s): brief 8:00, cierre 22:00, + chequeo de resiliencia.", settings.timezone)
+    logger.info("Scheduler listo (%s): brief 8:00, proactividad 12:00, cierre 22:00, + chequeo de resiliencia.", settings.timezone)
