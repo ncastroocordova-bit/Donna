@@ -4,6 +4,7 @@ Los helpers son async: el cliente de Google es bloqueante, así que el trabajo
 real corre en un hilo (asyncio.to_thread) para no tapar el event loop del bot.
 """
 import asyncio
+import json
 import logging
 
 from google.oauth2.service_account import Credentials
@@ -17,10 +18,17 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 _service = None
 
 
+def _get_creds(scopes):
+    val = settings.google_credentials_json.strip()
+    if val.startswith("{"):
+        return Credentials.from_service_account_info(json.loads(val), scopes=scopes)
+    return Credentials.from_service_account_file(val, scopes=scopes)
+
+
 def _svc():
     global _service
     if _service is None:
-        creds = Credentials.from_service_account_file(settings.google_credentials_json, scopes=SCOPES)
+        creds = _get_creds(SCOPES)
         _service = build("sheets", "v4", credentials=creds, cache_discovery=False)
     return _service
 

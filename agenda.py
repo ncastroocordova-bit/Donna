@@ -3,6 +3,7 @@
 El service account lee el calendario que Nico le comparta (GOOGLE_CALENDAR_ID).
 """
 import asyncio
+import json
 import logging
 from datetime import datetime
 
@@ -17,10 +18,17 @@ SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 _service = None
 
 
+def _get_creds(scopes):
+    val = settings.google_credentials_json.strip()
+    if val.startswith("{"):
+        return Credentials.from_service_account_info(json.loads(val), scopes=scopes)
+    return Credentials.from_service_account_file(val, scopes=scopes)
+
+
 def _svc():
     global _service
     if _service is None:
-        creds = Credentials.from_service_account_file(settings.google_credentials_json, scopes=SCOPES)
+        creds = _get_creds(SCOPES)
         _service = build("calendar", "v3", credentials=creds, cache_discovery=False)
     return _service
 
