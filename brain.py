@@ -21,6 +21,7 @@ _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 _PROMPTS = Path(__file__).parent / "prompts"
 CONSTITUTION = (_PROMPTS / "constitution.md").read_text(encoding="utf-8")
 ANCHORS = (_PROMPTS / "anchors.md").read_text(encoding="utf-8")
+CAPACIDADES = (_PROMPTS / "capacidades.md").read_text(encoding="utf-8")
 
 MAX_TURNS = 6  # tope de iteraciones del agentic loop (anti bucle de tools)
 
@@ -29,7 +30,7 @@ def _system_blocks(hint: str = "") -> list[dict]:
     """Prefijo cacheado + hint dinámico opcional como segundo bloque de sistema."""
     blocks = [{
         "type": "text",
-        "text": CONSTITUTION + "\n\n# ANCLAS\n" + ANCHORS,
+        "text": CONSTITUTION + "\n\n# ANCLAS\n" + ANCHORS + "\n\n# CAPACIDADES\n" + CAPACIDADES,
         "cache_control": {"type": "ephemeral"},
     }]
     if hint:
