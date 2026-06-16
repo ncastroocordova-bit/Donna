@@ -108,8 +108,8 @@ El brief (8:00) y el cierre (22:00) corren con JobQueue. Para que un reinicio de
 |---|---|
 | **Fase 1** ✅ | Núcleo + Finanzas + Salud + **capa de evals** (deployado) |
 | **Fase 2** ✅ | Proyectos (proy_*) + bloqueo de tiempo en Calendar |
-| **Fase 3** | Proactividad — mensaje espontáneo (máx 1/día) |
-| **Fase 4** | Aprendizaje avanzado — calibración, decay, guardia anti-patrones-falsos |
+| **Fase 3** ✅ | Proactividad — mensaje espontáneo (máx 1/día) |
+| **Fase 4** ✅ | Aprendizaje avanzado — calibración, decay, guardia anti-patrones-falsos |
 
 **Test de promoción** (módulo → proceso propio): solo si trabaja solo, en su horario, sin que le hables a Donna.
 

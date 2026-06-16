@@ -18,7 +18,7 @@ import memory
 import voice
 from config import settings
 from flows import on_callback, teclado_habitos
-from modules import finanzas
+from modules import aprendizaje, finanzas
 from scheduler import setup_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -47,10 +47,12 @@ async def manejar_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not _es_nico(update):
         return
 
-    # ¿Está corrigiendo una inferencia?
+    # ¿Está corrigiendo una inferencia? (la deducción original falló → cuenta como descarte)
     inf_id = context.user_data.pop("corrigiendo_inferencia", None)
     if inf_id:
+        inf = await memory.get_inferencia(inf_id)
         await memory.resolver_inferencia(inf_id, "corregida", correccion=update.message.text)
+        await aprendizaje.registrar_resultado((inf or {}).get("dominio", ""), acertada=False)
         await update.message.reply_text("Gracias. Actualizado. Eso es lo que importa.")
         return
 

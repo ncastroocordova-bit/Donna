@@ -5,7 +5,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 import memory
-from modules import salud
+from modules import aprendizaje, salud
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +48,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data.startswith("inf_"):
         _, accion, inf_id = data.split("_", 2)
+        inf = await memory.get_inferencia(inf_id)
+        dominio = (inf or {}).get("dominio", "")
         if accion == "confirmada":
             await memory.resolver_inferencia(inf_id, "confirmada")
+            await aprendizaje.registrar_resultado(dominio, acertada=True)
+            if inf:
+                await aprendizaje.consolidar_patron(inf["contenido"], dominio)
             await q.edit_message_text("Anotado. Lo tengo como patrón confirmado. Te conozco.")
         elif accion == "descartada":
             await memory.resolver_inferencia(inf_id, "descartada")
+            await aprendizaje.registrar_resultado(dominio, acertada=False)
             await q.edit_message_text("Entendido. Lo archivo. No insisto.")
         elif accion == "corregir":
             context.user_data["corrigiendo_inferencia"] = inf_id

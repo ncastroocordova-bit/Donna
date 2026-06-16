@@ -5,7 +5,7 @@ Resiliencia (Plan v5 §9): al arrancar, Donna chequea si el toque de hoy ya sali
 de falla silencioso. Zona horaria: America/Santiago.
 """
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 from telegram.ext import Application, ContextTypes
 
@@ -14,7 +14,7 @@ import brain
 import memory
 from config import settings
 from flows import preguntar_inferencia_pendiente
-from modules import finanzas, proactividad, proyectos, salud
+from modules import aprendizaje, finanzas, proactividad, proyectos, salud
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,12 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Cierre enviado.")
 
 
+async def job_decay(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Semanal: baja el peso de los patrones no reconfirmados y silencia los flojos."""
+    silenciados = await aprendizaje.aplicar_decay()
+    logger.info("Decay aplicado; %d patrón(es) silenciado(s).", silenciados)
+
+
 async def check_pendientes(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Al arrancar: si ya pasó la hora del brief/cierre y no salió hoy, lo manda."""
     ahora = datetime.now(settings.tz)
@@ -105,5 +111,9 @@ def setup_scheduler(app: Application) -> None:
     jq.run_daily(job_brief, time=time(8, 0, tzinfo=tz))
     jq.run_daily(job_proactividad, time=time(12, 0, tzinfo=tz))
     jq.run_daily(job_cierre, time=time(22, 0, tzinfo=tz))
+    jq.run_repeating(job_decay, interval=timedelta(days=7), first=timedelta(hours=1))  # aprendizaje: decay de patrones
     jq.run_once(check_pendientes, when=10)  # recupera el toque perdido tras un reinicio
-    logger.info("Scheduler listo (%s): brief 8:00, proactividad 12:00, cierre 22:00, + chequeo de resiliencia.", settings.timezone)
+    logger.info(
+        "Scheduler listo (%s): brief 8:00, proactividad 12:00, cierre 22:00, decay semanal, + resiliencia.",
+        settings.timezone,
+    )

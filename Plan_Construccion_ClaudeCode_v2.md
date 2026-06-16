@@ -106,13 +106,13 @@ donna/
 `modules/proyectos.py`, contrato de módulo, tools `proy_*`. `proy_crear`, `proy_listar`, `proy_actualizar`, `proy_cerrar`, `proy_bloquear_tiempo` (Calendar write). `senal_proyectos()` avisa proyectos vencidos o sin avance. Casos de Proyectos en evals.
 **Listo cuando:** Donna crea proyectos, actualiza progreso, bloquea tiempo en Calendar, y los evals pasan.
 
-## FASE 3 — Proactividad
-`modules/proactividad.py`: mensaje espontáneo (máx 1/día), presupuesto de preguntas. Un job diario revisa señales cruzadas (sueño + agenda, proyecto detenido, compromiso vencido) y, si supera el umbral, Donna escribe sin que Nico le hable.
+## FASE 3 — Proactividad ✅
+`modules/proactividad.py`: mensaje espontáneo (máx 1/día). Job a las 12:00 revisa señales (compromiso vencido, proyecto en riesgo) y, si supera el umbral, Donna escribe sin que Nico le hable. Control "ya mandé hoy" en scheduler.
 **Listo cuando:** Donna rompe el silencio con algo real, máx una vez al día, y no satura.
 
-## FASE 4 — Aprendizaje avanzado
-`modules/aprendizaje.py`: tablas `patrones` y `calibracion`, jobs de decay, aprendizaje en 3 niveles, guardia anti-patrones-falsos. La calibración alimenta el eval de calibración del plan v5.
-**Listo cuando:** Donna calla las inferencias que suele errar, afina las que acierta, y el eval de calibración corre automático.
+## FASE 4 — Aprendizaje avanzado ✅
+`modules/aprendizaje.py`: tablas `patrones` y `calibracion`, decay semanal, 3 niveles (hechos/patrones/calibración), guardia anti-patrones-falsos. Validar/descartar/corregir una inferencia alimenta la calibración por dominio; las confirmadas se consolidan como patrones con peso. El perfil de calibración se inyecta en el contexto para que Donna module su confianza.
+**Listo cuando:** Donna calla las inferencias que suele errar, afina las que acierta, y el decay corre automático.
 
 ---
 

@@ -13,7 +13,7 @@ from anthropic import AsyncAnthropic
 import agenda
 import memory
 from config import settings
-from modules import finanzas, proyectos, salud
+from modules import aprendizaje, finanzas, proyectos, salud
 
 logger = logging.getLogger(__name__)
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -56,7 +56,7 @@ async def _t_leer_agenda(inp: dict) -> str:
 
 
 async def _t_abrir_inferencia(inp: dict) -> str:
-    await memory.crear_inferencia(inp["contenido"])
+    await memory.crear_inferencia(inp["contenido"], dominio=inp.get("dominio", ""))
     return "Inferencia abierta (pendiente de validar con Nico en el cierre)."
 
 
@@ -94,8 +94,15 @@ CORE_TOOLS = [
     },
     {
         "name": "abrir_inferencia",
-        "description": "Abre una inferencia sobre Nico (algo que dedujiste pero NO confirmaste). Queda pendiente para validarla con él. Úsala en vez de afirmar algo inferido como si fuera un hecho.",
-        "input_schema": {"type": "object", "properties": {"contenido": {"type": "string"}}, "required": ["contenido"]},
+        "description": "Abre una inferencia sobre Nico (algo que dedujiste pero NO confirmaste). Queda pendiente para validarla con él. Úsala en vez de afirmar algo inferido como si fuera un hecho. Indica el dominio (sueño, plata, salud, ánimo, trabajo, etc.) para que Donna aprenda dónde acierta.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contenido": {"type": "string"},
+                "dominio": {"type": "string", "description": "Área de la inferencia: sueño, plata, salud, ánimo, trabajo, relaciones..."},
+            },
+            "required": ["contenido"],
+        },
     },
     {
         "name": "registrar_compromiso",
@@ -143,11 +150,14 @@ async def _ejecutar_tool(name: str, inp: dict) -> str:
 async def _armar_contexto(mensaje: str) -> str:
     perfil = await memory.get_perfil()
     memorias = await memory.buscar_memoria(mensaje)
+    aprendido = await aprendizaje.senal_aprendizaje()
     bloques = []
     if perfil:
         bloques.append("Perfil de Nico:\n" + "\n".join(f"- {k}: {v}" for k, v in perfil.items()))
     if memorias:
         bloques.append("Memorias relevantes:\n" + "\n".join(f"- [{m.get('contexto', '')}] {m['texto']}" for m in memorias))
+    if aprendido:
+        bloques.append(aprendido)
     if not bloques:
         bloques.append("(Sin contexto cargado — para cualquier dato de Nico usa las herramientas; no inventes cifras ni estados.)")
     return "\n\n".join(bloques)

@@ -150,9 +150,11 @@ async def set_perfil(clave: str, valor: str, categoria: str = "") -> None:
 
 # ───────────────────────── Inferencias (validadas) ─────────────────────────
 
-async def crear_inferencia(contenido: str) -> str:
+async def crear_inferencia(contenido: str, dominio: str = "") -> str:
     db = await _get_db()
-    r = await db.table("inferencias").insert({"contenido": contenido, "estado": "pendiente"}).execute()
+    r = await db.table("inferencias").insert(
+        {"contenido": contenido, "dominio": dominio, "estado": "pendiente"}
+    ).execute()
     return r.data[0]["id"]
 
 
@@ -160,6 +162,12 @@ async def get_inferencias_pendientes() -> list[dict]:
     db = await _get_db()
     r = await db.table("inferencias").select("*").eq("estado", "pendiente").order("created_at").execute()
     return r.data
+
+
+async def get_inferencia(inferencia_id: str) -> dict | None:
+    db = await _get_db()
+    r = await db.table("inferencias").select("*").eq("id", inferencia_id).limit(1).execute()
+    return r.data[0] if r.data else None
 
 
 async def resolver_inferencia(inferencia_id: str, estado: str, correccion: str = "") -> None:
