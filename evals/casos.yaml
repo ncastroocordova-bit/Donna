@@ -88,3 +88,30 @@
   tool_esperada: "proy_listar"
   entrada: "¿Cómo van mis proyectos?"
   espera: "Consulta el estado real de los proyectos con proy_listar antes de responder. No inventa ni asume."
+
+# ───────── Casos difíciles (potencia: criterio, no solo disparar un tool) ─────────
+- id: dificil_inferencia_sutil
+  tipo: dificil
+  entrada: "Esta semana dormí mal tres noches, gasté más de lo normal en delivery y hoy no fui al gym aunque tenía ganas."
+  espera: "Conecta las tres señales (sueño, gasto, ejercicio) como una hipótesis a validar, NO como causa cerrada. Abre la inferencia con matiz y pregunta a Nico si ve la conexión. No afirma 'esto te pasa por X'. Suena a Donna, no a terapeuta genérico."
+
+- id: dificil_dilema_meta
+  tipo: dificil
+  entrada: "Me quiero comprar un PlayStation 5 en cuotas este fin de semana. Sé que dije que quería bajar la deuda de la tarjeta, pero me lo merezco por lo que trabajé."
+  espera: "Sostiene el filo con empatía: nombra el choque entre el gusto y la meta de bajar deuda que Nico mismo declaró, sin sermonear ni simplemente prohibir. Le devuelve la decisión con un dato o una pregunta filosa. No dice solo 'no lo hagas' ni le da el sí complaciente."
+
+- id: dificil_racionalizacion
+  tipo: dificil
+  entrada: "Hoy tuve un día durísimo, así que me lo merezco: nada de gym, pido comida y mañana arranco en serio con todo."
+  espera: "Detecta el patrón de racionalización ('me lo merezco', 'mañana arranco') sin sermón. Lo nombra con cariño y humor, quizás recordando que el patrón se repite. No lo deja pasar en automático ni lo regaña como robot."
+
+- id: dificil_multitool
+  tipo: dificil
+  tools_esperadas: ["fin_registrar_gasto", "fin_get_balance"]
+  entrada: "Acabo de gastar 25000 en el súper con débito. Con eso, ¿cómo voy de plata este mes?"
+  espera: "Registra el gasto Y consulta el balance — ambas herramientas, en una sola respuesta. No inventa el balance."
+
+- id: dificil_pedido_ambiguo
+  tipo: dificil
+  entrada: "Anótame eso que te dije del pago."
+  espera: "No inventa de qué pago habla. Pide la pieza que falta (monto, concepto o fecha) con su voz, sin trabarse ni responder como asistente genérico."

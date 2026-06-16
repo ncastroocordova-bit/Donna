@@ -221,9 +221,29 @@ def _texto_de(resp) -> str:
 
 # ───────────────────────── Loop principal ─────────────────────────
 
-async def responder(mensaje: str, history: list[dict] | None = None, off_record: bool = False, _return_tools: bool = False) -> tuple:
-    """Responde con voz, memoria y tools. Devuelve (respuesta, historial_actualizado)."""
+def _acumular_uso(uso: dict, resp) -> None:
+    """Suma el usage de una respuesta al acumulador (para medir costo)."""
+    u = getattr(resp, "usage", None)
+    if u is None:
+        return
+    uso["input_tokens"] += getattr(u, "input_tokens", 0) or 0
+    uso["output_tokens"] += getattr(u, "output_tokens", 0) or 0
+    uso["cache_creation_input_tokens"] += getattr(u, "cache_creation_input_tokens", 0) or 0
+    uso["cache_read_input_tokens"] += getattr(u, "cache_read_input_tokens", 0) or 0
+
+
+async def responder(
+    mensaje: str,
+    history: list[dict] | None = None,
+    off_record: bool = False,
+    model: str | None = None,
+    _return_tools: bool = False,
+) -> tuple:
+    """Responde con voz, memoria y tools. Devuelve (respuesta, historial_actualizado).
+
+    `model` permite forzar un modelo distinto al de config (para evals/comparación)."""
     history = history or []
+    modelo = model or settings.model_brain
     contexto = await _armar_contexto(mensaje)
     entrada = f"{contexto}\n\nNico: {mensaje}" if contexto else f"Nico: {mensaje}"
 
@@ -233,14 +253,16 @@ async def responder(mensaje: str, history: list[dict] | None = None, off_record:
     working = list(history) + [{"role": "user", "content": entrada}]
     resp = None
     tools_llamadas: list[str] = []
+    uso = {"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
     for _ in range(MAX_TURNS):
         resp = await _client.messages.create(
-            model=settings.model_brain,
+            model=modelo,
             max_tokens=1024,
             system=system,
             tools=ALL_TOOLS,
             messages=working,
         )
+        _acumular_uso(uso, resp)
         working.append({"role": "assistant", "content": resp.content})
         if resp.stop_reason != "tool_use":
             break
@@ -265,15 +287,16 @@ async def responder(mensaje: str, history: list[dict] | None = None, off_record:
             logger.exception("No pude guardar el mensaje en memoria.")
 
     if _return_tools:
-        return texto, history, tools_llamadas
+        return texto, history, tools_llamadas, uso
     return texto, history
 
 
-async def generar(prompt_text: str) -> str:
+async def generar(prompt_text: str, model: str | None = None) -> str:
     """Genera un mensaje proactivo (brief/cierre) sin historial, con contexto fresco."""
+    modelo = model or settings.model_brain
     contexto = await _armar_contexto(prompt_text)
     resp = await _client.messages.create(
-        model=settings.model_brain,
+        model=modelo,
         max_tokens=1024,
         system=_system_blocks(),
         tools=ALL_TOOLS,
@@ -291,6 +314,6 @@ async def generar(prompt_text: str) -> str:
         ]
         working.append({"role": "user", "content": resultados})
         resp = await _client.messages.create(
-            model=settings.model_brain, max_tokens=1024, system=_system_blocks(), tools=ALL_TOOLS, messages=working,
+            model=modelo, max_tokens=1024, system=_system_blocks(), tools=ALL_TOOLS, messages=working,
         )
     return _texto_de(resp)
