@@ -175,12 +175,12 @@ TOOLS = [
     },
     {
         "name": "fin_get_balance",
-        "description": "Devuelve el balance del mes (ingresos, gastos, diferencia). Úsala cuando Nico pregunta cómo va de plata este mes.",
+        "description": "OBLIGATORIO: llama esta herramienta antes de hablar de cifras mensuales. Cualquier número que cites sin llamarla es inventado. Jamás respondas sobre el balance sin obtener el dato real aquí primero.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "fin_get_pagos_proximos",
-        "description": "Lista los pagos pendientes (cuentas, tarjetas, cuotas). SIEMPRE úsala cuando Nico pregunta qué tiene que pagar, aunque creas que no hay nada — consulta antes de responder.",
+        "description": "OBLIGATORIO: llama esta herramienta antes de responder sobre pagos pendientes. 'No hay nada por pagar' sin haberla llamado es una mentira. Jamás respondas sobre cuentas sin obtener la lista real aquí.",
         "input_schema": {"type": "object", "properties": {}},
     },
 ]

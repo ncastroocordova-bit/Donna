@@ -162,7 +162,7 @@ async def senal_proyectos() -> str:
 TOOLS = [
     {
         "name": "proy_crear",
-        "description": "Crea un nuevo proyecto de Nico. Úsala cuando mencione que está empezando algo ('nuevo proyecto', 'quiero hacer X', 'empecé a trabajar en Y').",
+        "description": "OBLIGATORIO: llama esta herramienta cuando Nico mencione un nuevo proyecto. Sin esta llamada el proyecto NO existe en el sistema. Jamás digas 'lo registré' sin haberla ejecutado.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -175,12 +175,12 @@ TOOLS = [
     },
     {
         "name": "proy_listar",
-        "description": "Lista los proyectos activos o pausados de Nico con su progreso. SIEMPRE úsala cuando pregunta por sus proyectos — nunca inventes el estado.",
+        "description": "OBLIGATORIO: llama esta herramienta antes de responder sobre el estado de proyectos. Cualquier dato de proyecto que cites sin llamarla es inventado. Jamás describas proyectos sin obtener la lista real aquí.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "proy_actualizar",
-        "description": "Actualiza el progreso, notas o estado de un proyecto existente. Úsala cuando Nico da un update ('el proyecto X va al 60%', 'avancé en Y').",
+        "description": "OBLIGATORIO: llama esta herramienta cuando Nico reporte avance en un proyecto. Sin esta llamada el cambio NO se guarda. Jamás confirmes una actualización sin haberla ejecutado.",
         "input_schema": {
             "type": "object",
             "properties": {

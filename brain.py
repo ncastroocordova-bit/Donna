@@ -25,13 +25,19 @@ ANCHORS = (_PROMPTS / "anchors.md").read_text(encoding="utf-8")
 MAX_TURNS = 6  # tope de iteraciones del agentic loop (anti bucle de tools)
 
 
-def _system_blocks() -> list[dict]:
-    """Prefijo estable cacheado: se re-inyecta completo pero la API lo cobra barato."""
-    return [{
+def _system_blocks(hint: str = "") -> list[dict]:
+    """Prefijo cacheado + hint dinámico opcional como segundo bloque de sistema."""
+    blocks = [{
         "type": "text",
         "text": CONSTITUTION + "\n\n# ANCLAS\n" + ANCHORS,
         "cache_control": {"type": "ephemeral"},
     }]
+    if hint:
+        blocks.append({
+            "type": "text",
+            "text": f"# INSTRUCCION CRITICA PARA ESTA RESPUESTA\n{hint}",
+        })
+    return blocks
 
 
 # ───────────────────────── Tools del núcleo ─────────────────────────
@@ -147,6 +153,27 @@ async def _ejecutar_tool(name: str, inp: dict) -> str:
 
 # ───────────────────────── Presupuesto de contexto ─────────────────────────
 
+def _hint_tool(mensaje: str) -> str:
+    """Detecta el patrón del mensaje y devuelve una hint puntual con la tool obligatoria.
+    Aparece en el contexto del usuario → más prominente que la tabla del system prompt."""
+    msg = mensaje.lower()
+    if any(p in msg for p in ["cómo voy de plata", "cuánto gasté", "balance", "cuánto llevo gastado"]):
+        return "[OBLIGATORIO ANTES DE RESPONDER] llama fin_get_balance para obtener el balance real del mes."
+    if any(p in msg for p in ["qué tengo que pagar", "qué cuentas", "cuánto debo pagar", "pagos próximos", "qué cuentas tengo"]):
+        return "[OBLIGATORIO ANTES DE RESPONDER] llama fin_get_pagos_proximos para obtener la lista real de pagos."
+    if any(p in msg for p in ["fui al gym", "hice ejercicio", "medité", "meditación", "ayuné", "dormí bien", "hoy fui"]):
+        return "[OBLIGATORIO ANTES DE RESPONDER] llama salud_marcar_habito para registrar el hábito. Sin esta llamada el registro no existe."
+    if any(p in msg for p in ["días llevo", "cuántos días", "cuál es mi racha", "llevo meditando", "llevo haciendo"]):
+        return "[OBLIGATORIO ANTES DE RESPONDER] llama salud_get_racha para obtener la racha real. No inventes el número."
+    if any(p in msg for p in ["empecé a trabajar en", "nuevo proyecto", "empecé un proyecto", "quiero hacer un proyecto"]):
+        return "[OBLIGATORIO ANTES DE RESPONDER] llama proy_crear para registrar el proyecto. Sin esta llamada no existe en el sistema."
+    if any(p in msg for p in ["cómo van mis proyectos", "qué proyectos tengo", "estado de mis proyectos"]):
+        return "[OBLIGATORIO ANTES DE RESPONDER] llama proy_listar para obtener el estado real. No inventes proyectos ni porcentajes."
+    if any(p in msg for p in ["va al ", "avancé en", "proyecto va al", "actualiza el proyecto"]):
+        return "[OBLIGATORIO ANTES DE RESPONDER] llama proy_actualizar para guardar el avance. Sin esta llamada el cambio no se guarda."
+    return ""
+
+
 async def _armar_contexto(mensaje: str) -> str:
     perfil = await memory.get_perfil()
     memorias = await memory.buscar_memoria(mensaje)
@@ -194,19 +221,23 @@ def _texto_de(resp) -> str:
 
 # ───────────────────────── Loop principal ─────────────────────────
 
-async def responder(mensaje: str, history: list[dict] | None = None, off_record: bool = False) -> tuple[str, list[dict]]:
+async def responder(mensaje: str, history: list[dict] | None = None, off_record: bool = False, _return_tools: bool = False) -> tuple:
     """Responde con voz, memoria y tools. Devuelve (respuesta, historial_actualizado)."""
     history = history or []
     contexto = await _armar_contexto(mensaje)
     entrada = f"{contexto}\n\nNico: {mensaje}" if contexto else f"Nico: {mensaje}"
 
+    hint = _hint_tool(mensaje)
+    system = _system_blocks(hint)
+
     working = list(history) + [{"role": "user", "content": entrada}]
     resp = None
+    tools_llamadas: list[str] = []
     for _ in range(MAX_TURNS):
         resp = await _client.messages.create(
             model=settings.model_brain,
             max_tokens=1024,
-            system=_system_blocks(),
+            system=system,
             tools=ALL_TOOLS,
             messages=working,
         )
@@ -216,6 +247,7 @@ async def responder(mensaje: str, history: list[dict] | None = None, off_record:
         resultados = []
         for block in resp.content:
             if block.type == "tool_use":
+                tools_llamadas.append(block.name)
                 salida = await _ejecutar_tool(block.name, block.input)
                 resultados.append({"type": "tool_result", "tool_use_id": block.id, "content": salida})
         working.append({"role": "user", "content": resultados})
@@ -232,6 +264,8 @@ async def responder(mensaje: str, history: list[dict] | None = None, off_record:
         except Exception:
             logger.exception("No pude guardar el mensaje en memoria.")
 
+    if _return_tools:
+        return texto, history, tools_llamadas
     return texto, history
 
 

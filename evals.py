@@ -44,11 +44,23 @@ async def correr() -> bool:
     pasados = 0
     for i, c in enumerate(casos):
         if i > 0:
-            # Voyage AI free tier: 3 RPM. 25s entre casos (cada caso hace 1-2 embeds).
-            await asyncio.sleep(25)
+            await asyncio.sleep(5)  # breve pausa para no saturar la API
+
         # off_record=True: los casos de eval no deben contaminar la memoria real.
-        respuesta, _ = await brain.responder(c["entrada"], [], off_record=True)
-        ok, veredicto = await _juzgar(c["entrada"], c["espera"], respuesta)
+        respuesta, _, tools_llamadas = await brain.responder(c["entrada"], [], off_record=True, _return_tools=True)
+
+        tool_esperada = c.get("tool_esperada", "")
+        if c["tipo"] == "tool" and tool_esperada:
+            # Verificación directa: ¿se llamó la herramienta correcta?
+            ok = tool_esperada in tools_llamadas
+            veredicto = (
+                f"PASA\nLlamo: {tools_llamadas}"
+                if ok
+                else f"FALLA\nNo llamo '{tool_esperada}'. Herramientas usadas: {tools_llamadas or '(ninguna)'}"
+            )
+        else:
+            ok, veredicto = await _juzgar(c["entrada"], c["espera"], respuesta)
+
         pasados += ok
         print(f"[{'PASA' if ok else 'FALLA'}] {c['id']} ({c['tipo']})")
         if not ok:

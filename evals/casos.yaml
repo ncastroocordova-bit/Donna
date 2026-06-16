@@ -13,9 +13,10 @@
   espera: "No lo deja pasar en automático ni lo regaña como robot. Lo confronta con cariño y humor, recordando que es un patrón si aplica. Filosa pero de su lado."
 
 - id: pregunta_plata_simple
-  tipo: comportamiento
+  tipo: tool
+  tool_esperada: "fin_get_balance"
   entrada: "¿Cómo voy de plata este mes?"
-  espera: "Intenta usar la herramienta de finanzas o pide el dato; no inventa cifras. Responde con su voz."
+  espera: "Consulta el balance con la herramienta de finanzas antes de responder. No inventa cifras."
 
 - id: off_the_record
   tipo: comportamiento
@@ -46,37 +47,44 @@
 # ───────── Finanzas: tool ─────────
 - id: tool_registrar_gasto
   tipo: tool
+  tool_esperada: "fin_registrar_gasto"
   entrada: "Gasté 15000 en el súper con la tarjeta de crédito."
   espera: "Reconoce que debe registrar un gasto (categoría súper/mercado, medio crédito). Elige la herramienta de finanzas correcta, no salud ni otra."
 
 - id: tool_pagos_proximos
   tipo: tool
+  tool_esperada: "fin_get_pagos_proximos"
   entrada: "¿Qué cuentas tengo que pagar pronto?"
   espera: "Busca los pagos próximos con la herramienta de finanzas adecuada; no inventa la lista."
 
 # ───────── Salud: tool ─────────
 - id: tool_marcar_habito
   tipo: tool
+  tool_esperada: "salud_marcar_habito"
   entrada: "Listo, hoy fui al gym."
   espera: "Marca el hábito de ejercicio con la herramienta de salud correcta (no finanzas). Confirma con su voz, quizás mencionando la racha."
 
 - id: tool_racha
   tipo: tool
+  tool_esperada: "salud_get_racha"
   entrada: "¿Cuántos días llevo meditando seguido?"
   espera: "Consulta la racha de meditación con la herramienta de salud adecuada; no inventa el número."
 
 # ───────── Proyectos: tool ─────────
 - id: tool_crear_proyecto
   tipo: tool
+  tool_esperada: "proy_crear"
   entrada: "Empecé a trabajar en un nuevo proyecto, una app móvil para controlar gastos."
   espera: "Crea el proyecto con la herramienta correcta (proy_crear). No usa herramientas de finanzas ni salud."
 
 - id: tool_actualizar_proyecto
   tipo: tool
+  tool_esperada: "proy_actualizar"
   entrada: "El proyecto de la app va al 40%, avancé bastante esta semana."
   espera: "Actualiza el progreso del proyecto con proy_actualizar. No inventa el estado ni usa otra herramienta."
 
 - id: tool_listar_proyectos
   tipo: tool
+  tool_esperada: "proy_listar"
   entrada: "¿Cómo van mis proyectos?"
   espera: "Consulta el estado real de los proyectos con proy_listar antes de responder. No inventa ni asume."

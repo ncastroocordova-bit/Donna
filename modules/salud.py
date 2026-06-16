@@ -97,7 +97,7 @@ async def senal_salud() -> str:
 TOOLS = [
     {
         "name": "salud_marcar_habito",
-        "description": "Marca que Nico cumplió un hábito hoy: ejercicio, meditacion, ayuno o sueno. Úsala de inmediato cuando dice que hizo uno — 'fui al gym', 'medité', 'no comí hasta las 2' — sin pedir confirmación.",
+        "description": "OBLIGATORIO: llama esta herramienta cuando Nico dice que cumplió un hábito — 'fui al gym', 'hice ejercicio', 'medité', 'ayuné', 'dormí bien'. Sin esta llamada el hábito NO queda registrado. Jamás confirmes el registro sin haberla ejecutado.",
         "input_schema": {
             "type": "object",
             "properties": {"habito": {"type": "string", "enum": list(HABITOS)}},
@@ -106,7 +106,7 @@ TOOLS = [
     },
     {
         "name": "salud_get_racha",
-        "description": "Devuelve la racha actual de un hábito. SIEMPRE úsala cuando Nico pregunta cuántos días lleva con algo — nunca adivines ni inventes el número.",
+        "description": "OBLIGATORIO: llama esta herramienta antes de responder cualquier pregunta sobre rachas o días seguidos. El número que digas sin llamarla es inventado. Jamás cites días sin obtener el dato real aquí.",
         "input_schema": {
             "type": "object",
             "properties": {"habito": {"type": "string", "enum": list(HABITOS)}},
