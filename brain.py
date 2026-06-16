@@ -13,7 +13,7 @@ from anthropic import AsyncAnthropic
 import agenda
 import memory
 from config import settings
-from modules import finanzas, salud
+from modules import finanzas, proyectos, salud
 
 logger = logging.getLogger(__name__)
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -123,8 +123,8 @@ _CORE_HANDLERS = {
 }
 
 # Tools del núcleo + módulos (con prefijo, sin solapamiento).
-ALL_TOOLS = CORE_TOOLS + finanzas.TOOLS + salud.TOOLS
-_HANDLERS = {**_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS}
+ALL_TOOLS = CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + proyectos.TOOLS
+_HANDLERS = {**_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **proyectos.HANDLERS}
 
 
 async def _ejecutar_tool(name: str, inp: dict) -> str:

@@ -14,7 +14,7 @@ import brain
 import memory
 from config import settings
 from flows import preguntar_inferencia_pendiente
-from modules import finanzas, salud
+from modules import finanzas, proyectos, salud
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ async def _marcar_enviado(clave: str) -> None:
 async def _texto_brief() -> str:
     eventos = await agenda.eventos_de_hoy()
     ag = "; ".join(f"{e['hora']} {e['titulo']}" for e in eventos) or "sin eventos"
-    señales = " ".join(s for s in [await finanzas.senal_finanzas(), await salud.senal_salud()] if s)
+    señales = " ".join(s for s in [await finanzas.senal_finanzas(), await salud.senal_salud(), await proyectos.senal_proyectos()] if s)
     prompt = (
         f"Es el brief de las 8:00 de Nico. Agenda de hoy: {ag}. {señales} "
         "Dale su día en pocas líneas y, si tienes algo real que aportar (un patrón, un aviso), "
@@ -45,9 +45,9 @@ async def _texto_brief() -> str:
 
 
 async def _texto_cierre() -> str:
-    señal = await salud.senal_salud()
+    señales = " ".join(s for s in [await salud.senal_salud(), await proyectos.senal_proyectos()] if s)
     prompt = (
-        f"Es el cierre de las 22:00 de Nico. {señal} Cierra el día breve, con tu voz. "
+        f"Es el cierre de las 22:00 de Nico. {señales} Cierra el día breve, con tu voz. "
         "Si corresponde, deja el pie para validar una inferencia (la pregunta sale aparte con botones)."
     )
     return await brain.generar(prompt)

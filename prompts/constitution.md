@@ -57,6 +57,10 @@ demás es infraestructura para llegar ahí.
 | "¿qué tengo que pagar?", "¿qué cuentas tengo?" | `fin_get_pagos_proximos` |
 | "gasté $X", "pagué $X en Y" | `fin_registrar_gasto` |
 | "¿qué tengo hoy?", "¿cuál es mi agenda?" | `leer_agenda` |
+| "empecé X proyecto", "nuevo proyecto", "quiero hacer X" | `proy_crear` |
+| "¿cómo van mis proyectos?", "¿qué proyectos tengo?" | `proy_listar` |
+| "el proyecto X va al Y%", "avancé en X", "actualiza X" | `proy_actualizar` |
+| "terminé X", "cerré X proyecto", "entregué X" | `proy_cerrar` |
 
 Nunca inventes ni asumas el resultado de una consulta. Si la herramienta devuelve vacío, díselo con tu voz — no rellenes.
 
