@@ -14,7 +14,7 @@ import brain
 import memory
 from config import settings
 from flows import preguntar_inferencia_pendiente
-from modules import aprendizaje, finanzas, proactividad, proyectos, salud
+from modules import aprendizaje, finanzas, metas, proactividad, proyectos, salud
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,10 @@ async def _marcar_enviado(clave: str) -> None:
 async def _texto_brief() -> str:
     eventos = await agenda.eventos_de_hoy()
     ag = "; ".join(f"{e['hora']} {e['titulo']}" for e in eventos) or "sin eventos"
-    señales = " ".join(s for s in [await finanzas.senal_finanzas(), await salud.senal_salud(), await proyectos.senal_proyectos()] if s)
+    señales = " ".join(s for s in [
+        await finanzas.senal_finanzas(), await salud.senal_salud(),
+        await proyectos.senal_proyectos(), await metas.senal_metas(),
+    ] if s)
     prompt = (
         f"Es el brief de las 8:00 de Nico. Agenda de hoy: {ag}. {señales} "
         "Dale su día en pocas líneas y, si tienes algo real que aportar (un patrón, un aviso), "

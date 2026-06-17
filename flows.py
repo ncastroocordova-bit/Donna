@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def teclado_habitos() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton(h.capitalize(), callback_data=f"hab_{h}")] for h in salud.HABITOS])
+    return InlineKeyboardMarkup([[InlineKeyboardButton(h.replace("_", " ").capitalize(), callback_data=f"hab_{h}")] for h in salud.BINARIOS])
 
 
 async def preguntar_inferencia_pendiente(bot, chat_id: int) -> None:
@@ -42,7 +42,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data.startswith("hab_"):
         habito = data.split("_", 1)[1]
-        msg = await salud._marcar_habito({"habito": habito})
+        msg = await salud._marcar({"campo": habito})
         await q.edit_message_text(msg)
         return
 

@@ -13,7 +13,7 @@ from anthropic import AsyncAnthropic
 import agenda
 import memory
 from config import settings
-from modules import aprendizaje, finanzas, proyectos, salud
+from modules import aprendizaje, finanzas, metas, proyectos, salud, tiempo
 
 logger = logging.getLogger(__name__)
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -166,14 +166,16 @@ _CORE_HANDLERS = {
 # contaminan la base de producción.
 WRITE_TOOLS = {
     "guardar_memoria", "actualizar_perfil", "abrir_inferencia", "registrar_compromiso",
-    "fin_registrar_gasto", "fin_registrar_ingreso",
-    "salud_marcar_habito",
-    "proy_crear", "proy_actualizar", "proy_cerrar", "proy_bloquear_tiempo",
+    "fin_registrar_transaccion",
+    "salud_marcar",
+    "proy_crear", "proy_actualizar", "proy_cerrar", "tarea_crear", "tarea_completar",
+    "tiempo_registrar", "metas_actualizar",
 }
 
 # Tools del núcleo + módulos (con prefijo, sin solapamiento).
-ALL_TOOLS = CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + proyectos.TOOLS
-_HANDLERS = {**_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **proyectos.HANDLERS}
+ALL_TOOLS = CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + proyectos.TOOLS + tiempo.TOOLS + metas.TOOLS
+_HANDLERS = {**_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **proyectos.HANDLERS,
+             **tiempo.HANDLERS, **metas.HANDLERS}
 
 
 async def _ejecutar_tool(name: str, inp: dict) -> str:
@@ -193,20 +195,31 @@ def _hint_tool(mensaje: str) -> str:
     """Detecta el patrón del mensaje y devuelve una hint puntual con la tool obligatoria.
     Aparece en el contexto del usuario → más prominente que la tabla del system prompt."""
     msg = mensaje.lower()
-    if any(p in msg for p in ["cómo voy de plata", "cuánto gasté", "balance", "cuánto llevo gastado"]):
-        return "[OBLIGATORIO ANTES DE RESPONDER] llama fin_get_balance para obtener el balance real del mes."
-    if any(p in msg for p in ["qué tengo que pagar", "qué cuentas", "cuánto debo pagar", "pagos próximos", "qué cuentas tengo"]):
-        return "[OBLIGATORIO ANTES DE RESPONDER] llama fin_get_pagos_proximos para obtener la lista real de pagos."
-    if any(p in msg for p in ["fui al gym", "hice ejercicio", "medité", "meditación", "ayuné", "dormí bien", "hoy fui"]):
-        return "[OBLIGATORIO ANTES DE RESPONDER] llama salud_marcar_habito para registrar el hábito. Sin esta llamada el registro no existe."
-    if any(p in msg for p in ["días llevo", "cuántos días", "cuál es mi racha", "llevo meditando", "llevo haciendo"]):
-        return "[OBLIGATORIO ANTES DE RESPONDER] llama salud_get_racha para obtener la racha real. No inventes el número."
-    if any(p in msg for p in ["empecé a trabajar en", "nuevo proyecto", "empecé un proyecto", "quiero hacer un proyecto"]):
-        return "[OBLIGATORIO ANTES DE RESPONDER] llama proy_crear para registrar el proyecto. Sin esta llamada no existe en el sistema."
+    O = "[OBLIGATORIO ANTES DE RESPONDER] "
+    if any(p in msg for p in ["gasté", "gaste", "pagué", "pague", "compré", "compre", "recibí", "recibi", "me pagaron", "me llegó"]):
+        return O + "llama fin_registrar_transaccion para registrar la transacción. Sin esta llamada no queda."
+    if any(p in msg for p in ["cómo voy de plata", "cuánto gasté", "balance", "cuánto llevo gastado", "cómo va mi plata"]):
+        return O + "llama fin_get_balance para el balance real del mes. No inventes cifras."
+    if any(p in msg for p in ["presupuesto", "me estoy pasando", "cuánto llevo en", "cuánto gasté en"]):
+        return O + "llama fin_get_presupuesto para comparar gasto vs presupuesto. No inventes."
+    if any(p in msg for p in ["tarjeta", "deuda", "cupo"]):
+        return O + "llama fin_get_tarjetas para la deuda/cupo real. No inventes montos."
+    if any(p in msg for p in ["fui al gym", "hice ejercicio", "medité", "medite", "ayuné", "ayune", "dormí", "dormi", "tomé agua", "luz solar", "estudié", "estudie"]):
+        return O + "llama salud_marcar para anotar el hábito del día. Sin esta llamada no queda."
+    if any(p in msg for p in ["días llevo", "cuántos días", "cuál es mi racha", "llevo meditando", "llevo yendo"]):
+        return O + "llama salud_get_racha para la racha real. No inventes el número."
     if any(p in msg for p in ["cómo van mis proyectos", "qué proyectos tengo", "estado de mis proyectos"]):
-        return "[OBLIGATORIO ANTES DE RESPONDER] llama proy_listar para obtener el estado real. No inventes proyectos ni porcentajes."
-    if any(p in msg for p in ["va al ", "avancé en", "proyecto va al", "actualiza el proyecto"]):
-        return "[OBLIGATORIO ANTES DE RESPONDER] llama proy_actualizar para guardar el avance. Sin esta llamada el cambio no se guarda."
+        return O + "llama proy_listar para el estado real. No inventes."
+    if any(p in msg for p in ["nuevo proyecto", "empecé un proyecto", "empece un proyecto", "quiero hacer un proyecto"]):
+        return O + "llama proy_crear para registrar el proyecto."
+    if any(p in msg for p in ["mis tareas", "qué tareas", "tareas pendientes", "qué me falta"]):
+        return O + "llama tarea_listar para las tareas reales. No inventes."
+    if any(p in msg for p in ["terminé la tarea", "completé", "complete", "hice la tarea", "marqué", "listo la tarea"]):
+        return O + "llama tarea_completar para marcar la tarea hecha."
+    if any(p in msg for p in ["trabajé", "trabaje", "le metí", "le dediqué", "horas en", "estuve trabajando"]):
+        return O + "llama tiempo_registrar para anotar las horas. Sin esta llamada no queda."
+    if any(p in msg for p in ["mis metas", "metas de la semana", "cómo voy con las metas", "cómo voy esta semana"]):
+        return O + "llama metas_get_semana para las metas reales de la semana. No inventes."
     return ""
 
 

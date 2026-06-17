@@ -1,10 +1,12 @@
-"""Módulo Finanzas. Contrato de módulo (Plan v5 §8):
-- No toca el núcleo. Se comunica por la interfaz (tools + señal destilada).
-- Tools con prefijo `fin_`, descripciones sin solapamiento.
-- El trabajo pesado (Vision sobre una boleta) corre en contexto AISLADO.
-- Degradación elegante: si algo falla, devuelve un mensaje y Donna sigue.
+"""Módulo Finanzas. Contrato de módulo (Plan v5 §8). Tools `fin_*`.
 
-Datos en Google Sheets. Hojas: GASTOS, INGRESOS, PAGOS.
+Rediseñado sobre la planilla real de Nico. Hojas:
+- Transacciones: Fecha, Tipo (Gasto/Ingreso), Categoria, Subcategoria, Comercio, Monto, Medio, Fuente, ID_Unico
+- Categorias:    Categoria, Tipo, Presupuesto (límite mensual de gasto), Notas
+- Tarjetas:      Concepto, Banco_de_Chile, Mach, Total (matriz: cupo/deuda)
+- Presupuesto:   Fuente, Monto, Tipo, Notas (fuentes de ingreso esperado)
+
+El trabajo pesado (Vision sobre boleta) corre en contexto AISLADO. Degradación elegante.
 """
 import base64
 import json
@@ -24,65 +26,107 @@ def _hoy() -> str:
     return datetime.now(settings.tz).strftime("%Y-%m-%d")
 
 
+def _num(v) -> float:
+    try:
+        return float(str(v).replace("$", "").replace(".", "").replace(",", ".").strip())
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _id_unico(fecha: str, monto, comercio: str) -> str:
+    return f"{fecha}_{int(_num(monto))}_{(comercio or '')[:20].strip()}"
+
+
+async def _escribir_transaccion(tipo, categoria, subcategoria, comercio, monto, medio, fuente) -> None:
+    fecha = _hoy()
+    await sheets.append_row("Transacciones", [
+        fecha, tipo, categoria, subcategoria, comercio, monto, medio, fuente,
+        _id_unico(fecha, monto, comercio),
+    ])
+
+
 # ───────────────────────── Handlers de tools ─────────────────────────
 
-async def _registrar_gasto(inp: dict) -> str:
+async def _registrar_transaccion(inp: dict) -> str:
+    tipo = "Ingreso" if str(inp.get("tipo", "")).lower().startswith("ing") else "Gasto"
+    monto = inp.get("monto", 0)
+    cat = inp.get("categoria", "Otros")
     try:
-        await sheets.append_row("GASTOS", [
-            _hoy(),
-            inp["monto"],
-            inp.get("categoria", "otros"),
-            inp.get("descripcion", ""),
-            inp.get("medio", ""),
-        ])
-        return f"Gasto de ${inp['monto']} registrado en {inp.get('categoria', 'otros')}."
+        await _escribir_transaccion(
+            tipo, cat, inp.get("subcategoria", ""), inp.get("comercio", ""),
+            monto, inp.get("medio", ""), inp.get("fuente", "manual"),
+        )
+        verbo = "Ingreso" if tipo == "Ingreso" else "Gasto"
+        return f"{verbo} de ${_num(monto):,.0f} registrado en {cat}."
     except Exception:
-        logger.exception("fin_registrar_gasto falló")
-        return "No pude escribir el gasto en la planilla. Reintenta en un rato."
+        logger.exception("fin_registrar_transaccion falló")
+        return "No pude escribir la transacción en la planilla. Reintenta en un rato."
 
 
-async def _registrar_ingreso(inp: dict) -> str:
-    try:
-        await sheets.append_row("INGRESOS", [_hoy(), inp["monto"], inp.get("fuente", ""), inp.get("descripcion", "")])
-        return f"Ingreso de ${inp['monto']} registrado."
-    except Exception:
-        logger.exception("fin_registrar_ingreso falló")
-        return "No pude registrar el ingreso ahora."
+async def _gastos_por_categoria(mes: str) -> dict:
+    txs = await sheets.get_dicts("Transacciones")
+    out: dict[str, float] = {}
+    for t in txs:
+        if str(t.get("Tipo", "")).lower().startswith("gas") and str(t.get("Fecha", "")).startswith(mes):
+            out[t.get("Categoria", "Otros")] = out.get(t.get("Categoria", "Otros"), 0) + _num(t.get("Monto"))
+    return out
 
 
 async def _get_balance(inp: dict) -> str:
     try:
-        gastos = await sheets.get_dicts("GASTOS")
-        ingresos = await sheets.get_dicts("INGRESOS")
+        txs = await sheets.get_dicts("Transacciones")
         mes = _hoy()[:7]
-        tot_g = sum(_num(g.get("monto")) for g in gastos if str(g.get("fecha", "")).startswith(mes))
-        tot_i = sum(_num(i.get("monto")) for i in ingresos if str(i.get("fecha", "")).startswith(mes))
-        return f"Este mes: ingresos ${tot_i:,.0f}, gastos ${tot_g:,.0f}, balance ${tot_i - tot_g:,.0f}."
+        g = sum(_num(t.get("Monto")) for t in txs if str(t.get("Tipo", "")).lower().startswith("gas") and str(t.get("Fecha", "")).startswith(mes))
+        i = sum(_num(t.get("Monto")) for t in txs if str(t.get("Tipo", "")).lower().startswith("ing") and str(t.get("Fecha", "")).startswith(mes))
+        return f"Este mes: ingresos ${i:,.0f}, gastos ${g:,.0f}, balance ${i - g:,.0f}."
     except Exception:
         logger.exception("fin_get_balance falló")
         return "No pude calcular el balance ahora."
 
 
-async def _get_pagos_proximos(inp: dict) -> str:
+async def _get_presupuesto(inp: dict) -> str:
     try:
-        pagos = await sheets.get_dicts("PAGOS")
-        pendientes = [p for p in pagos if str(p.get("estado", "")).lower() != "pagado"]
-        if not pendientes:
-            return "No hay pagos pendientes registrados."
-        total = sum(_num(p.get("monto")) for p in pendientes)
-        detalle = ", ".join(f"{p.get('concepto', '?')} (${_num(p.get('monto')):,.0f})" for p in pendientes[:5])
-        return f"Pagos próximos: {detalle}. Total ${total:,.0f}."
+        cats = await sheets.get_dicts("Categorias")
+        limites = {c.get("Categoria"): _num(c.get("Presupuesto")) for c in cats if _num(c.get("Presupuesto")) > 0}
+        gastado = await _gastos_por_categoria(_hoy()[:7])
+        lineas = []
+        for cat, limite in limites.items():
+            g = gastado.get(cat, 0)
+            if g == 0:
+                continue
+            pct = g / limite * 100 if limite else 0
+            flag = " ⚠️" if pct >= 100 else (" (ojo)" if pct >= 80 else "")
+            lineas.append(f"{cat}: ${g:,.0f}/${limite:,.0f} ({pct:.0f}%){flag}")
+        if not lineas:
+            return "Aún no hay gastos cargados este mes contra el presupuesto."
+        return "Presupuesto del mes:\n" + "\n".join(lineas)
     except Exception:
-        logger.exception("fin_get_pagos_proximos falló")
-        return "No pude leer los pagos próximos."
+        logger.exception("fin_get_presupuesto falló")
+        return "No pude leer el presupuesto ahora."
+
+
+async def _get_tarjetas(inp: dict) -> str:
+    try:
+        filas = await sheets.get_dicts("Tarjetas")
+        def buscar(sub):
+            return next((f for f in filas if sub in str(f.get("Concepto", "")).lower()), None)
+        deuda = buscar("deuda total")
+        disp = buscar("cupo disponible")
+        partes = []
+        if deuda:
+            partes.append(f"deuda ${_num(deuda.get('Total')):,.0f} (BdC ${_num(deuda.get('Banco_de_Chile')):,.0f} + Mach ${_num(deuda.get('Mach')):,.0f})")
+        if disp:
+            partes.append(f"cupo disponible ${_num(disp.get('Total')):,.0f}")
+        return "Tarjetas: " + "; ".join(partes) + "." if partes else "No encontré datos de tarjetas."
+    except Exception:
+        logger.exception("fin_get_tarjetas falló")
+        return "No pude leer las tarjetas ahora."
 
 
 # ───────────────────────── Vision en contexto aislado ─────────────────────────
 
 async def procesar_imagen(image_bytes: bytes, media_type: str = "image/jpeg") -> dict:
-    """Extrae datos de una boleta/transferencia con una llamada AISLADA a Claude
-    (sin la constitución ni el contexto del núcleo: solo extracción). Devuelve
-    solo la conclusión destilada — el detalle nunca le tapa la ventana a Donna."""
+    """Extrae datos de una boleta con una llamada AISLADA a Claude y registra la transacción."""
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
     try:
         r = await _anthropic.messages.create(
@@ -90,8 +134,8 @@ async def procesar_imagen(image_bytes: bytes, media_type: str = "image/jpeg") ->
             max_tokens=300,
             system=(
                 "Extraes datos de boletas/transferencias chilenas. Devuelve SOLO un JSON con: "
-                "monto (número, sin separadores), categoria (string), descripcion (string), "
-                "medio (string). Sin texto extra."
+                "monto (número, sin separadores), categoria (string), subcategoria (string), "
+                "comercio (string), medio (string). Sin texto extra."
             ),
             messages=[{
                 "role": "user",
@@ -103,10 +147,10 @@ async def procesar_imagen(image_bytes: bytes, media_type: str = "image/jpeg") ->
         )
         texto = r.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         datos = json.loads(texto)
-        await sheets.append_row("GASTOS", [
-            _hoy(), datos.get("monto", 0), datos.get("categoria", "otros"),
-            datos.get("descripcion", ""), datos.get("medio", "foto"),
-        ])
+        await _escribir_transaccion(
+            "Gasto", datos.get("categoria", "Otros"), datos.get("subcategoria", ""),
+            datos.get("comercio", ""), datos.get("monto", 0), datos.get("medio", ""), "foto",
+        )
         return datos
     except Exception:
         logger.exception("procesar_imagen falló")
@@ -116,78 +160,69 @@ async def procesar_imagen(image_bytes: bytes, media_type: str = "image/jpeg") ->
 # ───────────────────────── Señal destilada ─────────────────────────
 
 async def senal_finanzas() -> str:
-    """Conclusión corta para el brief. No datos crudos."""
+    """Conclusión corta para el brief: categorías sobregiradas + deuda de tarjetas."""
     try:
-        pagos = await sheets.get_dicts("PAGOS")
-        pendientes = [p for p in pagos if str(p.get("estado", "")).lower() != "pagado"]
-        por_pagar = sum(_num(p.get("monto")) for p in pendientes)
         partes = []
-        if por_pagar:
-            partes.append(f"hay ${por_pagar:,.0f} por pagar")
-
-        gastos = await sheets.get_dicts("GASTOS")
-        mes_actual = _hoy()[:7]
-        g_mes = sum(_num(g.get("monto")) for g in gastos if str(g.get("fecha", "")).startswith(mes_actual))
-        if g_mes:
-            partes.append(f"llevas ${g_mes:,.0f} gastados este mes")
+        cats = await sheets.get_dicts("Categorias")
+        limites = {c.get("Categoria"): _num(c.get("Presupuesto")) for c in cats if _num(c.get("Presupuesto")) > 0}
+        gastado = await _gastos_por_categoria(_hoy()[:7])
+        sobregiradas = [c for c, l in limites.items() if gastado.get(c, 0) > l]
+        if sobregiradas:
+            partes.append("te pasaste del presupuesto en " + ", ".join(sobregiradas))
+        filas = await sheets.get_dicts("Tarjetas")
+        deuda = next((f for f in filas if "deuda total" in str(f.get("Concepto", "")).lower()), None)
+        if deuda and _num(deuda.get("Total")) > 0:
+            partes.append(f"deuda de tarjetas ${_num(deuda.get('Total')):,.0f}")
         return "Plata: " + "; ".join(partes) + "." if partes else ""
     except Exception:
         logger.exception("senal_finanzas falló")
         return ""
 
 
-def _num(v) -> float:
-    try:
-        return float(str(v).replace("$", "").replace(".", "").replace(",", "."))
-    except (ValueError, TypeError):
-        return 0.0
-
-
 # ───────────────────────── Registro de tools ─────────────────────────
 
 TOOLS = [
     {
-        "name": "fin_registrar_gasto",
-        "description": "Registra un gasto que Nico menciona en texto (monto, categoría, descripción, medio de pago). Úsala cuando cuenta que gastó algo.",
+        "name": "fin_registrar_transaccion",
+        "description": (
+            "OBLIGATORIO cuando Nico cuenta que gastó o recibió plata. Registra una transacción "
+            "(gasto o ingreso). Por defecto es gasto; tipo='Ingreso' solo si la plata ENTRA. "
+            "Sin esta llamada NO queda registrada. Jamás confirmes el registro sin ejecutarla."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "monto": {"type": "number", "description": "Monto en pesos"},
-                "categoria": {"type": "string"},
-                "descripcion": {"type": "string"},
-                "medio": {"type": "string", "description": "efectivo, débito, crédito, transferencia"},
-            },
-            "required": ["monto"],
-        },
-    },
-    {
-        "name": "fin_registrar_ingreso",
-        "description": "Registra un ingreso de dinero (monto, fuente). Úsala solo para plata que ENTRA, no para gastos.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "monto": {"type": "number"},
-                "fuente": {"type": "string"},
-                "descripcion": {"type": "string"},
+                "tipo": {"type": "string", "enum": ["Gasto", "Ingreso"], "description": "Gasto (default) o Ingreso"},
+                "monto": {"type": "number", "description": "Monto en pesos, sin separadores"},
+                "categoria": {"type": "string", "description": "Categoría (ej. Alimentación, Transporte, Chanchería)"},
+                "subcategoria": {"type": "string"},
+                "comercio": {"type": "string", "description": "Comercio o detalle"},
+                "medio": {"type": "string", "description": "Banco de Chile, Mach, efectivo, débito, crédito, transferencia"},
+                "fuente": {"type": "string", "description": "Para ingresos: de dónde viene"},
             },
             "required": ["monto"],
         },
     },
     {
         "name": "fin_get_balance",
-        "description": "OBLIGATORIO: llama esta herramienta antes de hablar de cifras mensuales. Cualquier número que cites sin llamarla es inventado. Jamás respondas sobre el balance sin obtener el dato real aquí primero.",
+        "description": "OBLIGATORIO antes de hablar de cifras del mes. Devuelve ingresos, gastos y balance reales del mes desde Transacciones. Cualquier número sin llamarla es inventado.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
-        "name": "fin_get_pagos_proximos",
-        "description": "OBLIGATORIO: llama esta herramienta antes de responder sobre pagos pendientes. 'No hay nada por pagar' sin haberla llamado es una mentira. Jamás respondas sobre cuentas sin obtener la lista real aquí.",
+        "name": "fin_get_presupuesto",
+        "description": "OBLIGATORIO cuando Nico pregunta cómo va respecto al presupuesto, o si se está pasando en alguna categoría. Compara lo gastado por categoría este mes contra su límite. No inventes.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "fin_get_tarjetas",
+        "description": "OBLIGATORIO cuando Nico pregunta por sus tarjetas, su deuda o su cupo disponible. Lee la matriz real de Tarjetas. No inventes montos de deuda.",
         "input_schema": {"type": "object", "properties": {}},
     },
 ]
 
 HANDLERS = {
-    "fin_registrar_gasto": _registrar_gasto,
-    "fin_registrar_ingreso": _registrar_ingreso,
+    "fin_registrar_transaccion": _registrar_transaccion,
     "fin_get_balance": _get_balance,
-    "fin_get_pagos_proximos": _get_pagos_proximos,
+    "fin_get_presupuesto": _get_presupuesto,
+    "fin_get_tarjetas": _get_tarjetas,
 }

@@ -47,22 +47,28 @@
 # ───────── Finanzas: tool ─────────
 - id: tool_registrar_gasto
   tipo: tool
-  tool_esperada: "fin_registrar_gasto"
+  tool_esperada: "fin_registrar_transaccion"
   entrada: "Gasté 15000 en el súper con la tarjeta de crédito."
-  espera: "Reconoce que debe registrar un gasto (categoría súper/mercado, medio crédito). Elige la herramienta de finanzas correcta, no salud ni otra."
+  espera: "Registra la transacción (gasto) con la herramienta de finanzas correcta. No usa salud ni otra."
 
-- id: tool_pagos_proximos
+- id: tool_presupuesto
   tipo: tool
-  tool_esperada: "fin_get_pagos_proximos"
-  entrada: "¿Qué cuentas tengo que pagar pronto?"
-  espera: "Busca los pagos próximos con la herramienta de finanzas adecuada; no inventa la lista."
+  tool_esperada: "fin_get_presupuesto"
+  entrada: "¿Cómo voy con el presupuesto este mes, me estoy pasando en algo?"
+  espera: "Consulta el presupuesto real por categoría con la herramienta adecuada; no inventa."
+
+- id: tool_tarjetas
+  tipo: tool
+  tool_esperada: "fin_get_tarjetas"
+  entrada: "¿Cuánta deuda tengo en las tarjetas?"
+  espera: "Consulta la deuda real de tarjetas con la herramienta adecuada; no inventa montos."
 
 # ───────── Salud: tool ─────────
 - id: tool_marcar_habito
   tipo: tool
-  tool_esperada: "salud_marcar_habito"
+  tool_esperada: "salud_marcar"
   entrada: "Listo, hoy fui al gym."
-  espera: "Marca el hábito de ejercicio con la herramienta de salud correcta (no finanzas). Confirma con su voz, quizás mencionando la racha."
+  espera: "Marca el hábito de ejercicio del día con la herramienta de salud correcta (no finanzas)."
 
 - id: tool_racha
   tipo: tool
@@ -70,24 +76,42 @@
   entrada: "¿Cuántos días llevo meditando seguido?"
   espera: "Consulta la racha de meditación con la herramienta de salud adecuada; no inventa el número."
 
-# ───────── Proyectos: tool ─────────
+# ───────── Proyectos / Tareas / Tiempo / Metas: tool ─────────
 - id: tool_crear_proyecto
   tipo: tool
   tool_esperada: "proy_crear"
   entrada: "Empecé a trabajar en un nuevo proyecto, una app móvil para controlar gastos."
-  espera: "Crea el proyecto con la herramienta correcta (proy_crear). No usa herramientas de finanzas ni salud."
-
-- id: tool_actualizar_proyecto
-  tipo: tool
-  tool_esperada: "proy_actualizar"
-  entrada: "El proyecto de la app va al 40%, avancé bastante esta semana."
-  espera: "Actualiza el progreso del proyecto con proy_actualizar. No inventa el estado ni usa otra herramienta."
+  espera: "Crea el proyecto con proy_crear. No usa herramientas de finanzas ni salud."
 
 - id: tool_listar_proyectos
   tipo: tool
   tool_esperada: "proy_listar"
   entrada: "¿Cómo van mis proyectos?"
-  espera: "Consulta el estado real de los proyectos con proy_listar antes de responder. No inventa ni asume."
+  espera: "Consulta el estado real de los proyectos con proy_listar antes de responder. No inventa."
+
+- id: tool_listar_tareas
+  tipo: tool
+  tool_esperada: "tarea_listar"
+  entrada: "¿Qué tareas pendientes tengo en la tesis?"
+  espera: "Consulta las tareas reales con tarea_listar. No inventa la lista."
+
+- id: tool_completar_tarea
+  tipo: tool
+  tool_esperada: "tarea_completar"
+  entrada: "Listo, terminé la revisión bibliográfica del capítulo 1."
+  espera: "Marca esa tarea como completada con tarea_completar. No usa otra herramienta."
+
+- id: tool_registrar_horas
+  tipo: tool
+  tool_esperada: "tiempo_registrar"
+  entrada: "Hoy le metí 3 horas a la tesis escribiendo el marco teórico."
+  espera: "Registra las horas con tiempo_registrar. Sin esa llamada no queda."
+
+- id: tool_metas_semana
+  tipo: tool
+  tool_esperada: "metas_get_semana"
+  entrada: "¿Cómo voy con mis metas de la semana?"
+  espera: "Consulta las metas reales de la semana con metas_get_semana. No inventa el avance."
 
 # ───────── Casos difíciles (potencia: criterio, no solo disparar un tool) ─────────
 - id: dificil_inferencia_sutil
@@ -107,7 +131,7 @@
 
 - id: dificil_multitool
   tipo: dificil
-  tools_esperadas: ["fin_registrar_gasto", "fin_get_balance"]
+  tools_esperadas: ["fin_registrar_transaccion", "fin_get_balance"]
   entrada: "Acabo de gastar 25000 en el súper con débito. Con eso, ¿cómo voy de plata este mes?"
   espera: "Registra el gasto Y consulta el balance — ambas herramientas, en una sola respuesta. No inventa el balance."
 
