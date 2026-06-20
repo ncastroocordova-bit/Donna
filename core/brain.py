@@ -1,6 +1,6 @@
 """El cerebro de Donna: agentic loop con carácter blindado.
 
-Plan v5 §4.1: la constitución + anclas se sirven como prefijo estable con PROMPT
+Plan v7 §7: la constitución + anclas se sirven como prefijo estable con PROMPT
 CACHING (cache_control), re-inyectadas completas en cada llamada pero baratas.
 El contexto se arma con presupuesto: prefijo cacheado + datos del día + top-k
 memorias relevantes (contextual retrieval, just-in-time). Historial largo → compactación.
@@ -10,15 +10,14 @@ from pathlib import Path
 
 from anthropic import AsyncAnthropic
 
-import agenda
-import memory
 from config import settings
-from modules import aprendizaje, finanzas, metas, proyectos, salud, tiempo
+from core import agenda, memory
+from modules import aprendizaje, finanzas, metas, proyectos, recordatorios, salud, spam, tiempo
 
 logger = logging.getLogger(__name__)
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-_PROMPTS = Path(__file__).parent / "prompts"
+_PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 CONSTITUTION = (_PROMPTS / "constitution.md").read_text(encoding="utf-8")
 ANCHORS = (_PROMPTS / "anchors.md").read_text(encoding="utf-8")
 CAPACIDADES = (_PROMPTS / "capacidades.md").read_text(encoding="utf-8")
@@ -162,20 +161,25 @@ _CORE_HANDLERS = {
 
 # Herramientas que MUTAN estado externo (Supabase/Sheets/Calendar). En modo eval
 # (dry_run) no se ejecutan: se devuelve un stub. La selección de tool igual se
-# verifica porque el nombre se registra antes de ejecutar. Así los evals no
-# contaminan la base de producción.
+# verifica porque el nombre se registra antes de ejecutar.
 WRITE_TOOLS = {
     "guardar_memoria", "actualizar_perfil", "abrir_inferencia", "registrar_compromiso",
-    "fin_registrar_transaccion",
-    "salud_marcar",
+    "fin_registrar_gasto",
+    "sal_marcar_habito", "sal_registrar_animo", "sal_registrar_sueno",
+    "rec_agregar",
     "proy_crear", "proy_actualizar", "proy_cerrar", "tarea_crear", "tarea_completar",
     "tiempo_registrar", "metas_actualizar",
 }
 
 # Tools del núcleo + módulos (con prefijo, sin solapamiento).
-ALL_TOOLS = CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + proyectos.TOOLS + tiempo.TOOLS + metas.TOOLS
-_HANDLERS = {**_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **proyectos.HANDLERS,
-             **tiempo.HANDLERS, **metas.HANDLERS}
+ALL_TOOLS = (
+    CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + recordatorios.TOOLS
+    + proyectos.TOOLS + tiempo.TOOLS + metas.TOOLS + spam.TOOLS
+)
+_HANDLERS = {
+    **_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **recordatorios.HANDLERS,
+    **proyectos.HANDLERS, **tiempo.HANDLERS, **metas.HANDLERS, **spam.HANDLERS,
+}
 
 
 async def _ejecutar_tool(name: str, inp: dict) -> str:
@@ -196,18 +200,27 @@ def _hint_tool(mensaje: str) -> str:
     Aparece en el contexto del usuario → más prominente que la tabla del system prompt."""
     msg = mensaje.lower()
     O = "[OBLIGATORIO ANTES DE RESPONDER] "
+    # El freno: cualquier compra en cuotas pasa primero por el costo real de la deuda.
+    if any(p in msg for p in ["en cuotas", "cuotas", "playstation", "lo compro en", "pagar en"]):
+        return O + "llama fin_estado_deuda ANTES de opinar: es el freno. Muéstrale el costo real de su deuda antes de que se comprometa con cuotas."
     if any(p in msg for p in ["gasté", "gaste", "pagué", "pague", "compré", "compre", "recibí", "recibi", "me pagaron", "me llegó"]):
-        return O + "llama fin_registrar_transaccion para registrar la transacción. Sin esta llamada no queda."
-    if any(p in msg for p in ["cómo voy de plata", "cuánto gasté", "balance", "cuánto llevo gastado", "cómo va mi plata"]):
-        return O + "llama fin_get_balance para el balance real del mes. No inventes cifras."
+        return O + "llama fin_registrar_gasto para anotarlo en el buffer del día (se confirma en el cierre). Sin esta llamada no queda."
+    if any(p in msg for p in ["cómo voy de plata", "cuánto gasté", "balance", "cuánto llevo gastado", "cómo va mi plata", "saldo"]):
+        return O + "llama fin_saldo_mes para el saldo real del mes. No inventes cifras."
     if any(p in msg for p in ["presupuesto", "me estoy pasando", "cuánto llevo en", "cuánto gasté en"]):
-        return O + "llama fin_get_presupuesto para comparar gasto vs presupuesto. No inventes."
-    if any(p in msg for p in ["tarjeta", "deuda", "cupo"]):
-        return O + "llama fin_get_tarjetas para la deuda/cupo real. No inventes montos."
-    if any(p in msg for p in ["fui al gym", "hice ejercicio", "medité", "medite", "ayuné", "ayune", "dormí", "dormi", "tomé agua", "luz solar", "estudié", "estudie"]):
-        return O + "llama salud_marcar para anotar el hábito del día. Sin esta llamada no queda."
+        return O + "llama fin_presupuesto para comparar gasto vs presupuesto. No inventes."
+    if any(p in msg for p in ["tarjeta", "deuda", "cupo", "cuánto debo"]):
+        return O + "llama fin_estado_deuda para la deuda/cupo real. No inventes montos."
+    if any(p in msg for p in ["fui al gym", "hice ejercicio", "medité", "medite", "ayuné", "ayune", "comí a las", "última comida"]):
+        return O + "llama sal_marcar_habito para anotar el hábito del día. Sin esta llamada no queda."
+    if any(p in msg for p in ["dormí", "dormi", "me acosté", "me dormí", "horas dormí"]):
+        return O + "llama sal_registrar_sueno para anotar el sueño. Sin esta llamada no queda."
     if any(p in msg for p in ["días llevo", "cuántos días", "cuál es mi racha", "llevo meditando", "llevo yendo"]):
-        return O + "llama salud_get_racha para la racha real. No inventes el número."
+        return O + "llama sal_racha para la racha real. No inventes el número."
+    if any(p in msg for p in ["recuérdame", "recuerdame", "avísame", "avisame", "no me olvides", "acuérdame"]):
+        return O + "llama rec_agregar para crear el recordatorio."
+    if any(p in msg for p in ["qué recordatorios", "qué pagos tengo", "qué se viene", "próximos pagos"]):
+        return O + "llama rec_proximos para los recordatorios reales. No inventes."
     if any(p in msg for p in ["cómo van mis proyectos", "qué proyectos tengo", "estado de mis proyectos"]):
         return O + "llama proy_listar para el estado real. No inventes."
     if any(p in msg for p in ["nuevo proyecto", "empecé un proyecto", "empece un proyecto", "quiero hacer un proyecto"]):
@@ -220,6 +233,8 @@ def _hint_tool(mensaje: str) -> str:
         return O + "llama tiempo_registrar para anotar las horas. Sin esta llamada no queda."
     if any(p in msg for p in ["mis metas", "metas de la semana", "cómo voy con las metas", "cómo voy esta semana"]):
         return O + "llama metas_get_semana para las metas reales de la semana. No inventes."
+    if any(p in msg for p in ["spam", "correo basura", "junk", "tengo correos basura", "tengo basura en el correo"]):
+        return O + "llama spam_resumen para mirar el spam real. No inventes cuántos hay."
     return ""
 
 
@@ -229,7 +244,7 @@ async def _armar_contexto(mensaje: str) -> str:
     aprendido = await aprendizaje.senal_aprendizaje()
     bloques = []
     if perfil:
-        bloques.append("Perfil de Nico:\n" + "\n".join(f"- {k}: {v}" for k, v in perfil.items()))
+        bloques.append("Perfil de Nico:\n" + "\n".join(f"- {k}: {v}" for k, v in perfil.items() if not k.startswith("_")))
     if memorias:
         bloques.append("Memorias relevantes:\n" + "\n".join(f"- [{m.get('contexto', '')}] {m['texto']}" for m in memorias))
     if aprendido:
@@ -346,18 +361,13 @@ async def responder(
 
 
 async def generar(prompt_text: str, model: str | None = None) -> str:
-    """Genera un mensaje proactivo (brief/cierre) sin historial, con contexto fresco."""
+    """Genera un mensaje proactivo (brief/cierre/proactividad) sin historial, con contexto fresco."""
     modelo = model or settings.model_brain
     contexto = await _armar_contexto(prompt_text)
-    resp = await _client.messages.create(
-        model=modelo,
-        max_tokens=1024,
-        system=_system_blocks(),
-        tools=ALL_TOOLS,
-        messages=[{"role": "user", "content": f"{contexto}\n\n{prompt_text}"}],
-    )
-    # Una sola pasada con posible tool_use → resolver tools y cerrar.
     working = [{"role": "user", "content": f"{contexto}\n\n{prompt_text}"}]
+    resp = await _client.messages.create(
+        model=modelo, max_tokens=1024, system=_system_blocks(), tools=ALL_TOOLS, messages=working,
+    )
     for _ in range(MAX_TURNS):
         working.append({"role": "assistant", "content": resp.content})
         if resp.stop_reason != "tool_use":

@@ -4,8 +4,8 @@ Hoja Tiempo: Fecha, Proyecto, Actividad, Descripcion, Inicio, Fin, Horas, Catego
 import logging
 from datetime import date, datetime
 
-import sheets
 from config import settings
+from core import sheets
 
 logger = logging.getLogger(__name__)
 

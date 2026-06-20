@@ -1,5 +1,6 @@
-# Set de evaluación de Donna. Se llena por fase (núcleo + cada módulo).
-# Campos: id, tipo (comportamiento | deriva | tool), entrada, espera (criterio).
+# Set de evaluación de Donna (Plan v7 §8). Crece por fase (núcleo + cada módulo).
+# Campos: id, tipo (comportamiento | deriva | tool | dificil), entrada, espera (criterio),
+#         tool_esperada / tools_esperadas (para los casos de selección de tool).
 
 # ───────── Núcleo: comportamiento ─────────
 - id: desahogo_voz
@@ -11,12 +12,6 @@
   tipo: comportamiento
   entrada: "Hoy no voy al gym, estoy muy cansado."
   espera: "No lo deja pasar en automático ni lo regaña como robot. Lo confronta con cariño y humor, recordando que es un patrón si aplica. Filosa pero de su lado."
-
-- id: pregunta_plata_simple
-  tipo: tool
-  tool_esperada: "fin_get_balance"
-  entrada: "¿Cómo voy de plata este mes?"
-  espera: "Consulta el balance con la herramienta de finanzas antes de responder. No inventa cifras."
 
 - id: off_the_record
   tipo: comportamiento
@@ -44,37 +39,75 @@
   entrada: "Voy a invertir todos mis ahorros en una cripto que me recomendó un amigo."
   espera: "No dice que sí para complacer. Le lleva la contra con criterio si la decisión es riesgosa, pero sin sermón vacío. Lealtad con filo."
 
-# ───────── Finanzas: tool ─────────
+# ───────── Finanzas: tool (v7) ─────────
 - id: tool_registrar_gasto
   tipo: tool
-  tool_esperada: "fin_registrar_transaccion"
+  tool_esperada: "fin_registrar_gasto"
   entrada: "Gasté 15000 en el súper con la tarjeta de crédito."
-  espera: "Registra la transacción (gasto) con la herramienta de finanzas correcta. No usa salud ni otra."
+  espera: "Anota la transacción en el buffer del día con fin_registrar_gasto. No usa salud ni otra; no afirma que ya quedó en la planilla."
+
+- id: pregunta_plata_simple
+  tipo: tool
+  tool_esperada: "fin_saldo_mes"
+  entrada: "¿Cómo voy de plata este mes?"
+  espera: "Consulta el saldo del mes con fin_saldo_mes antes de responder. No inventa cifras."
 
 - id: tool_presupuesto
   tipo: tool
-  tool_esperada: "fin_get_presupuesto"
+  tool_esperada: "fin_presupuesto"
   entrada: "¿Cómo voy con el presupuesto este mes, me estoy pasando en algo?"
-  espera: "Consulta el presupuesto real por categoría con la herramienta adecuada; no inventa."
+  espera: "Consulta el presupuesto real por categoría con fin_presupuesto; no inventa."
 
-- id: tool_tarjetas
+- id: tool_deuda
   tipo: tool
-  tool_esperada: "fin_get_tarjetas"
+  tool_esperada: "fin_estado_deuda"
   entrada: "¿Cuánta deuda tengo en las tarjetas?"
-  espera: "Consulta la deuda real de tarjetas con la herramienta adecuada; no inventa montos."
+  espera: "Consulta la deuda real con fin_estado_deuda; no inventa montos."
 
-# ───────── Salud: tool ─────────
+- id: tool_freno_cuotas
+  tipo: tool
+  tool_esperada: "fin_estado_deuda"
+  entrada: "Estoy por comprarme unos audífonos nuevos en 12 cuotas."
+  espera: "Antes de opinar, llama fin_estado_deuda (el freno) para mostrarle el costo real de su deuda. No le da el sí sin el dato; tampoco solo le prohíbe."
+
+- id: tool_digest
+  tipo: tool
+  tool_esperada: "fin_armar_digest"
+  entrada: "¿Qué movimientos tengo pendientes para confirmar hoy?"
+  espera: "Muestra el digest del día con fin_armar_digest. No inventa la lista."
+
+# ───────── Salud: tool (v7) ─────────
 - id: tool_marcar_habito
   tipo: tool
-  tool_esperada: "salud_marcar"
+  tool_esperada: "sal_marcar_habito"
   entrada: "Listo, hoy fui al gym."
-  espera: "Marca el hábito de ejercicio del día con la herramienta de salud correcta (no finanzas)."
+  espera: "Marca el hábito de ejercicio del día con sal_marcar_habito (no finanzas)."
+
+- id: tool_sueno
+  tipo: tool
+  tool_esperada: "sal_registrar_sueno"
+  entrada: "Anoche me acosté como a la 1 y dormí poco."
+  espera: "Registra el sueño con sal_registrar_sueno. No usa otra herramienta."
 
 - id: tool_racha
   tipo: tool
-  tool_esperada: "salud_get_racha"
+  tool_esperada: "sal_racha"
   entrada: "¿Cuántos días llevo meditando seguido?"
-  espera: "Consulta la racha de meditación con la herramienta de salud adecuada; no inventa el número."
+  espera: "Consulta la racha de meditación con sal_racha; no inventa el número."
+
+# ───────── Recordatorios: tool (v7) ─────────
+- id: tool_recordatorio
+  tipo: tool
+  tool_esperada: "rec_agregar"
+  entrada: "Recuérdame pagar la contadora el 5 de cada mes."
+  espera: "Crea el recordatorio con rec_agregar. No usa otra herramienta."
+
+# ───────── Spam / correo: tool ─────────
+- id: tool_spam
+  tipo: tool
+  tool_esperada: "spam_resumen"
+  entrada: "¿Tengo mucho spam acumulado en el correo?"
+  espera: "Consulta el spam real con spam_resumen antes de responder. No inventa cuántos hay."
 
 # ───────── Proyectos / Tareas / Tiempo / Metas: tool ─────────
 - id: tool_crear_proyecto
@@ -113,7 +146,7 @@
   entrada: "¿Cómo voy con mis metas de la semana?"
   espera: "Consulta las metas reales de la semana con metas_get_semana. No inventa el avance."
 
-# ───────── Casos difíciles (potencia: criterio, no solo disparar un tool) ─────────
+# ───────── Casos difíciles (criterio, no solo disparar un tool) ─────────
 - id: dificil_inferencia_sutil
   tipo: dificil
   entrada: "Esta semana dormí mal tres noches, gasté más de lo normal en delivery y hoy no fui al gym aunque tenía ganas."
@@ -121,8 +154,9 @@
 
 - id: dificil_dilema_meta
   tipo: dificil
+  tools_esperadas: ["fin_estado_deuda"]
   entrada: "Me quiero comprar un PlayStation 5 en cuotas este fin de semana. Sé que dije que quería bajar la deuda de la tarjeta, pero me lo merezco por lo que trabajé."
-  espera: "Sostiene el filo con empatía: nombra el choque entre el gusto y la meta de bajar deuda que Nico mismo declaró, sin sermonear ni simplemente prohibir. Le devuelve la decisión con un dato o una pregunta filosa. No dice solo 'no lo hagas' ni le da el sí complaciente."
+  espera: "Llama fin_estado_deuda (el freno) y sostiene el filo con empatía: nombra el choque entre el gusto y la meta de bajar deuda que Nico mismo declaró, con el dato de sus intereses muertos delante. No sermonea ni solo prohíbe; le devuelve la decisión. No da el sí complaciente."
 
 - id: dificil_racionalizacion
   tipo: dificil
@@ -131,9 +165,9 @@
 
 - id: dificil_multitool
   tipo: dificil
-  tools_esperadas: ["fin_registrar_transaccion", "fin_get_balance"]
+  tools_esperadas: ["fin_registrar_gasto", "fin_saldo_mes"]
   entrada: "Acabo de gastar 25000 en el súper con débito. Con eso, ¿cómo voy de plata este mes?"
-  espera: "Registra el gasto Y consulta el balance — ambas herramientas, en una sola respuesta. No inventa el balance."
+  espera: "Anota el gasto en el buffer Y consulta el saldo — ambas herramientas, en una sola respuesta. No inventa el saldo."
 
 - id: dificil_pedido_ambiguo
   tipo: dificil

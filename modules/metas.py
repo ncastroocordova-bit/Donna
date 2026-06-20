@@ -5,8 +5,8 @@ Horas_Proy, Meta_HProy, Tareas_Noomi, Meta_Tareas, Notas.
 import logging
 from datetime import date, datetime
 
-import sheets
 from config import settings
+from core import sheets
 
 logger = logging.getLogger(__name__)
 

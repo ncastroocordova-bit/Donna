@@ -17,7 +17,7 @@ import logging
 from datetime import datetime, timedelta
 
 from config import settings
-from memory import _get_db
+from core.memory import _get_db
 
 logger = logging.getLogger(__name__)
 

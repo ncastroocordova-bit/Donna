@@ -14,12 +14,18 @@ voyageai>=0.3.0
 # Voz
 openai>=1.40.0
 
-# Datos de módulos (Sheets + Calendar)
+# Datos de módulos (Sheets + Calendar + Gmail)
 google-api-python-client>=2.140.0
 google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0
+
+# Correo: Outlook personal vía Microsoft Graph
+msal>=1.28.0
+requests>=2.31.0
 
 # Evals
 pyyaml>=6.0
+pytest>=8.0
 
 # Config
 pydantic>=2.8.0

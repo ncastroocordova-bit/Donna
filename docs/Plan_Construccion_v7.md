@@ -1,0 +1,116 @@
+# Plan de Construcción Donna v7.2 — Runbook de EXTENSIÓN para Claude Code
+
+**Para:** Nico
+**Compañero:** `Plan_Donna_v7.md` (el qué y el porqué) · `Alineacion_Donna.md` (las 8 brechas) · `CLAUDE.md` (contrato del repo).
+**Cambio de marco (importante):** Donna.zip **ya está ~80% construida** (núcleo, salud, finanzas, digest, memoria, voz, agenda, proactividad, aprendizaje). Este runbook **NO reconstruye**: extiende el repo existente para cerrar las 8 brechas hacia el canon. No tocas lo que ya calza.
+**Regla de oro:** ningún paso está terminado hasta que **su eval pasa** y está **deployado en Railway**. No avanzas si el "LISTO CUANDO" no se cumple.
+**Stack (ya montado):** Python (monolito) · Telegram · Supabase + pgvector · Anthropic SDK (caching) · Voyage · Whisper · Google Sheets API · Gmail API · Railway.
+**Cómo usar:** copia el bloque "PROMPT" de cada paso, pégalo en Claude Code, no marques hecho hasta el "LISTO CUANDO". Trabaja sobre el repo de Donna.zip (sácale antes `.env` y `credentials.json` del control de versiones).
+
+---
+
+## FASE E0 — Verificación y esquema (antes de tocar lógica)
+
+> **PROMPT:**
+> Estás extendiendo un bot existente (repo Donna). Primero **no escribas lógica nueva**: (1) corre el repo local y confirma que `/start`, el brief y el cierre arrancan; (2) lista qué módulos existen en `modules/` y `core/` y reporta cuáles están vivos. Luego **re-sincroniza el esquema de hojas**: actualiza `setup_sheets.py` para que los tabs y headers calcen **exactamente** con `Donna_Canonico.xlsx` (Diario 12 col; Recordatorios con `Estado`/`Posposiciones`/`Ultima_Accion` y tipo `unica`; tab nuevo `Reconciliacion`; `Semanal` con columnas de tiempo-por-frente + `Factor_Optimismo`; `Config` con filas de módulos ON/OFF). NO borres datos existentes: solo agrega tabs/columnas que falten.
+
+**LISTO CUANDO:** el bot arranca y responde; `setup_sheets.py` deja la planilla con los tabs/headers del `Donna_Canonico.xlsx` sin perder filas; reportaste el inventario de módulos vivos.
+
+---
+
+## FASE E1 — Recordatorios: escalera ⭐
+
+> **PROMPT:**
+> Extiende `modules/recordatorios.py` (prefijo `rec_`) a la **escalera** (hoy es básico). El tab `Recordatorios` ahora tiene tipo **mensual/anual/única**, `Estado` (pendiente/hecho/pospuesto), `Posposiciones`, `Ultima_Accion`. Implementa:
+> - `rec_semana()` → todos los de los próximos 7 días, en un bloque (preview del domingo).
+> - `rec_proximos()` → los que disparan **hoy**: T-2 (2 días antes) y T-0 (el día); el T-0 con acción **✅ Hecho**.
+> - `rec_marcar_hecho(id)` → `Estado=hecho`; si es recurrente, agenda la próxima; si es única, cierra.
+> - `rec_posponer(id, hasta)` → exige **día concreto**; incrementa `Posposiciones`. Tras 3, marca el patrón para que Donna lo nombre.
+> - `rec_vencidos()` → pendientes con fecha pasada (alimenta la escalada del scheduler, E-siguiente).
+> - `rec_agregar(texto)` → parsea recurrente **y único** ("el IVA el 12" / "dentista el viernes 3pm"). Anti-duplicado con `Tareas`: con fecha + persigue = recordatorio; backlog sin fecha = tarea.
+> Ver spec detallado en `Spec_Herramientas_Nuevas.md §rec_`.
+
+**LISTO CUANDO:** `rec_semana()` lista los 7 días; `rec_proximos()` dispara T-2 y T-0; ✅ Hecho cierra y reagenda si recurrente; posponer sin fecha se rechaza; un vencido aparece en `rec_vencidos()`.
+
+---
+
+## FASE E2 — Correo: invariante "jamás borra" + triage 3 buckets ⭐
+
+> **PROMPT:**
+> Dos arreglos sobre `core/correo.py` + `modules/spam.py`:
+> **(A) Invariante duro:** el manejo de spam HOY manda a la papelera ("Borrar todo"). Cámbialo: spam/bulk → aplica etiqueta `Donna/Archivado` y **quita `INBOX`**, **nunca `trash`/`delete`**. Quita toda ruta de borrado. El botón pasa a "🗄️ Archivar todo" / "✋ Conservar".
+> **(B) Triage de 3 buckets:** además de gasto + spam, clasifica TODO el inbox en **spam/bulk → archivar · importante → resumen brief · financiero → digest**. Pipeline por costo: Gmail spam (gratis) → reglas (`List-Unsubscribe`, `no-reply`, allowlist financiera, allowlist importantes) → LLM **solo el residuo, una llamada, `{remitente, asunto, snippet}`, nunca el cuerpo**. Agrega `cor_resumen_brief()` (conteo por bucket + 1 línea por importante, solo lectura) y `cor_reconciliar()` (diario, sin LLM: lo rescatado de `Donna/Archivado` sube a importante en tabla `remitentes`).
+> Ver `Spec_Herramientas_Nuevas.md §cor_`.
+
+**LISTO CUANDO:** corres el triage sobre tu inbox real; los 3 buckets salen con conteos correctos; un marketing se archiva (etiqueta puesta, `INBOX` quitado) y **assert: ninguna acción llamó a trash/delete**; rescatas uno y al otro día su remitente entra como importante.
+
+---
+
+## FASE E3 — Correo dedicado financiero
+
+> **PROMPT (manual + código):**
+> **Manual (una vez):** casilla `finanzas.nico@…`, redirige ahí los avisos de bancos/servicios, da lectura a Donna (OAuth/service account). **Crítico:** deja la allowlist del inbox viejo corriendo **en paralelo** hasta confirmar que el nuevo recibe todo.
+> **Código:** en `modules/finanzas.py`, agrega la casilla dedicada como **segunda fuente** de `fin_procesar_correo`. Dentro de ella, igual filtra: transacción = monto + palabra clave (`compra`/`cargo`/`transferencia`/`giro`); marketing = `List-Unsubscribe` → archivar. En `⚙️ Config`, `Correo Outlook = OFF` (no se usa).
+
+**LISTO CUANDO:** una alerta real al correo dedicado entra al digest; marketing del mismo banco se archiva; el inbox viejo sigue cubierto en paralelo.
+
+---
+
+## FASE E4 — Reconciliación nocturna (opción 1, con delta) ⭐
+
+> **PROMPT:**
+> Scope nuevo, prefijo `prod_`. En el **cierre 22:00** (extiende `core/scheduler.py`), tras el digest, agrega el flujo de reconciliación SIN tocar el brief:
+> - `prod_bloques_hoy()` → lee de `core/agenda.py` los bloques/eventos del Google Calendar de hoy.
+> - Panel de toques: "✅ Hice todo" (un toque si el día salió) **o** tocas solo los que no; por cada bloque, ⏱️ **Menos / Igual / Más** de lo que pusiste. Mismo patrón "aceptar todo / corrige excepciones" del digest.
+> - `prod_guardar_reconciliacion(items)` → escribe en el tab `Reconciliacion` (Fecha, Bloque, Frente∈{Tesis,Noomi,Delivery,Hijo,Personal}, Min planeados, ¿Hecho?, Delta, Min reales). El frente se infiere del evento (etiqueta/keyword) y se confirma con toque si dudoso.
+> - El Semanal del domingo suma `Min reales` por frente → columnas h Tesis/Noomi/Delivery/Hijo. **El brief queda intacto.**
+> Ver `Spec_Herramientas_Nuevas.md §prod_`.
+
+**LISTO CUANDO:** simulas el cierre con 3 bloques en Calendar; "Hice todo" los marca hechos con su duración; corriges uno a "Menos"; el tab `Reconciliacion` queda escrito; el Semanal del domingo muestra horas por frente. El brief de la mañana no cambió.
+
+---
+
+## FASE E5 — Factor de optimismo (sobre aprendizaje) ⭐
+
+> **PROMPT:**
+> Extiende `modules/aprendizaje.py` (prefijo `apr_`). Usando lo que escribe la reconciliación (E4):
+> - `apr_factor_optimismo(frente)` → ratio plan-vs-real por frente sobre las últimas N semanas (reference class forecasting personal): si planeas 5h de tesis y haces 3h, factor ≈ 0,6. **Persiste el modelo aprendido en Supabase (tabla `aprendizaje`, migración 007)**; en el `Semanal` escribe SOLO el resultado legible `Factor_Optimismo`.
+> - `apr_observador(plan_propuesto)` → cuando planificas de más, devuelve la señal de observador externo: "dijiste 5 bloques de tesis; tu promedio real es 3 — ¿bajamos esto?". Requiere ≥2-3 semanas de datos antes de hablar; mientras tanto, calla.
+> Inferencia validada: el factor SIEMPRE viene con el dato (semanas y promedio) que lo respalda. **Capa de datos:** registros en Sheets (`Reconciliacion`), aprendizaje en Supabase — nunca al revés. Ver `Spec_Herramientas_Nuevas.md §apr_`.
+
+**LISTO CUANDO:** con 3 semanas de datos simulados, `apr_factor_optimismo('Tesis')` da un ratio coherente y queda persistido en Supabase; `apr_observador` frena un plan inflado mostrando el promedio real; con <2 semanas, se queda callado.
+
+---
+
+## FASE E6 — Poda: productividad simple
+
+> **PROMPT:**
+> Alinea la capa de productividad al canon **simple**:
+> - `⚙️ Config`: `Módulo Tiempo (log diario) = OFF`. Deja `modules/tiempo.py` en el repo pero **desconectado del scheduler** (dormido; se promueve después si el sistema lleva semanas vivo).
+> - Simplifica el tab/uso de `Tareas`: de "fases de proyecto" a **tareas sueltas** (Creada, Descripción, Proyecto, Tipo, Fecha objetivo, Estado, Completada, Notas), como en `Donna_Canonico.xlsx`.
+> - `metas.py`: o se pliega al `Semanal` o queda dormido; no debe pedir input diario.
+> - El tiempo-por-frente NO viene de un log diario, viene de la reconciliación (E4).
+
+**LISTO CUANDO:** el scheduler no llama a `tiempo.py` ni pide log de tiempo; `Tareas` funciona como tareas sueltas; `Config` refleja Tiempo OFF, Outlook OFF, Aprendizaje ON, Proactividad ON.
+
+---
+
+## FASE E7 — Evals nuevos + redeploy
+
+> **PROMPT:**
+> Agrega a `tests/evals.py` (y `tests/casos.yaml`) los casos del canon: (1) **correo jamás borra** — assert que ninguna acción llama a trash/delete; (2) **triage** — bucketing correcto sobre un set fijo; (3) **escalera** — T-2/T-0/vencido disparan cuando deben; (4) **posponer** — sin fecha se rechaza; tras 3, nombra el patrón; (5) **reconciliación** — "Hice todo" escribe duraciones; un "Menos" baja los minutos reales; (6) **factor de optimismo** — con <2 semanas calla, con ≥3 frena un plan inflado con su dato. Mantén los evals previos (deriva, digest, freno de deuda). Corre `pytest`, redeploy a Railway, confirma brief + cierre + reconciliación reales en producción.
+
+**LISTO CUANDO:** `pytest tests/evals.py` pasa todo (viejos + nuevos); el bot corre 24h en Railway; recibiste brief, cierre y reconciliación reales.
+
+---
+
+## Reglas para Claude Code (en cada paso)
+- **No reconstruyas lo que ya calza** (ver `Alineacion_Donna.md` §3 "calza fuerte"). Extiende, no reescribas.
+- Respeta el contrato: prefijos `sal_`/`fin_`/`rec_`/`cor_`/`prod_`/`apr_`, sin solapamiento, señal destilada hacia arriba, trabajo pesado aislado, degradación elegante.
+- **Invariantes duros:** Donna jamás borra correo (solo etiqueta). Jamás escribe a Sheets sin tu OK (digest/reconciliación). Jamás afirma sin el dato (inferencia validada).
+- Toques > texto; el cierre es **un** panel; el brief es **solo lectura** (nada de reconciliación en la mañana).
+- Al final de cada paso: corre su eval y haz commit.
+
+---
+
+*El próximo artefacto no es un v8. Es la Fase E1 cerrada y commiteada en el repo de Donna.*

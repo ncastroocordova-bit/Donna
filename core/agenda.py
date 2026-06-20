@@ -67,7 +67,7 @@ async def eventos_de_hoy() -> list[dict]:
 
 
 async def crear_evento(titulo: str, inicio: datetime, fin: datetime) -> str:
-    """Crea un evento en el calendario de Nico. Devuelve el link o mensaje de error."""
+    """Crea un evento en el calendario de Nico. Devuelve el link o '' si falla."""
     def _call():
         evento = {
             "summary": titulo,
@@ -78,8 +78,7 @@ async def crear_evento(titulo: str, inicio: datetime, fin: datetime) -> str:
         return r.get("htmlLink", "")
 
     try:
-        link = await asyncio.to_thread(_call)
-        return link
+        return await asyncio.to_thread(_call)
     except Exception:
         logger.exception("No pude crear el evento en el calendario.")
         return ""

@@ -1,11 +1,12 @@
 """La memoria de Donna: Supabase (pgvector) + contextual retrieval + política de guardado.
 
-Diseño clave (Plan v5 §4.2): cada nota se guarda VERBATIM (`texto`) junto a una
+Diseño clave (Plan v7 §7): cada nota se guarda VERBATIM (`texto`) junto a una
 etiqueta de CONTEXTO (`contexto`: fecha/dominio/situación). Lo que se embebe es la
 versión contextualizada (contexto + texto), así `buscar_memoria` recupera la memoria
 *correcta*, no solo la parecida. Embeddings con Voyage AI.
 
-4 tablas: perfil, memoria, inferencias, compromisos.
+Tablas: perfil, memoria, inferencias, compromisos (núcleo) + buffer_transacciones
+(alimenta el digest nocturno) + jobs_log (resiliencia del scheduler).
 """
 import asyncio
 import logging
@@ -45,6 +46,10 @@ async def _embed(texto: str, input_type: str) -> list[float] | None:
         return None
 
 
+def _hoy() -> str:
+    return datetime.now(settings.tz).strftime("%Y-%m-%d")
+
+
 def _etiqueta_contexto(dominio: str | None, situacion: str | None) -> str:
     fecha = datetime.now(settings.tz).strftime("%Y-%m-%d %A")
     partes = [fecha]
@@ -58,7 +63,7 @@ def _etiqueta_contexto(dominio: str | None, situacion: str | None) -> str:
 # ───────────────────────── Política de guardado ─────────────────────────
 
 async def es_relevante(texto: str) -> bool:
-    """Barra de relevancia (Plan v5 §4.3): descarta lo trivial. Usa el modelo barato.
+    """Barra de relevancia (Plan v7 §7): descarta lo trivial. Usa el modelo barato.
     Ante cualquier duda o error, devuelve True (mejor guardar de más que perder algo)."""
     try:
         r = await _anthropic.messages.create(
@@ -197,3 +202,91 @@ async def get_compromisos_abiertos() -> list[dict]:
 async def cerrar_compromiso(compromiso_id: str, estado: str = "cumplido") -> None:
     db = await _get_db()
     await db.table("compromisos").update({"estado": estado}).eq("id", compromiso_id).execute()
+
+
+# ───────────────────────── Buffer del digest financiero ─────────────────────────
+# El digest no escribe a Sheets durante el día: acumula acá y confirma de noche.
+
+async def buffer_existe(id_unico: str) -> bool:
+    """¿Ya tengo esta transacción en el buffer? (anti-duplicado por ID_Único)."""
+    if not id_unico:
+        return False
+    db = await _get_db()
+    r = await db.table("buffer_transacciones").select("id").eq("id_unico", id_unico).limit(1).execute()
+    return bool(r.data)
+
+
+async def buffer_agregar(tx: dict) -> bool:
+    """Agrega una transacción detectada (de correo o foto) al buffer del día.
+    Devuelve False si ya estaba (duplicado). `tx` trae fecha/tipo/categoria/comercio/monto/medio/fuente
+    + opcional dudosa/motivo_duda/id_unico."""
+    id_unico = tx.get("id_unico", "")
+    if await buffer_existe(id_unico):
+        return False
+    db = await _get_db()
+    payload = {
+        "fecha": tx.get("fecha") or _hoy(),
+        "tipo": tx.get("tipo", "Gasto"),
+        "categoria": tx.get("categoria", ""),
+        "subcategoria": tx.get("subcategoria", ""),
+        "comercio": tx.get("comercio", ""),
+        "monto": tx.get("monto", 0),
+        "medio": tx.get("medio", ""),
+        "fuente": tx.get("fuente", ""),
+        "id_unico": id_unico or None,
+        "dudosa": bool(tx.get("dudosa", False)),
+        "motivo_duda": tx.get("motivo_duda", ""),
+        "estado": "pendiente",
+    }
+    await db.table("buffer_transacciones").insert(payload).execute()
+    return True
+
+
+async def buffer_pendientes(fecha: str | None = None) -> list[dict]:
+    """Las transacciones del día aún sin confirmar (para armar el digest)."""
+    db = await _get_db()
+    q = db.table("buffer_transacciones").select("*").eq("estado", "pendiente")
+    if fecha:
+        q = q.eq("fecha", fecha)
+    r = await q.order("created_at").execute()
+    return r.data
+
+
+async def buffer_actualizar(buffer_id: str, campos: dict) -> None:
+    db = await _get_db()
+    await db.table("buffer_transacciones").update(campos).eq("id", buffer_id).execute()
+
+
+async def buffer_marcar(buffer_id: str, estado: str) -> None:
+    await buffer_actualizar(buffer_id, {"estado": estado})
+
+
+# ───────────────────────── jobs_log: resiliencia del scheduler ─────────────────────────
+
+async def job_ya_corrio(job: str, fecha: str | None = None) -> bool:
+    fecha = fecha or _hoy()
+    db = await _get_db()
+    r = await db.table("jobs_log").select("job").eq("job", job).eq("fecha", fecha).limit(1).execute()
+    return bool(r.data)
+
+
+async def marcar_job(job: str, fecha: str | None = None) -> None:
+    fecha = fecha or _hoy()
+    db = await _get_db()
+    await db.table("jobs_log").upsert({"job": job, "fecha": fecha}, on_conflict="job,fecha").execute()
+
+
+# ───────────────────────── Correos ya procesados (anti-reproceso) ─────────────────────────
+
+async def correo_visto(proveedor: str, msg_id: str) -> bool:
+    db = await _get_db()
+    r = (await db.table("correos_vistos").select("msg_id")
+         .eq("proveedor", proveedor).eq("msg_id", msg_id).limit(1).execute())
+    return bool(r.data)
+
+
+async def marcar_correo_visto(proveedor: str, msg_id: str, tipo: str = "gasto") -> None:
+    db = await _get_db()
+    await db.table("correos_vistos").upsert(
+        {"proveedor": proveedor, "msg_id": msg_id, "tipo": tipo}, on_conflict="proveedor,msg_id"
+    ).execute()

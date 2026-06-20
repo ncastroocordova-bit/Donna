@@ -6,8 +6,8 @@ El %Avance se computa desde Tareas (completadas/total). Degradación elegante.
 import logging
 from datetime import datetime
 
-import sheets
 from config import settings
+from core import sheets
 
 logger = logging.getLogger(__name__)
 

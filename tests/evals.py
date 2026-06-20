@@ -1,14 +1,16 @@
-"""Capa de evaluación (Plan v5 §5). Corre los casos de evals/casos.yaml contra el
+"""Capa de evaluación (Plan v7 §8). Corre los casos de tests/casos.yaml contra el
 brain y juzga cada respuesta. Reporta pasa/falla.
 
-Regla del proyecto: ningún cambio (constitución, modelo, módulo) se da por bueno
-hasta que estos evals pasan. Cada módulo agrega sus casos a casos.yaml.
+Regla del proyecto: ningún paso está terminado hasta que estos evals pasan (y está
+deployado en Railway). Cada módulo agrega sus casos a casos.yaml.
 
 Uso:
-  python evals.py              # corre el modelo de config.py (producción)
-  python evals.py --comparar   # corre Sonnet 4.6 vs Opus 4.8 lado a lado (potencia + costo)
+  python -m tests.evals              # corre el modelo de config.py (producción)
+  python -m tests.evals --comparar   # corre Sonnet 4.6 vs Opus 4.8 lado a lado (potencia + costo)
+  pytest tests/evals.py              # mismo set; se salta solo si falta ANTHROPIC_API_KEY
 """
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -16,14 +18,13 @@ import anthropic
 import yaml
 from anthropic import AsyncAnthropic
 
-import brain
 from config import settings
+from core import brain
 
 _judge = AsyncAnthropic(api_key=settings.anthropic_api_key)
-CASOS = Path(__file__).parent / "evals" / "casos.yaml"
+CASOS = Path(__file__).parent / "casos.yaml"
 
-# El juez es fijo: así la comparación entre modelos de Donna es justa y no queda
-# contaminada por la variabilidad (ni los 500 transitorios) del modelo evaluado.
+# El juez es fijo: así la comparación entre modelos de Donna es justa.
 JUDGE_MODEL = "claude-sonnet-4-6"
 
 # Tarifas USD por millón de tokens (cache write = 5min). Fuente: pricing oficial.
@@ -39,7 +40,6 @@ JUEZ_SYSTEM = (
     "PASA o FALLA. En la segunda, una razón breve."
 )
 
-# Errores transitorios del servidor que justifican reintento con backoff.
 _RETRYABLE = (
     anthropic.InternalServerError,
     anthropic.APITimeoutError,
@@ -49,8 +49,6 @@ _RETRYABLE = (
 
 
 async def _reintentar(factory, intentos: int = 5):
-    """Ejecuta una corrutina con backoff exponencial ante 500/timeout/overload.
-    `factory` es un callable sin args que devuelve una corrutina nueva en cada intento."""
     for n in range(intentos):
         try:
             return await factory()
@@ -72,7 +70,6 @@ async def _juzgar(entrada: str, criterio: str, respuesta: str) -> tuple[bool, st
 
 
 def _tools_esperadas(c: dict) -> list[str]:
-    """Devuelve la lista de tools que el caso exige (string único o lista)."""
     if c.get("tools_esperadas"):
         return list(c["tools_esperadas"])
     if c.get("tool_esperada"):
@@ -93,8 +90,6 @@ def _costo(uso: dict, model: str) -> float:
 
 
 async def correr(model: str, verbose: bool = True) -> dict:
-    """Corre todos los casos con el brain en `model` (juez siempre JUDGE_MODEL).
-    Devuelve {model, pasados, total, fallidos, uso}."""
     casos = yaml.safe_load(CASOS.read_text(encoding="utf-8"))
     if verbose:
         print(f"\n=== {model} — {len(casos)} casos ===\n")
@@ -116,7 +111,6 @@ async def correr(model: str, verbose: bool = True) -> dict:
 
         esperadas = _tools_esperadas(c)
         if esperadas:
-            # Verificación directa: ¿se llamaron todas las herramientas correctas?
             faltan = [t for t in esperadas if t not in tools_llamadas]
             ok = not faltan
             veredicto = (
@@ -161,6 +155,15 @@ def _imprimir_comparacion(res_a: dict, res_b: dict) -> None:
         if r["fallidos"]:
             print(f"\n{nombre} falló: {', '.join(r['fallidos'])}")
     print()
+
+
+def test_evals():
+    """Entrada para pytest. Se salta sola si no hay API key (CI sin secretos)."""
+    import pytest
+    if not os.getenv("ANTHROPIC_API_KEY") and not settings.anthropic_api_key:
+        pytest.skip("Sin ANTHROPIC_API_KEY; evals requieren la API.")
+    res = asyncio.run(correr(settings.model_brain, verbose=False))
+    assert res["pasados"] == res["total"], f"Fallaron: {res['fallidos']}"
 
 
 async def _main() -> bool:

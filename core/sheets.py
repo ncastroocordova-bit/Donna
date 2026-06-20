@@ -1,7 +1,10 @@
 """Capa de Google Sheets (datos de los módulos). Auth por service account.
 
-Los helpers son async: el cliente de Google es bloqueante, así que el trabajo
-real corre en un hilo (asyncio.to_thread) para no tapar el event loop del bot.
+v7 usa DOS planillas: Vida_v6 (vida) y Finanzas_vigente (plata). Cada helper toma
+un `sheet_id` opcional; por defecto apunta a Vida. Finanzas pasa `sheets.fin_id()`.
+
+Los helpers son async: el cliente de Google es bloqueante, así que el trabajo real
+corre en un hilo (asyncio.to_thread) para no tapar el event loop del bot.
 """
 import asyncio
 import json
@@ -16,6 +19,24 @@ logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 _service = None
+
+
+def vida_id() -> str:
+    return settings.sheet_vida
+
+
+def fin_id() -> str:
+    return settings.sheet_finanzas
+
+
+def _sid(sheet_id: str | None) -> str:
+    return sheet_id or vida_id()
+
+
+def _rng(hoja: str, a1: str) -> str:
+    """A1 con el nombre de hoja siempre entre comillas simples (Sheets lo exige cuando
+    el título lleva espacios o tildes, ej. 'Tarjetas de Crédito'!B85). Comillas internas → dobladas."""
+    return f"'{hoja.replace(chr(39), chr(39) * 2)}'!{a1}"
 
 
 def _get_creds(scopes):
@@ -33,11 +54,11 @@ def _svc():
     return _service
 
 
-async def append_row(hoja: str, valores: list) -> None:
+async def append_row(hoja: str, valores: list, sheet_id: str | None = None) -> None:
     def _call():
         _svc().spreadsheets().values().append(
-            spreadsheetId=settings.google_sheet_id,
-            range=f"{hoja}!A:Z",
+            spreadsheetId=_sid(sheet_id),
+            range=_rng(hoja, "A:Z"),
             valueInputOption="USER_ENTERED",
             insertDataOption="INSERT_ROWS",
             body={"values": [valores]},
@@ -46,13 +67,13 @@ async def append_row(hoja: str, valores: list) -> None:
     await asyncio.to_thread(_call)
 
 
-async def get_rows(hoja: str, rango: str = "A:Z") -> list[list]:
+async def get_rows(hoja: str, rango: str = "A:Z", sheet_id: str | None = None) -> list[list]:
     def _call():
         r = (
             _svc()
             .spreadsheets()
             .values()
-            .get(spreadsheetId=settings.google_sheet_id, range=f"{hoja}!{rango}")
+            .get(spreadsheetId=_sid(sheet_id), range=_rng(hoja, rango))
             .execute()
         )
         return r.get("values", [])
@@ -60,13 +81,32 @@ async def get_rows(hoja: str, rango: str = "A:Z") -> list[list]:
     return await asyncio.to_thread(_call)
 
 
-async def get_dicts(hoja: str) -> list[dict]:
+async def get_dicts(hoja: str, sheet_id: str | None = None) -> list[dict]:
     """Lee una hoja con encabezados en la fila 1 y devuelve lista de dicts."""
-    filas = await get_rows(hoja)
+    filas = await get_rows(hoja, sheet_id=sheet_id)
     if not filas:
         return []
     headers = filas[0]
     return [dict(zip(headers, fila)) for fila in filas[1:]]
+
+
+async def get_celda(hoja: str, celda: str, sheet_id: str | None = None) -> str:
+    """Lee UNA celda por referencia A1 (ej. 'B85'). Devuelve '' si está vacía.
+
+    Lo usa el faro de deuda (Plan_Construccion_v7 Paso 1.5C): la planilla
+    Finanzas_vigente trae las métricas ya calculadas en celdas fijas."""
+    def _call():
+        r = (
+            _svc()
+            .spreadsheets()
+            .values()
+            .get(spreadsheetId=_sid(sheet_id), range=_rng(hoja, celda))
+            .execute()
+        )
+        vals = r.get("values", [])
+        return str(vals[0][0]) if vals and vals[0] else ""
+
+    return await asyncio.to_thread(_call)
 
 
 def _col_letter(idx0: int) -> str:
@@ -79,13 +119,13 @@ def _col_letter(idx0: int) -> str:
     return s
 
 
-async def set_cell(hoja: str, fila: int, col_idx0: int, valor) -> None:
+async def set_cell(hoja: str, fila: int, col_idx0: int, valor, sheet_id: str | None = None) -> None:
     """Escribe una celda (fila 1-based, columna 0-based)."""
-    rango = f"{hoja}!{_col_letter(col_idx0)}{fila}"
+    rango = _rng(hoja, f"{_col_letter(col_idx0)}{fila}")
 
     def _call():
         _svc().spreadsheets().values().update(
-            spreadsheetId=settings.google_sheet_id,
+            spreadsheetId=_sid(sheet_id),
             range=rango,
             valueInputOption="USER_ENTERED",
             body={"values": [[valor]]},
@@ -94,10 +134,12 @@ async def set_cell(hoja: str, fila: int, col_idx0: int, valor) -> None:
     await asyncio.to_thread(_call)
 
 
-async def upsert_por_clave(hoja: str, clave_col: str, clave_val: str, set_col: str, valor) -> str:
+async def upsert_por_clave(
+    hoja: str, clave_col: str, clave_val: str, set_col: str, valor, sheet_id: str | None = None
+) -> str:
     """Busca la fila donde `clave_col` == `clave_val` y setea `set_col`=valor.
     Si no existe la fila, la crea con la clave + el valor. Devuelve un estado."""
-    filas = await get_rows(hoja)
+    filas = await get_rows(hoja, sheet_id=sheet_id)
     if not filas:
         return "hoja vacía (sin headers)"
     headers = filas[0]
@@ -106,11 +148,11 @@ async def upsert_por_clave(hoja: str, clave_col: str, clave_val: str, set_col: s
     ci, si = headers.index(clave_col), headers.index(set_col)
     for n, fila in enumerate(filas[1:], start=2):  # fila 1 = header
         if len(fila) > ci and str(fila[ci]) == str(clave_val):
-            await set_cell(hoja, n, si, valor)
+            await set_cell(hoja, n, si, valor, sheet_id=sheet_id)
             return "actualizado"
     # No existe → crear fila nueva con clave + valor en sus columnas
     nueva = [""] * len(headers)
     nueva[ci] = clave_val
     nueva[si] = valor
-    await append_row(hoja, nueva)
+    await append_row(hoja, nueva, sheet_id=sheet_id)
     return "creado"

@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 
 from config import settings
-from memory import get_compromisos_abiertos
+from core.memory import get_compromisos_abiertos
 from modules import metas, proyectos
 
 logger = logging.getLogger(__name__)
