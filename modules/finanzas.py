@@ -107,7 +107,12 @@ def _hoy() -> str:
 
 
 def _num(v) -> float:
+    if isinstance(v, bool):
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)  # lectura sin formato: ya es número, no lo toques
     try:
+        # String con formato chileno ("$2.028.091" / "1.500,50"): punto = miles, coma = decimal.
         return float(str(v).replace("$", "").replace(".", "").replace(",", ".").strip())
     except (ValueError, TypeError):
         return 0.0
@@ -264,15 +269,33 @@ async def armar_digest(fecha: str | None = None) -> dict:
     }
 
 
+def _norm_hdr(s) -> str:
+    return str(s).strip().lower().replace("ú", "u").replace("í", "i")
+
+
 async def _ids_transacciones() -> set[str]:
     """ID_Único ya escritos en Transacciones (anti-duplicado a nivel planilla). Degrada
-    a set vacío si no puede leer: en el peor caso confía en el UNIQUE del buffer."""
+    a set vacío si no puede leer: en el peor caso confía en el UNIQUE del buffer.
+
+    La hoja canónica trae un banner en la fila 1 y los headers en la 2, y la columna
+    se llama 'ID_Único' (con tilde). Por eso ubicamos la columna por su header en vez de
+    asumir que está en la fila 1."""
     try:
-        filas = await sheets.get_dicts(HOJA_TX, sheet_id=sheets.fin_id())
+        filas = await sheets.get_rows(HOJA_TX, "A:I", sheet_id=sheets.fin_id())
     except Exception:
         logger.exception("_ids_transacciones: no pude leer Transacciones")
         return set()
-    return {str(f.get("ID_Unico", "")).strip() for f in filas if str(f.get("ID_Unico", "")).strip()}
+    col = fila_hdr = None
+    for i, fila in enumerate(filas):
+        for j, celda in enumerate(fila):
+            if _norm_hdr(celda) == "id_unico":
+                col, fila_hdr = j, i
+                break
+        if col is not None:
+            break
+    if col is None:
+        return set()
+    return {str(f[col]).strip() for f in filas[fila_hdr + 1:] if len(f) > col and str(f[col]).strip()}
 
 
 def _planificar_digest(pendientes: list[dict], correcciones: dict, ya_en_planilla: set[str]) -> dict:
@@ -333,24 +356,23 @@ async def confirmar_digest(correcciones: dict | None = None) -> dict:
 # ───────────────────────── (C) Faro de deuda (el freno) ─────────────────────────
 
 async def estado_deuda() -> dict:
-    """Lee las celdas ya calculadas del faro. Degrada campo a campo si una falla."""
-    fin = sheets.fin_id()
-
-    async def _leer(celda):
-        try:
-            return await sheets.get_celda(HOJA_TARJETAS, celda, sheet_id=fin)
-        except Exception:
-            logger.exception("estado_deuda: no pude leer %s", celda)
-            return ""
-
-    deuda = _num(await _leer(CELDA_DEUDA_REAL))
-    intereses = _num(await _leer(CELDA_INTERESES_MUERTOS))
-    util_raw = await _leer(CELDA_UTILIZACION)
-    util = _num(util_raw)
+    """Lee el faro (B4:B8 de 'Tarjetas y Deuda') en UN solo request — más robusto que 5
+    lecturas sueltas (la API de Sheets falla a veces una celda aislada) y más barato.
+    Orden del bloque: B4 deuda real · B5 intereses muertos · B6 utilización · B7 semáforo ·
+    B8 total a pagar. Degrada a ceros si el bloque entero no se puede leer."""
+    try:
+        filas = await sheets.get_rows(HOJA_TARJETAS, "B4:B8", sheet_id=sheets.fin_id(), value_render="UNFORMATTED_VALUE")
+    except Exception:
+        logger.exception("estado_deuda: no pude leer el faro")
+        filas = []
+    vals = [(f[0] if f else "") for f in filas] + [""] * 5  # rellena celdas vacías/faltantes
+    deuda = _num(vals[0])
+    intereses = _num(vals[1])
+    util = _num(vals[2])
     if 0 < util <= 1:  # por si viene como fracción (0.79) en vez de 79
         util *= 100
-    semaforo = (await _leer(CELDA_SEMAFORO)).strip() or ("🔴" if util > 70 else "🟡" if util > 30 else "🟢")
-    total_pagar = _num(await _leer(CELDA_TOTAL_PAGAR))
+    semaforo = str(vals[3]).strip() or ("🔴" if util > 70 else "🟡" if util > 30 else "🟢")
+    total_pagar = _num(vals[4])
     return {
         "deuda_total_real": deuda,
         "intereses_muertos": intereses,
@@ -371,19 +393,20 @@ def formatear_deuda(d: dict) -> str:
 # ───────────────────────── Saldo del mes / presupuesto (lectura del Dashboard) ─────────────────────────
 
 async def saldo_mes() -> dict:
-    fin = sheets.fin_id()
-
-    async def _leer(celda):
-        try:
-            return await sheets.get_celda(HOJA_DASH, celda, sheet_id=fin)
-        except Exception:
-            return ""
-
+    """Lee el saldo del mes del Dashboard (B4:B8) en UN request. Orden del bloque:
+    B4 ingresos · B5 gastos · B6 balance · B7 tasa ahorro (se ignora) · B8 ¿llego a fin
+    de mes? (texto). Degrada a ceros si no se puede leer."""
+    try:
+        filas = await sheets.get_rows(HOJA_DASH, "B4:B8", sheet_id=sheets.fin_id(), value_render="UNFORMATTED_VALUE")
+    except Exception:
+        logger.exception("saldo_mes: no pude leer el Dashboard")
+        filas = []
+    vals = [(f[0] if f else "") for f in filas] + [""] * 5
     return {
-        "ingresos": _num(await _leer(CELDA_INGRESOS)),
-        "gastos": _num(await _leer(CELDA_GASTOS)),
-        "balance": _num(await _leer(CELDA_BALANCE)),
-        "llego_fin_mes": (await _leer(CELDA_LLEGO_FIN_MES)).strip(),
+        "ingresos": _num(vals[0]),
+        "gastos": _num(vals[1]),
+        "balance": _num(vals[2]),
+        "llego_fin_mes": str(vals[4]).strip(),
     }
 
 
@@ -453,7 +476,8 @@ async def _t_registrar_gasto(inp: dict) -> str:
 async def _t_saldo_mes(inp: dict) -> str:
     try:
         s = await saldo_mes()
-        cola = s["llego_fin_mes"] or (f"te sobran {clp(s['balance'])}" if s["balance"] >= 0 else f"negativo por {clp(-s['balance'])}")
+        # Armo la cola con formato chileno propio (el texto del sheet trae coma US).
+        cola = f"Te sobran {clp(s['balance'])}." if s["balance"] >= 0 else f"Vas negativo por {clp(-s['balance'])}."
         return f"Este mes: ingresos {clp(s['ingresos'])}, gastos {clp(s['gastos'])}, balance {clp(s['balance'])}. {cola}"
     except Exception:
         logger.exception("fin_saldo_mes falló")
@@ -463,14 +487,16 @@ async def _t_saldo_mes(inp: dict) -> str:
 async def _t_presupuesto(inp: dict) -> str:
     try:
         # Bloque "GASTO POR CATEGORÍA" del Dashboard canónico: A=Categoría, C=Gastado, D=% Usado.
-        filas = await sheets.get_rows(HOJA_DASH, "A12:D29", sheet_id=sheets.fin_id())
+        # Sin formato: gastado llega como número y % como fracción (0.15) → lo formateo yo.
+        filas = await sheets.get_rows(HOJA_DASH, "A12:D29", sheet_id=sheets.fin_id(), value_render="UNFORMATTED_VALUE")
         lineas = []
         for f in filas:
             if not f or not str(f[0]).strip():
                 continue
             cat = f[0]
             gastado = _num(f[2]) if len(f) > 2 else 0
-            pct = f[3] if len(f) > 3 else ""
+            pct_raw = f[3] if len(f) > 3 else ""
+            pct = f"{pct_raw * 100:.0f}%" if isinstance(pct_raw, (int, float)) else str(pct_raw)
             lineas.append(f"{cat}: {clp(gastado)} ({pct})")
         return "Presupuesto del mes:\n" + "\n".join(lineas) if lineas else "Aún no hay gastos contra presupuesto este mes."
     except Exception:
