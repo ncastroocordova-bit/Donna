@@ -163,10 +163,44 @@ async def crear_inferencia(contenido: str, dominio: str = "") -> str:
     return r.data[0]["id"]
 
 
+async def inferencia_existe(contenido: str) -> bool:
+    """¿Ya registré esta inferencia (en cualquier estado)? Evita re-proponer lo mismo
+    cada noche y no insiste con lo que Nico ya descartó (mismo contenido)."""
+    if not contenido:
+        return False
+    db = await _get_db()
+    r = await db.table("inferencias").select("id").eq("contenido", contenido).limit(1).execute()
+    return bool(r.data)
+
+
+async def crear_inferencia_si_nueva(contenido: str, dominio: str = "") -> str | None:
+    """Idempotente: crea la inferencia solo si su contenido es nuevo. Devuelve el id
+    creado, o None si ya existía. La espina la usa para sembrar sin spamear."""
+    if await inferencia_existe(contenido):
+        return None
+    return await crear_inferencia(contenido, dominio)
+
+
 async def get_inferencias_pendientes() -> list[dict]:
     db = await _get_db()
     r = await db.table("inferencias").select("*").eq("estado", "pendiente").order("created_at").execute()
     return r.data
+
+
+async def get_inferencias_top(limite: int = 5) -> list[dict]:
+    """Para la vista /perfil: las inferencias que importan, confirmadas primero, luego
+    las pendientes; descartadas afuera. Cada una trae su contenido (con su dato)."""
+    db = await _get_db()
+    r = (
+        await db.table("inferencias")
+        .select("contenido, dominio, estado, created_at")
+        .in_("estado", ["confirmada", "pendiente"])
+        .order("created_at", desc=True)
+        .limit(limite)
+        .execute()
+    )
+    orden = {"confirmada": 0, "pendiente": 1}
+    return sorted(r.data, key=lambda x: orden.get(x.get("estado"), 2))
 
 
 async def get_inferencia(inferencia_id: str) -> dict | None:

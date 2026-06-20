@@ -67,13 +67,18 @@ async def append_row(hoja: str, valores: list, sheet_id: str | None = None) -> N
     await asyncio.to_thread(_call)
 
 
-async def get_rows(hoja: str, rango: str = "A:Z", sheet_id: str | None = None) -> list[list]:
+async def get_rows(
+    hoja: str, rango: str = "A:Z", sheet_id: str | None = None, value_render: str = "FORMATTED_VALUE"
+) -> list[list]:
+    """Lee un rango. `value_render='UNFORMATTED_VALUE'` devuelve números crudos (sin
+    separadores de miles ni símbolo de moneda) — úsalo para leer cifras que vas a parsear,
+    así el locale del Sheet (coma vs punto) no rompe el cálculo."""
     def _call():
         r = (
             _svc()
             .spreadsheets()
             .values()
-            .get(spreadsheetId=_sid(sheet_id), range=_rng(hoja, rango))
+            .get(spreadsheetId=_sid(sheet_id), range=_rng(hoja, rango), valueRenderOption=value_render)
             .execute()
         )
         return r.get("values", [])

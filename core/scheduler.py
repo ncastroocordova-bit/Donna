@@ -78,7 +78,12 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(chat, "Y por voz: dime tus 1 a 3 prioridades de mañana. 🎙️")
     # 3) Digest financiero del día.
     await flows.enviar_digest(context.bot, chat)
-    # 4) Inferencia pendiente, si hay.
+    # 3.5) La espina aprende de la plata (perfil + inferencia de deuda con su dato).
+    try:
+        await finanzas.sembrar_espina()
+    except Exception:
+        logger.exception("No pude sembrar la espina de finanzas")
+    # 4) Inferencia pendiente, si hay (puede ser la que acaba de sembrar la espina).
     await flows.preguntar_inferencia_pendiente(context.bot, chat)
     try:
         await salud.marcar_cierre()
@@ -114,7 +119,7 @@ async def job_decay(context: ContextTypes.DEFAULT_TYPE) -> None:
 # ───────────────────────── Correo: gastos (sync) + spam (digest) ─────────────────────────
 
 async def job_sync_correos(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Trae los correos de gasto al buffer cada pocas horas (Gmail + Outlook)."""
+    """Trae los correos de gasto al buffer cada pocas horas (solo Gmail; Outlook OFF)."""
     if not correo.disponible():
         return
     res = await finanzas.ingerir_gastos_email()

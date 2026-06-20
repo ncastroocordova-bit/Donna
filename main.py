@@ -67,14 +67,27 @@ async def cmd_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def cmd_perfil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Vista 'lo que sé de ti' (espina): perfil estable + inferencias top, cada una con su
+    dato. Crece con cada módulo; en el Módulo 1 ya muestra lo de plata."""
     if not _es_nico(update):
         return
     perfil = await _perfil_real()
-    if not perfil:
+    try:
+        inferencias = await memory.get_inferencias_top(5)
+    except Exception:
+        logger.exception("cmd_perfil: no pude leer inferencias")
+        inferencias = []
+    if not perfil and not inferencias:
         await update.message.reply_text("Todavía no sé nada de ti. Manda /onboarding y arrancamos.")
         return
-    lineas = "\n".join(f"• {k}: {v}" for k, v in perfil.items())
-    await update.message.reply_text(f"Esto es lo que sé de ti:\n{lineas}")
+    partes = []
+    if perfil:
+        partes.append("Esto es lo que sé de ti:\n" + "\n".join(f"• {k}: {v}" for k, v in perfil.items()))
+    if inferencias:
+        marca = {"confirmada": "✓", "pendiente": "·"}
+        lineas = "\n".join(f"{marca.get(i.get('estado'), '·')} {i['contenido']}" for i in inferencias)
+        partes.append("Y algunos patrones que vengo notando (✓ confirmado, · por validar):\n" + lineas)
+    await update.message.reply_text("\n\n".join(partes))
 
 
 async def cmd_cierre(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

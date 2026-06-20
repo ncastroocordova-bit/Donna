@@ -25,13 +25,13 @@ def proveedores_activos() -> list[str]:
     return activos
 
 
-async def obtener_gastos(gmail_query: str, outlook_dominios: list[str], max_n: int = 25) -> list[dict]:
-    msgs: list[dict] = []
-    if gmail.disponible():
-        msgs += await gmail.obtener_gastos(gmail_query, max_n)
-    if outlook.disponible():
-        msgs += await outlook.obtener_gastos(outlook_dominios, max_n)
-    return msgs
+async def obtener_gastos(gmail_query: str, max_n: int = 25) -> list[dict]:
+    """Gastos SOLO por Gmail. Canon v7.2: Outlook OFF (descartado); el ingreso por
+    correo del Modulo 1 (Finanzas) es Gmail-only. El correo dedicado financiero y el
+    triage de 3 buckets aterrizan en el Modulo 4."""
+    if not gmail.disponible():
+        return []
+    return await gmail.obtener_gastos(gmail_query, max_n)
 
 
 async def obtener_spam(max_n: int | None = None) -> list[dict]:
