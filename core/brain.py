@@ -239,9 +239,23 @@ def _hint_tool(mensaje: str) -> str:
 
 
 async def _armar_contexto(mensaje: str) -> str:
-    perfil = await memory.get_perfil()
-    memorias = await memory.buscar_memoria(mensaje)
-    aprendido = await aprendizaje.senal_aprendizaje()
+    # Degrada elegante (contrato §4): si la memoria/Supabase/Voyage falla, Donna responde
+    # IGUAL sin contexto, en vez de caerse en cada mensaje. Cada fuente se aísla.
+    try:
+        perfil = await memory.get_perfil()
+    except Exception:
+        logger.exception("_armar_contexto: perfil no disponible; sigo sin él")
+        perfil = {}
+    try:
+        memorias = await memory.buscar_memoria(mensaje)
+    except Exception:
+        logger.exception("_armar_contexto: memorias no disponibles; sigo sin ellas")
+        memorias = []
+    try:
+        aprendido = await aprendizaje.senal_aprendizaje()
+    except Exception:
+        logger.exception("_armar_contexto: aprendizaje no disponible; sigo sin él")
+        aprendido = ""
     bloques = []
     if perfil:
         bloques.append("Perfil de Nico:\n" + "\n".join(f"- {k}: {v}" for k, v in perfil.items() if not k.startswith("_")))
