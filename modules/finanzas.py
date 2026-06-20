@@ -8,14 +8,18 @@ Tres sub-flujos (Plan_Construccion_v7 Paso 1.5):
     (Supabase) con ID_Único anti-duplicado. NO escriben a Sheets todavía.
 
 (B) Digest nocturno: `armar_digest()` devuelve la lista del día pre-categorizada marcando
-    las dudosas; `confirmar_digest(correcciones)` aplica los cambios y ESCRIBE a
-    Finanzas_vigente!Transacciones. La UI (panel + "Aceptar todo" / tap por línea) vive en flows.py.
+    las dudosas; `confirmar_digest(correcciones)` aplica los cambios y ESCRIBE a la hoja
+    Transacciones. La UI (panel + "Aceptar todo" / tap por línea) vive en flows.py.
 
-(C) Faro de deuda: `estado_deuda()` lee las celdas ya calculadas de 'Tarjetas de Crédito'
-    (deuda real B85, intereses muertos B86, % utilización D9/semáforo G9, total a pagar B87).
-    Es el FRENO: antes de cualquier compra en cuotas, Donna muestra el costo real de la deuda.
+(C) Faro de deuda: `estado_deuda()` lee las celdas ya calculadas de 'Tarjetas y Deuda'
+    (faro en el encabezado: deuda real B4, intereses muertos B5, % utilización B6, semáforo
+    B7, total a pagar B8). La deuda real INCLUYE la línea de crédito. Es el FRENO: antes de
+    cualquier compra en cuotas, Donna muestra el costo real de la deuda.
 
 El saldo del mes y el presupuesto se leen del 'Dashboard' (la planilla los calcula sola).
+
+Capa de datos canónica: el esquema de las hojas lo fija Donna_Canonico.xlsx. El aprendizaje
+(perfil + inferencias) se persiste en Supabase vía `sembrar_espina()`, nunca en el Sheet.
 """
 import base64
 import json
@@ -70,10 +74,6 @@ def gmail_query_gastos() -> str:
     return "from:(" + " OR ".join(_DOMINIOS) + ")"
 
 
-def outlook_dominios_gastos() -> list[str]:
-    return list(_DOMINIOS)
-
-
 def _detectar_sender(remitente: str) -> dict | None:
     rem = (remitente or "").lower()
     for s in SENDERS:
@@ -84,20 +84,22 @@ def _detectar_sender(remitente: str) -> dict | None:
 HOJA_TX = "Transacciones"
 HOJA_CAT = "Categorias"
 HOJA_DASH = "Dashboard"
-HOJA_TARJETAS = "Tarjetas de Crédito"
+HOJA_TARJETAS = "Tarjetas y Deuda"
 
-# Celdas fijas del faro (la planilla las calcula; Donna solo las lee). Guía Parte C.
-CELDA_DEUDA_REAL = "B85"        # deuda tarjetas + deuda línea
-CELDA_INTERESES_MUERTOS = "B86"  # interés rotativo + interés línea: plata que pagas y no baja deuda
-CELDA_UTILIZACION = "D9"        # deuda total ÷ cupo total (%)
-CELDA_SEMAFORO = "G9"           # 🔴/🟡/🟢
-CELDA_TOTAL_PAGAR = "B87"       # cuotas + rotativo + mantención
+# Celdas fijas del faro (la planilla las calcula; Donna solo las lee). Layout canónico
+# de 'Tarjetas y Deuda' (Donna_Canonico.xlsx): el faro vive en el encabezado (A3 "🔦 FARO
+# DE DEUDA"). La deuda real INCLUYE la línea (B4 = tarjetas BCh + Mach + línea).
+CELDA_DEUDA_REAL = "B4"         # =B29+B40+B44 → tarjetas + línea ($2.028.091)
+CELDA_INTERESES_MUERTOS = "B5"  # =B25+B37+B45 → interés rotativo + línea: plata que no baja deuda ($48.236)
+CELDA_UTILIZACION = "B6"        # deuda total ÷ cupo total (fracción; se pasa a %)
+CELDA_SEMAFORO = "B7"           # 🔴 Alto / 🟡 Medio / 🟢 OK
+CELDA_TOTAL_PAGAR = "B8"        # =B27+B38+B45 → cuotas + rotativo + mantención + línea
 
-# Celdas del Dashboard (saldo del mes corriendo).
-CELDA_INGRESOS = "A6"
-CELDA_GASTOS = "C6"
-CELDA_BALANCE = "E6"
-CELDA_LLEGO_FIN_MES = "A9"
+# Celdas del Dashboard canónico (saldo del mes corriendo; la planilla los calcula).
+CELDA_INGRESOS = "B4"
+CELDA_GASTOS = "B5"
+CELDA_BALANCE = "B6"
+CELDA_LLEGO_FIN_MES = "B8"      # texto: "Te sobran $…" / "Negativo por $…"
 
 
 def _hoy() -> str:
@@ -109,6 +111,11 @@ def _num(v) -> float:
         return float(str(v).replace("$", "").replace(".", "").replace(",", ".").strip())
     except (ValueError, TypeError):
         return 0.0
+
+
+def clp(v) -> str:
+    """Pesos chilenos como los lee Nico: separador de miles con punto. 2028091 → '$2.028.091'."""
+    return "$" + f"{int(round(_num(v))):,.0f}".replace(",", ".")
 
 
 def _id_unico(fecha: str, monto, comercio: str) -> str:
@@ -206,7 +213,7 @@ async def ingerir_gastos_email(max_n: int = 25) -> dict:
     if not correo.disponible():
         return {"revisados": 0, "nuevos": 0}
     try:
-        msgs = await correo.obtener_gastos(gmail_query_gastos(), outlook_dominios_gastos(), max_n)
+        msgs = await correo.obtener_gastos(gmail_query_gastos(), max_n)
     except Exception:
         logger.exception("ingerir_gastos_email: no pude leer los correos")
         return {"revisados": 0, "nuevos": 0}
@@ -257,32 +264,70 @@ async def armar_digest(fecha: str | None = None) -> dict:
     }
 
 
-async def confirmar_digest(correcciones: dict | None = None) -> dict:
-    """Aplica correcciones (por id de buffer: {categoria, monto, descartar}) y ESCRIBE las
-    confirmadas a Finanzas_vigente!Transacciones. Devuelve {escritas, descartadas}."""
-    correcciones = correcciones or {}
-    fecha = _hoy()
-    pendientes = await memory.buffer_pendientes(fecha)
-    escritas = descartadas = 0
+async def _ids_transacciones() -> set[str]:
+    """ID_Único ya escritos en Transacciones (anti-duplicado a nivel planilla). Degrada
+    a set vacío si no puede leer: en el peor caso confía en el UNIQUE del buffer."""
+    try:
+        filas = await sheets.get_dicts(HOJA_TX, sheet_id=sheets.fin_id())
+    except Exception:
+        logger.exception("_ids_transacciones: no pude leer Transacciones")
+        return set()
+    return {str(f.get("ID_Unico", "")).strip() for f in filas if str(f.get("ID_Unico", "")).strip()}
+
+
+def _planificar_digest(pendientes: list[dict], correcciones: dict, ya_en_planilla: set[str]) -> dict:
+    """Decide qué hacer con cada pendiente SIN tocar red (puro → testeable): escribir,
+    descartar, o saltar por duplicado. Anti-duplicado contra la planilla Y entre líneas
+    del mismo digest (un id_unico repetido se escribe una sola vez)."""
+    a_escribir, a_descartar, duplicadas = [], [], []
+    seen = set(ya_en_planilla)
     for p in pendientes:
         corr = correcciones.get(p["id"], {})
         if corr.get("descartar"):
-            await memory.buffer_marcar(p["id"], "descartada")
-            descartadas += 1
+            a_descartar.append(p)
             continue
-        categoria = corr.get("categoria", p.get("categoria", "Otros"))
-        monto = corr.get("monto", p.get("monto", 0))
+        idu = str(p.get("id_unico", "")).strip()
+        if idu and idu in seen:
+            duplicadas.append(p)
+            continue
+        if idu:
+            seen.add(idu)
+        a_escribir.append({
+            "p": p,
+            "categoria": corr.get("categoria", p.get("categoria", "Otros")),
+            "monto": corr.get("monto", p.get("monto", 0)),
+        })
+    return {"a_escribir": a_escribir, "a_descartar": a_descartar, "duplicadas": duplicadas}
+
+
+async def confirmar_digest(correcciones: dict | None = None) -> dict:
+    """Aplica correcciones (por id de buffer: {categoria, monto, descartar}) y ESCRIBE las
+    confirmadas a Transacciones. Anti-duplicado en DOS niveles: el UNIQUE del buffer (ingreso)
+    y el ID_Único ya presente en la planilla (acá). Devuelve {escritas, descartadas, duplicadas}."""
+    correcciones = correcciones or {}
+    fecha = _hoy()
+    pendientes = await memory.buffer_pendientes(fecha)
+    ya_en_planilla = await _ids_transacciones()
+    plan = _planificar_digest(pendientes, correcciones, ya_en_planilla)
+    for p in plan["a_descartar"]:
+        await memory.buffer_marcar(p["id"], "descartada")
+    for p in plan["duplicadas"]:
+        # Ya está en la planilla: sale del buffer sin escribir otra fila (no duplica).
+        await memory.buffer_marcar(p["id"], "confirmada")
+    escritas = 0
+    for item in plan["a_escribir"]:
+        p = item["p"]
         try:
             await sheets.append_row(HOJA_TX, [
-                p.get("fecha", fecha), p.get("tipo", "Gasto"), categoria,
-                p.get("subcategoria", ""), p.get("comercio", ""), int(_num(monto)),
+                p.get("fecha", fecha), p.get("tipo", "Gasto"), item["categoria"],
+                p.get("subcategoria", ""), p.get("comercio", ""), int(_num(item["monto"])),
                 p.get("medio", ""), p.get("fuente", ""), p.get("id_unico", ""),
             ], sheet_id=sheets.fin_id())
             await memory.buffer_marcar(p["id"], "confirmada")
             escritas += 1
         except Exception:
             logger.exception("confirmar_digest: no pude escribir una transacción")
-    return {"escritas": escritas, "descartadas": descartadas}
+    return {"escritas": escritas, "descartadas": len(plan["a_descartar"]), "duplicadas": len(plan["duplicadas"])}
 
 
 # ───────────────────────── (C) Faro de deuda (el freno) ─────────────────────────
@@ -317,9 +362,9 @@ async def estado_deuda() -> dict:
 
 def formatear_deuda(d: dict) -> str:
     return (
-        f"Deuda real ${d['deuda_total_real']:,.0f}. De este mes, ${d['intereses_muertos']:,.0f} "
+        f"Deuda real {clp(d['deuda_total_real'])}. De este mes, {clp(d['intereses_muertos'])} "
         f"son solo interés — plata que pagas y no baja ni un peso de la deuda. "
-        f"Utilización {d['utilizacion']:.0f}% {d['semaforo']}. Total a pagar ${d['total_a_pagar']:,.0f}."
+        f"Utilización {d['utilizacion']:.0f}% {d['semaforo']}. Total a pagar {clp(d['total_a_pagar'])}."
     )
 
 
@@ -342,6 +387,43 @@ async def saldo_mes() -> dict:
     }
 
 
+# ───────────────────────── La espina (escribe a Supabase) ─────────────────────────
+
+async def sembrar_espina() -> dict:
+    """Espina del Módulo 1 (nace mínima): siembra en `perfil` los hechos de plata que ya
+    sabemos (deuda real, intereses muertos, utilización) y, SOLO si el dato lo sostiene,
+    deja UNA inferencia validada de deuda — siempre con su dato, idempotente (no la repite
+    ni insiste con lo descartado). Capa de datos: el aprendizaje va a Supabase, nunca al Sheet.
+    Degrada elegante: si el faro o Supabase fallan, no rompe el cierre. Sin correlación aún."""
+    sembrado = {"perfil": 0, "inferencias": 0}
+    try:
+        d = await estado_deuda()
+    except Exception:
+        logger.exception("sembrar_espina: no pude leer el faro")
+        return sembrado
+    if d["deuda_total_real"] <= 0:
+        return sembrado  # sin dato real, Donna no afirma nada
+    try:
+        await memory.set_perfil("deuda_total_real", clp(d["deuda_total_real"]), "finanzas")
+        await memory.set_perfil("intereses_muertos_mes", f"{clp(d['intereses_muertos'])}/mes", "finanzas")
+        await memory.set_perfil("utilizacion_tarjetas", f"{d['utilizacion']:.0f}% {d['semaforo']}", "finanzas")
+        sembrado["perfil"] = 3
+    except Exception:
+        logger.exception("sembrar_espina: no pude sembrar el perfil de plata")
+    # Inferencia validada (con su dato), solo cuando la deuda aprieta de verdad.
+    if d["intereses_muertos"] > 0 and d["utilizacion"] >= 70:
+        contenido = (
+            f"Estás operando muy cerca del tope del cupo (utilización {d['utilizacion']:.0f}%), y por eso "
+            f"se te van {clp(d['intereses_muertos'])} al mes solo en intereses — plata que no baja la deuda."
+        )
+        try:
+            if await memory.crear_inferencia_si_nueva(contenido, "finanzas"):
+                sembrado["inferencias"] = 1
+        except Exception:
+            logger.exception("sembrar_espina: no pude crear la inferencia de deuda")
+    return sembrado
+
+
 # ───────────────────────── Handlers de tools ─────────────────────────
 
 async def _t_registrar_gasto(inp: dict) -> str:
@@ -362,7 +444,7 @@ async def _t_registrar_gasto(inp: dict) -> str:
         verbo = "Ingreso" if tipo == "Ingreso" else "Gasto"
         if not nuevo:
             return f"Ese {verbo.lower()} ya lo tenía anotado para hoy. No lo duplico."
-        return f"{verbo} de ${monto:,.0f} anotado. Lo confirmas en el cierre de hoy junto al resto."
+        return f"{verbo} de {clp(monto)} anotado. Lo confirmas en el cierre de hoy junto al resto."
     except Exception:
         logger.exception("fin_registrar_gasto falló")
         return "No pude anotarlo ahora. Reintenta en un rato."
@@ -371,8 +453,8 @@ async def _t_registrar_gasto(inp: dict) -> str:
 async def _t_saldo_mes(inp: dict) -> str:
     try:
         s = await saldo_mes()
-        cola = s["llego_fin_mes"] or (f"te sobran ${s['balance']:,.0f}" if s["balance"] >= 0 else f"negativo por ${-s['balance']:,.0f}")
-        return f"Este mes: ingresos ${s['ingresos']:,.0f}, gastos ${s['gastos']:,.0f}, balance ${s['balance']:,.0f}. {cola}"
+        cola = s["llego_fin_mes"] or (f"te sobran {clp(s['balance'])}" if s["balance"] >= 0 else f"negativo por {clp(-s['balance'])}")
+        return f"Este mes: ingresos {clp(s['ingresos'])}, gastos {clp(s['gastos'])}, balance {clp(s['balance'])}. {cola}"
     except Exception:
         logger.exception("fin_saldo_mes falló")
         return "No pude leer el saldo del mes ahora."
@@ -380,15 +462,16 @@ async def _t_saldo_mes(inp: dict) -> str:
 
 async def _t_presupuesto(inp: dict) -> str:
     try:
-        filas = await sheets.get_rows(HOJA_DASH, "B13:D25", sheet_id=sheets.fin_id())
+        # Bloque "GASTO POR CATEGORÍA" del Dashboard canónico: A=Categoría, C=Gastado, D=% Usado.
+        filas = await sheets.get_rows(HOJA_DASH, "A12:D29", sheet_id=sheets.fin_id())
         lineas = []
         for f in filas:
             if not f or not str(f[0]).strip():
                 continue
             cat = f[0]
-            gastado = _num(f[1]) if len(f) > 1 else 0
-            pct = f[2] if len(f) > 2 else ""
-            lineas.append(f"{cat}: ${gastado:,.0f} ({pct})")
+            gastado = _num(f[2]) if len(f) > 2 else 0
+            pct = f[3] if len(f) > 3 else ""
+            lineas.append(f"{cat}: {clp(gastado)} ({pct})")
         return "Presupuesto del mes:\n" + "\n".join(lineas) if lineas else "Aún no hay gastos contra presupuesto este mes."
     except Exception:
         logger.exception("fin_presupuesto falló")
@@ -408,11 +491,11 @@ async def _t_armar_digest(inp: dict) -> str:
     if d["n"] == 0:
         return "Hoy no detecté movimientos. El digest está limpio."
     lineas = [
-        f"- {m['comercio'] or m['categoria']}: ${m['monto']:,.0f} → {m['categoria']}"
+        f"- {m['comercio'] or m['categoria']}: {clp(m['monto'])} → {m['categoria']}"
         + (f"  ⚠️ {m['motivo_duda']}" if m["dudosa"] else "")
         for m in d["movimientos"]
     ]
-    return f"Hoy detecté {d['n']} movimiento(s) (${d['total']:,.0f}):\n" + "\n".join(lineas)
+    return f"Hoy detecté {d['n']} movimiento(s) ({clp(d['total'])}):\n" + "\n".join(lineas)
 
 
 # ───────────────────────── Señal destilada (brief) ─────────────────────────
@@ -423,13 +506,13 @@ async def senal_finanzas() -> str:
     try:
         s = await saldo_mes()
         if s["ingresos"] or s["gastos"]:
-            partes.append(f"balance del mes ${s['balance']:,.0f}")
+            partes.append(f"balance del mes {clp(s['balance'])}")
     except Exception:
         logger.exception("senal_finanzas: saldo falló")
     try:
         d = await estado_deuda()
         if d["intereses_muertos"] > 0:
-            partes.append(f"intereses muertos ${d['intereses_muertos']:,.0f} {d['semaforo']}")
+            partes.append(f"intereses muertos {clp(d['intereses_muertos'])} {d['semaforo']}")
     except Exception:
         logger.exception("senal_finanzas: deuda falló")
     return "Plata: " + "; ".join(partes) + "." if partes else ""

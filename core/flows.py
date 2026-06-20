@@ -63,8 +63,8 @@ def _texto_digest(d: dict) -> str:
     lineas = []
     for m in d["movimientos"]:
         marca = f"  ⚠️ {m['motivo_duda']}" if m["dudosa"] else ""
-        lineas.append(f"• {m['comercio'] or m['categoria']}: ${m['monto']:,.0f} → {m['categoria']}{marca}")
-    cab = f"Hoy detecté {d['n']} movimiento(s) (${d['total']:,.0f})."
+        lineas.append(f"• {m['comercio'] or m['categoria']}: {finanzas.clp(m['monto'])} → {m['categoria']}{marca}")
+    cab = f"Hoy detecté {d['n']} movimiento(s) ({finanzas.clp(d['total'])})."
     if d["n_dudosas"]:
         cab += f" Hay {d['n_dudosas']} que quiero confirmar contigo."
     return cab + "\n\n" + "\n".join(lineas) + "\n\nToca «Aceptar todo» o la línea que esté mal."
@@ -165,7 +165,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data == "digest:aceptar":
         res = await finanzas.confirmar_digest({})
-        await q.edit_message_text(f"Listo. Anoté {res['escritas']} movimiento(s) en tu planilla. Cerrado el día.")
+        cola = f" ({res['duplicadas']} ya estaban, no las dupliqué)" if res.get("duplicadas") else ""
+        await q.edit_message_text(f"Listo. Anoté {res['escritas']} movimiento(s) en tu planilla{cola}. Cerrado el día.")
         return
 
     if data.startswith("digest:fix:"):
