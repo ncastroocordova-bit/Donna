@@ -21,18 +21,22 @@ CHIPS_COMIDA = ["19:00", "20:00", "21:00", "22:00"]
 
 # ───────────────────────── Panel del cierre ─────────────────────────
 
-def teclado_cierre() -> InlineKeyboardMarkup:
+def teclado_cierre(estado: dict | None = None) -> InlineKeyboardMarkup:
+    """Panel del cierre. `estado` marca con ✅ lo ya elegido (se reconstruye en cada toque,
+    sin cerrar el panel) — así Nico puede anotar varios hábitos, no solo uno."""
+    e = estado or {}
+
+    def mk(label: str, on: bool) -> str:
+        return ("✅ " + label) if on else label
+
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏃 Ejercicio", callback_data="hab:ejercicio"),
-         InlineKeyboardButton("🧘 Meditación", callback_data="hab:meditacion")],
-        [InlineKeyboardButton(f"🍽️ Última comida {h}", callback_data=f"comida:{h}") for h in CHIPS_COMIDA[:2]],
-        [InlineKeyboardButton(f"🍽️ {h}", callback_data=f"comida:{h}") for h in CHIPS_COMIDA[2:]],
-        [InlineKeyboardButton("Ánimo 1", callback_data="animo:1"),
-         InlineKeyboardButton("2", callback_data="animo:2"),
-         InlineKeyboardButton("3", callback_data="animo:3"),
-         InlineKeyboardButton("4", callback_data="animo:4")],
-        [InlineKeyboardButton("✅ Avancé un MIT", callback_data="mit:si"),
-         InlineKeyboardButton("Hoy no", callback_data="mit:no")],
+        [InlineKeyboardButton(mk("🏃 Ejercicio", e.get("ejercicio")), callback_data="hab:ejercicio"),
+         InlineKeyboardButton(mk("🧘 Meditación", e.get("meditacion")), callback_data="hab:meditacion")],
+        [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[:2]],
+        [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[2:]],
+        [InlineKeyboardButton(mk(f"Ánimo {n}", e.get("animo") == n), callback_data=f"animo:{n}") for n in ("1", "2", "3", "4")],
+        [InlineKeyboardButton(mk("Avancé un MIT", e.get("mit") == "si"), callback_data="mit:si"),
+         InlineKeyboardButton(mk("Hoy no", e.get("mit") == "no"), callback_data="mit:no")],
     ])
 
 
@@ -135,20 +139,29 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await q.answer()
     data = q.data
 
-    if data.startswith("hab:"):
-        campo = data.split(":", 1)[1]
-        await q.edit_message_text(await salud.marcar_habito(campo))
-        return
-
-    if data.startswith("comida:"):
-        hora = data.split(":", 1)[1]
-        await salud.marcar_habito("ultima_comida", hora)
-        await q.edit_message_text(f"Última comida a las {hora}. Anotado.")
-        return
-
-    if data.startswith("animo:"):
-        n = data.split(":", 1)[1]
-        await q.edit_message_text(await salud.registrar_animo(n))
+    if data.split(":", 1)[0] in ("hab", "comida", "animo", "mit"):
+        # Panel del cierre: cada toque actualiza SOLO el teclado (marca ✅), sin cerrar el panel,
+        # para poder anotar varios hábitos. El estado vive por message_id (no se arrastra entre días).
+        tipo, val = data.split(":", 1)
+        estado = context.user_data.setdefault("cierre_estados", {}).setdefault(q.message.message_id, {})
+        try:
+            if tipo == "hab":
+                estado[val] = True
+                await salud.marcar_habito(val)
+            elif tipo == "comida":
+                estado["comida"] = val
+                await salud.marcar_habito("ultima_comida", val)
+            elif tipo == "animo":
+                estado["animo"] = val
+                await salud.registrar_animo(val)
+            elif tipo == "mit":
+                estado["mit"] = val
+        except Exception:
+            logger.exception("cierre: no pude anotar %s", data)
+        try:
+            await q.edit_message_reply_markup(reply_markup=teclado_cierre(estado))
+        except Exception:
+            pass  # "message is not modified" si se re-toca lo mismo
         return
 
     if data.startswith("sueno:"):
@@ -158,10 +171,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await q.edit_message_text(f"Sueño anotado. {cierre}")
         return
 
-    if data.startswith("mit:"):
-        msg = "Eso es avanzar. Mañana otro." if data.endswith("si") else "Mañana lo retomas. Sin culpa."
-        await q.edit_message_text(msg)
-        return
 
     if data == "digest:aceptar":
         res = await finanzas.confirmar_digest({})

@@ -606,6 +606,9 @@ async def saldo_mes() -> dict:
 
 # ───────────────────────── La espina (escribe a Supabase) ─────────────────────────
 
+MIN_DATOS_INFERENCIA = 20  # mínimo de transacciones registradas antes de afirmar patrones (evita inferir con N chico).
+
+
 async def sembrar_espina() -> dict:
     """Espina del Módulo 1 (nace mínima): siembra en `perfil` los hechos de plata que ya
     sabemos (deuda real, intereses muertos, utilización) y, SOLO si el dato lo sostiene,
@@ -627,6 +630,15 @@ async def sembrar_espina() -> dict:
         sembrado["perfil"] = 3
     except Exception:
         logger.exception("sembrar_espina: no pude sembrar el perfil de plata")
+    # Umbral de datos: no inferir patrones hasta tener historial suficiente (N chico = ruido).
+    # Las cifras de perfil son lectura directa del faro y sí se siembran; la INFERENCIA espera.
+    try:
+        n_tx = len(await _ids_transacciones())
+    except Exception:
+        n_tx = 0
+    if n_tx < MIN_DATOS_INFERENCIA:
+        logger.info("Espina: %d/%d transacciones — aún no infiero (junto datos).", n_tx, MIN_DATOS_INFERENCIA)
+        return sembrado
     # Inferencia validada (con su dato), solo cuando la deuda aprieta de verdad.
     if d["intereses_muertos"] > 0 and d["utilizacion"] >= 70:
         contenido = (
