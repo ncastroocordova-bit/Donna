@@ -86,13 +86,26 @@ async def get_rows(
     return await asyncio.to_thread(_call)
 
 
+def _fila_headers(filas: list[list], clave: str | None = None) -> tuple[int, list]:
+    """Localiza la fila de encabezados saltando un posible banner de título (las hojas canónicas
+    traen p.ej. '🌙 DIARIO — …' en la fila 1, con 1 sola celda). Si se pasa `clave`, busca la
+    fila que la contenga; si no, la primera con ≥2 celdas no vacías. Devuelve (idx_0based, headers)."""
+    for i, fila in enumerate(filas):
+        if clave is not None:
+            if clave in fila:
+                return i, fila
+        elif len([c for c in fila if str(c).strip()]) >= 2:
+            return i, fila
+    return -1, []
+
+
 async def get_dicts(hoja: str, sheet_id: str | None = None) -> list[dict]:
-    """Lee una hoja con encabezados en la fila 1 y devuelve lista de dicts."""
+    """Lee una hoja y devuelve lista de dicts. Encuentra la fila de headers (salta el banner)."""
     filas = await get_rows(hoja, sheet_id=sheet_id)
-    if not filas:
+    h_idx, headers = _fila_headers(filas)
+    if h_idx < 0:
         return []
-    headers = filas[0]
-    return [dict(zip(headers, fila)) for fila in filas[1:]]
+    return [dict(zip(headers, fila)) for fila in filas[h_idx + 1:]]
 
 
 async def get_celda(hoja: str, celda: str, sheet_id: str | None = None) -> str:
@@ -145,13 +158,14 @@ async def upsert_por_clave(
     """Busca la fila donde `clave_col` == `clave_val` y setea `set_col`=valor.
     Si no existe la fila, la crea con la clave + el valor. Devuelve un estado."""
     filas = await get_rows(hoja, sheet_id=sheet_id)
-    if not filas:
+    h_idx, headers = _fila_headers(filas, clave_col)
+    if h_idx < 0:
         return "hoja vacía (sin headers)"
-    headers = filas[0]
     if clave_col not in headers or set_col not in headers:
         return f"columna desconocida ({clave_col}/{set_col})"
     ci, si = headers.index(clave_col), headers.index(set_col)
-    for n, fila in enumerate(filas[1:], start=2):  # fila 1 = header
+    # Datos = filas tras el header. start = nº de fila 1-based de la primera fila de datos.
+    for n, fila in enumerate(filas[h_idx + 1:], start=h_idx + 2):
         if len(fila) > ci and str(fila[ci]) == str(clave_val):
             await set_cell(hoja, n, si, valor, sheet_id=sheet_id)
             return "actualizado"

@@ -16,18 +16,18 @@ logger = logging.getLogger(__name__)
 
 HOJA = "Diario"
 
-# campo conversacional → columna real en la hoja.
+# campo conversacional → columna real en la hoja (nombres EXACTOS del canon Donna_Canonico.xlsx).
 COLS = {
     "ejercicio": "Ejercicio",
-    "meditacion": "Meditacion",
-    "ultima_comida": "Ultima_Comida",
-    "sueno_7h": "Sueno_7h",
-    "animo": "Animo",
-    "hora_dormi": "Hora_Dormi",
-    "mits": "MITs",
-    "brief": "Brief",
-    "cierre": "Cierre",
-    "excepcion": "Excepcion",
+    "meditacion": "Meditación",
+    "ultima_comida": "Última comida",
+    "sueno_7h": "Sueño 7h+",
+    "animo": "Ánimo (1-4)",
+    "hora_dormi": "Hora dormí",
+    "mits": "MITs de mañana",
+    "brief": "Brief ✓",
+    "cierre": "Cierre ✓",
+    "excepcion": "Excepción",
     "notas": "Notas",
 }
 # Hábitos binarios (presencia = cumplido) → admiten racha y default "Sí".
