@@ -7,12 +7,24 @@ Devuelve mensajes normalizados: {proveedor, id, remitente, asunto, fecha, texto}
 """
 import asyncio
 import base64
+import html as _htmllib
 import logging
 import re
 
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _html_a_texto(html: str) -> str:
+    """HTML → texto limpio: quita bloques <style>/<script>/<head> (no solo sus etiquetas),
+    decodifica entidades (&nbsp; &aacute; &ordm;…) y colapsa espacios. Menos basura = menos
+    tokens cuando el correo cae al LLM, y regex más confiable."""
+    if not html:
+        return ""
+    html = re.sub(r"(?is)<(style|script|head|title)[^>]*>.*?</\1>", " ", html)
+    html = re.sub(r"<[^>]+>", " ", html)
+    return " ".join(_htmllib.unescape(html).split())
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -60,7 +72,7 @@ def _texto_de_payload(payload: dict) -> str:
             html = t
     if not html and mime == "text/html" and body.get("data"):
         html = _decode(body["data"])
-    return re.sub(r"<[^>]+>", " ", html)  # HTML → texto chabacano pero suficiente para parsear
+    return _html_a_texto(html)  # HTML → texto chabacano pero suficiente para parsear
 
 
 def _normalizar(msg: dict) -> dict:
@@ -71,7 +83,9 @@ def _normalizar(msg: dict) -> dict:
         "remitente": headers.get("from", ""),
         "asunto": headers.get("subject", ""),
         "fecha": headers.get("date", ""),
-        "texto": (_texto_de_payload(msg.get("payload", {})) or msg.get("snippet", "")).strip()[:4000],
+        # Colapsa saltos de línea y espacios múltiples: el texto/plain de los bancos parte
+        # campos en varias líneas (ej. "Fecha\ny hora"), lo que rompía regex y gastaba tokens.
+        "texto": " ".join((_texto_de_payload(msg.get("payload", {})) or msg.get("snippet", "")).split())[:4000],
     }
 
 

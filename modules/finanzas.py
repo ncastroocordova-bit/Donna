@@ -24,6 +24,7 @@ Capa de datos canónica: el esquema de las hojas lo fija Donna_Canonico.xlsx. El
 import base64
 import json
 import logging
+import re
 from datetime import datetime
 
 from anthropic import AsyncAnthropic
@@ -47,10 +48,11 @@ SENDERS = [
     },
     {
         "nombre": "Mach",
-        "dominios": ["somosmach.com", "mach.cl"],
+        "dominios": ["machbank.cl", "mail.machbank.cl", "somosmach.com", "mach.cl"],
         "medio": "Mach",
-        "hint": ("Mach (BCI) avisa pagos y transferencias: 'Pagaste $X en COMERCIO', 'Recibiste $X de NOMBRE'. "
-                 "Si el dinero ENTRA es Ingreso; si sale es Gasto."),
+        "hint": ("MachBank (BCI) manda 'Comprobante de compra/pago' con Comercio, Monto (pagado/CLP), "
+                 "últimos 4 dígitos de la tarjeta y Fecha y hora. Compra = Gasto. Si el dinero ENTRA "
+                 "(te transfirieron/abono) es Ingreso."),
     },
     {
         "nombre": "Copec Pay",
@@ -168,6 +170,116 @@ async def _bufferizar(datos: dict, fuente: str) -> dict | None:
     return tx if nuevo else None
 
 
+# ───────────────────── Parsers deterministas por banco (sin LLM) ─────────────────────
+# Contrato de costos: lo determinista va PRIMERO. Regex exacto para los formatos conocidos
+# de Banco de Chile y MachBank → cero tokens. El LLM queda solo para el residuo (formato
+# desconocido). Construidos sobre correos reales de Nico.
+
+_MESES = {"enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6, "julio": 7,
+          "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12}
+
+# Mejor apuesta de categoría sin LLM (Nico corrige en el digest si hace falta).
+_CATEGORIAS_KW = [
+    ("Alimentación",  ["isabel", "jumbo", "lider", "unimarc", "tottus", "acuenta", "mayorista", "minimarket", "supermerc"]),
+    ("Chanchería",    ["uber eats", "rappi", "pedidosya", "mcdonald", "doggis", "burger", "kfc", "sushi", "pizza"]),
+    ("Transporte",    ["uber", "cabify", "didi", "copec", "shell", "petrobras", "combustible"]),
+    ("Suscripciones", ["netflix", "spotify", "disney", "hbo", "prime", "youtube", "icloud", "google one", "openai", "claude"]),
+    ("Salud",         ["farmacia", "cruz verde", "salcobrand", "ahumada", "clinica", "consulta"]),
+    ("Hogar",         ["sodimac", "easy", "construmart", "homecenter"]),
+]
+
+
+def _categoria_de(comercio: str) -> str:
+    c = (comercio or "").lower()
+    for cat, kws in _CATEGORIAS_KW:
+        if any(k in c for k in kws):
+            return cat
+    return "Otros"
+
+
+def _fecha_iso(s: str) -> str:
+    s = (s or "").strip()
+    m = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", s)          # 20/06/2026 o 18-06-2026
+    if m:
+        return f"{m.group(3)}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    m = re.search(r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})", s.lower())  # 20 de junio de 2026
+    if m and m.group(2) in _MESES:
+        return f"{m.group(3)}-{_MESES[m.group(2)]:02d}-{int(m.group(1)):02d}"
+    return _hoy()
+
+
+def _rut_norm(r: str) -> str:
+    return re.sub(r"[.\-\s]", "", str(r or "")).lower()
+
+
+def _parse_bch_cargo(texto: str) -> dict | None:
+    """BCh: 'compra por $12.520 con cargo a Cuenta ****5502 en STA ISABEL LOMAS el 20/06/2026 13:16'."""
+    m = re.search(
+        r"(?:compra|cargo|pago|giro)\s+por\s+\$\s*([\d.]+)\s+con cargo a Cuenta\s+\*+(\d{4})\s+en\s+(.+?)\s+el\s+(\d{2}/\d{2}/\d{4})",
+        texto, re.IGNORECASE)
+    if not m:
+        return None
+    return {
+        "tipo": "Gasto", "monto": int(_num(m.group(1))),
+        "categoria": _categoria_de(m.group(3)), "subcategoria": f"****{m.group(2)}",
+        "comercio": m.group(3).strip(), "medio": "Banco de Chile", "fecha": _fecha_iso(m.group(4)),
+    }
+
+
+def _parse_bch_transferencia(texto: str, dueno_rut: str) -> dict | None:
+    """BCh transferencia saliente. Si el RUT del destino es el de Nico → movimiento interno."""
+    mm = re.search(r"Monto\s+\$\s*([\d.]+)", texto)
+    if not mm:
+        return None
+    monto = int(_num(mm.group(1)))
+    mname = re.search(r"Destino\s+Nombre y Apellido\s+(.+?)\s+Rut", texto)
+    mrut = re.search(r"Rut\s+([\d.]+-?[\dkK])", texto)
+    nombre = mname.group(1).strip() if mname else ""
+    rut_dest = mrut.group(1) if mrut else ""
+    mfh = re.search(r"Fecha y Hora:\s*(.+?)\s+Transacci", texto)
+    fecha = _fecha_iso(mfh.group(1)) if mfh else _hoy()
+    if dueno_rut and rut_dest and _rut_norm(rut_dest) == _rut_norm(dueno_rut):
+        return {"_interno": True, "comercio": nombre, "monto": monto}  # entre tus cuentas
+    return {
+        "tipo": "Gasto", "monto": monto, "categoria": "Transferencia",
+        "subcategoria": f"Rut {rut_dest}" if rut_dest else "",
+        "comercio": nombre or "Transferencia a terceros",
+        "medio": "Banco de Chile transferencia", "fecha": fecha,
+    }
+
+
+def _parse_mach_compra(texto: str) -> dict | None:
+    """MachBank compra (crédito o débito): 'Comercio X Monto pagado/CLP $Y ... Fecha y hora ...'."""
+    mc = re.search(r"Comercio\s+(.+?)\s+Monto", texto)
+    mm = re.search(r"Monto pagado\s+\$\s*([\d.]+)", texto) or re.search(r"Monto CLP\s+\$\s*([\d.]+)", texto)
+    if not (mc and mm):
+        return None
+    m4 = re.search(r"[Úu]ltimos 4 d[íi]gitos de la tarjeta\s+(\d{4})", texto)
+    mfh = re.search(r"Fecha y hora\s+(\d{2}[/-]\d{2}[/-]\d{4})", texto)
+    comercio = mc.group(1).strip()
+    medio = "Mach crédito" if re.search(r"Cr[ée]dito", texto) else "Mach débito"
+    return {
+        "tipo": "Gasto", "monto": int(_num(mm.group(1))),
+        "categoria": _categoria_de(comercio), "subcategoria": f"****{m4.group(1)}" if m4 else "",
+        "comercio": comercio, "medio": medio, "fecha": _fecha_iso(mfh.group(1)) if mfh else _hoy(),
+    }
+
+
+def _parsear_determinista(remitente: str, asunto: str, texto: str, dueno_rut: str = "") -> dict | None:
+    """Intenta extraer SIN LLM. Devuelve el dict de la transacción, o {'_interno': True} si es
+    transferencia entre cuentas propias (se ignora), o None si no reconoce el formato (→ LLM)."""
+    sender = _detectar_sender(remitente)
+    if not sender:
+        return None
+    if sender["nombre"] == "Banco de Chile":
+        if "transferencia" in (asunto + " " + texto[:200]).lower():
+            return _parse_bch_transferencia(texto, dueno_rut)
+        return _parse_bch_cargo(texto)
+    if sender["nombre"] == "Mach":
+        return _parse_mach_compra(texto)
+    return None  # Copec / MercadoPago / desconocido → LLM
+
+
 async def procesar_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> dict | None:
     """Vision AISLADA sobre una boleta → buffer del día. Degrada a None si falla."""
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
@@ -190,9 +302,18 @@ async def procesar_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> d
         return None
 
 
-async def procesar_correo(raw: str, remitente: str = "", asunto: str = "") -> dict | None:
-    """Parseo AISLADO de un correo de gasto → buffer del día. Usa la pista del remitente
-    (Banco de Chile/Mach/Copec Pay/MercadoPago) para afinar la extracción."""
+async def procesar_correo(raw: str, remitente: str = "", asunto: str = "", dueno_rut: str = "") -> dict | None:
+    """Parseo AISLADO de un correo de gasto → buffer del día. PRIMERO intenta el parser
+    determinista del banco (regex, cero tokens); solo si no reconoce el formato cae al LLM.
+    Las transferencias entre cuentas propias de Nico (mismo RUT) se ignoran (no son gasto)."""
+    det = _parsear_determinista(remitente, asunto, raw, dueno_rut)
+    if det is not None:
+        if det.get("_interno"):
+            logger.info("Transferencia interna detectada (no es gasto): %s $%s",
+                        det.get("comercio", ""), det.get("monto", 0))
+            return None
+        return await _bufferizar(det, "correo")
+    # Residuo: formato no reconocido → LLM (con la pista del remitente).
     sender = _detectar_sender(remitente)
     system = EXTRACTOR_SYSTEM + (f"\n\nContexto del remitente ({sender['nombre']}): {sender['hint']}" if sender else "")
     contenido = (f"Remitente: {remitente}\nAsunto: {asunto}\n\n{raw}").strip()
@@ -222,12 +343,17 @@ async def ingerir_gastos_email(max_n: int = 25) -> dict:
     except Exception:
         logger.exception("ingerir_gastos_email: no pude leer los correos")
         return {"revisados": 0, "nuevos": 0}
+    dueno_rut = ""
+    try:
+        dueno_rut = (await memory.get_perfil()).get("rut", "")
+    except Exception:
+        logger.exception("ingerir_gastos_email: no pude leer el RUT del perfil")
     nuevos = 0
     for m in msgs:
         try:
             if await memory.correo_visto(m["proveedor"], m["id"]):
                 continue
-            datos = await procesar_correo(m["texto"], m.get("remitente", ""), m.get("asunto", ""))
+            datos = await procesar_correo(m["texto"], m.get("remitente", ""), m.get("asunto", ""), dueno_rut)
             await memory.marcar_correo_visto(m["proveedor"], m["id"], "gasto")
             if datos:
                 nuevos += 1

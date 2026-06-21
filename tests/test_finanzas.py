@@ -121,3 +121,83 @@ def test_id_unico_estable():
     a = finanzas._id_unico("2026-06-20", 15000, "Jumbo Maipú")
     b = finanzas._id_unico("2026-06-20", 15000, "Jumbo Maipú")
     assert a == b                                   # mismo gasto → mismo id (anti-duplicado)
+
+
+# ───────────────────────── Parsers deterministas por banco (sin LLM) ─────────────────────────
+# Fixtures = formato real de los correos de Nico (normalizados a una línea, como los entrega
+# core/email_gmail). El RUT del dueño es 20255435-0.
+
+RUT = "20255435-0"
+FROM_BCH = "Banco de Chile <enviodigital@bancochile.cl>"
+FROM_BCH_TEF = "serviciodetransferencias@bancochile.cl"
+FROM_MACH = "MACHBANK <contacto@mail.machbank.cl>"
+
+BCH_CARGO = ("Nicolas Emilio Castro Cordova: Te informamos que se ha realizado una compra por "
+             "$12.520 con cargo a Cuenta ****5502 en STA ISABEL LOMAS el 20/06/2026 13:16. Revisa Saldos")
+BCH_TEF_INTERNA = ("Comprobante de Transferencia a terceros Estimado(a): Nicolas Emilio Castro siguiente detalle: "
+                   "Origen Tipo de Cuenta Cuenta Corriente Nº de Cuenta 00-448-02155-02 Destino Nombre y Apellido "
+                   "Nicolas Castro Rut 20255435-0 Tipo de Cuenta Cuenta Vista Nº de Cuenta 77-702-02554-35 Banco "
+                   "Banco BCI/MACHBANK Email Monto $30.000 Mensaje Fecha y Hora: sábado 20 de junio de 2026 11:06 Transacción TEF123")
+BCH_TEF_TERCERO = BCH_TEF_INTERNA.replace("Nicolas Castro Rut 20255435-0", "Patricio Araneda Rut 12524337-1").replace("$30.000", "$20.000")
+MACH_CREDITO = ("MACH Comprobante de compra con tu Tarjeta de Crédito MACHBANK Detalle Comercio PAYU *UBER EATS "
+                "Monto pagado $1.131 Cantidad de cuotas 0 Tipo de tarjeta de crédito Virtual Últimos 4 dígitos de "
+                "la tarjeta 7160 Fecha y hora 19/06/2026 - 23:00 Nr. identificador de la compra FzkQIhOj")
+MACH_DEBITO = ("Comprobante de pago Detalle Comercio PUNTO CLAVE Monto (moneda original) $ 2.000 CLP Monto CLP $ 2.000 "
+               "Tarjeta Visa Débito Últimos 4 dígitos de la tarjeta 1969 Nombre en tarjeta NICOLÁS EMILIO CASTRO CÓRDOVA "
+               "Fecha y hora 18-06-2026 23:49 Identificador Visa 586170101458039")
+
+
+def test_bch_cargo():
+    d = finanzas._parsear_determinista(FROM_BCH, "Cargo en Cuenta", BCH_CARGO, RUT)
+    assert d["tipo"] == "Gasto"
+    assert d["monto"] == 12520
+    assert d["comercio"] == "STA ISABEL LOMAS"
+    assert d["categoria"] == "Alimentación"
+    assert d["medio"] == "Banco de Chile"
+    assert d["fecha"] == "2026-06-20"
+    assert d["subcategoria"] == "****5502"
+
+
+def test_bch_transferencia_interna_se_ignora():
+    d = finanzas._parsear_determinista(FROM_BCH_TEF, "Transferencia a Terceros", BCH_TEF_INTERNA, RUT)
+    assert d["_interno"] is True            # mismo RUT → entre cuentas propias, no es gasto
+    assert d["monto"] == 30000
+
+
+def test_bch_transferencia_a_tercero_es_gasto():
+    d = finanzas._parsear_determinista(FROM_BCH_TEF, "Transferencia a Terceros", BCH_TEF_TERCERO, RUT)
+    assert not d.get("_interno")
+    assert d["tipo"] == "Gasto"
+    assert d["monto"] == 20000
+    assert d["comercio"] == "Patricio Araneda"
+    assert "12524337-1" in d["subcategoria"]
+
+
+def test_transferencia_interna_sin_rut_no_la_marca():
+    # Sin RUT del dueño configurado, no puede saber que es interna → la trata como gasto (se corrige en digest).
+    d = finanzas._parsear_determinista(FROM_BCH_TEF, "Transferencia a Terceros", BCH_TEF_INTERNA, "")
+    assert not d.get("_interno")
+
+
+def test_mach_credito():
+    d = finanzas._parsear_determinista(FROM_MACH, "Has hecho una compra", MACH_CREDITO, RUT)
+    assert d["monto"] == 1131
+    assert d["comercio"] == "PAYU *UBER EATS"
+    assert d["categoria"] == "Chanchería"     # Uber Eats → delivery
+    assert d["medio"] == "Mach crédito"
+    assert d["fecha"] == "2026-06-19"
+    assert d["subcategoria"] == "****7160"
+
+
+def test_mach_debito():
+    d = finanzas._parsear_determinista(FROM_MACH, "Tu compra con MACHBANK", MACH_DEBITO, RUT)
+    assert d["monto"] == 2000
+    assert d["comercio"] == "PUNTO CLAVE"
+    assert d["medio"] == "Mach débito"
+    assert d["fecha"] == "2026-06-18"
+    assert d["subcategoria"] == "****1969"
+
+
+def test_remitente_desconocido_cae_al_llm():
+    # Copec/MercadoPago/otros no tienen parser determinista → None (el caller usa el LLM).
+    assert finanzas._parsear_determinista("noreply@copec.cl", "Carga", "algo", RUT) is None
