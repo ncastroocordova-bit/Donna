@@ -212,17 +212,52 @@ def _rut_norm(r: str) -> str:
     return re.sub(r"[.\-\s]", "", str(r or "")).lower()
 
 
+TIPO_CAMBIO_USD = 950  # estimación rough CLP/US$ (el correo solo trae US$); la compra se marca dudosa para confirmar.
+
+
 def _parse_bch_cargo(texto: str) -> dict | None:
-    """BCh: 'compra por $12.520 con cargo a Cuenta ****5502 en STA ISABEL LOMAS el 20/06/2026 13:16'."""
+    """BCh compra/cargo. Cubre 'con cargo a Cuenta ****5502' (débito) y 'con Tarjeta de Crédito
+    ****9371' (crédito), en pesos ('$12.520') o dólares ('US$10,00')."""
     m = re.search(
-        r"(?:compra|cargo|pago|giro)\s+por\s+\$\s*([\d.]+)\s+con cargo a Cuenta\s+\*+(\d{4})\s+en\s+(.+?)\s+el\s+(\d{2}/\d{2}/\d{4})",
+        r"(?:compra|cargo|pago|giro)\s+por\s+(US)?\$\s*([\d.,]+)\s+con\s+"
+        r"(?:cargo a Cuenta|Tarjeta de Cr[ée]dito|Tarjeta de D[ée]bito)\s+\*+(\d{4})\s+en\s+(.+?)\s+el\s+(\d{2}/\d{2}/\d{4})",
         texto, re.IGNORECASE)
     if not m:
         return None
+    es_usd = bool(m.group(1))
+    valor = _num(m.group(2))
+    comercio = m.group(4).strip()
+    tx = {
+        "tipo": "Gasto", "categoria": _categoria_de(comercio), "subcategoria": f"****{m.group(3)}",
+        "comercio": comercio, "medio": "Banco de Chile", "fecha": _fecha_iso(m.group(5)),
+        "dudosa": False, "motivo_duda": "",
+    }
+    if es_usd:  # el cargo real en pesos no viene en el correo → estimo y marco para confirmar.
+        tx["monto"] = int(round(valor * TIPO_CAMBIO_USD))
+        tx["medio"] = "Banco de Chile crédito (USD)"
+        tx["dudosa"] = True
+        tx["motivo_duda"] = f"Compra en US${m.group(2)} — confirma el monto en pesos"
+    else:
+        tx["monto"] = int(valor)
+    return tx
+
+
+def _parse_itau_recibida(texto: str) -> dict | None:
+    """Itaú avisa transferencias RECIBIDAS: 'nuestro cliente X ha instruido una transferencia ...
+    Titular Cuenta: Nico ... Monto: $150.000' → Ingreso (te transfieren / te pagan)."""
+    if "instruido una transferencia" not in texto.lower():
+        return None
+    mm = re.search(r"Monto:?\s*\$\s*([\d.]+)", texto)
+    if not mm:
+        return None
+    origen = re.search(r"cliente\s+(.+?)\s*,?\s+ha instruido", texto, re.IGNORECASE)
+    coment = re.search(r"coment[ao]rio:\s*(.+?)(?:\s+Importante|\s+Itau|$)", texto, re.IGNORECASE)
+    fecha = re.search(r"con fecha\s+(\d{2}/\d{2}/\d{4})", texto)
     return {
-        "tipo": "Gasto", "monto": int(_num(m.group(1))),
-        "categoria": _categoria_de(m.group(3)), "subcategoria": f"****{m.group(2)}",
-        "comercio": m.group(3).strip(), "medio": "Banco de Chile", "fecha": _fecha_iso(m.group(4)),
+        "tipo": "Ingreso", "monto": int(_num(mm.group(1))), "categoria": "Ingreso",
+        "subcategoria": (coment.group(1).strip()[:40] if coment else ""),
+        "comercio": (origen.group(1).strip() if origen else "Transferencia recibida"),
+        "medio": "Transferencia recibida (Itaú)", "fecha": _fecha_iso(fecha.group(1)) if fecha else _hoy(),
     }
 
 
@@ -277,6 +312,8 @@ def _parsear_determinista(remitente: str, asunto: str, texto: str, dueno_rut: st
         return _parse_bch_cargo(texto)
     if sender["nombre"] == "Mach":
         return _parse_mach_compra(texto)
+    if sender["nombre"] == "Itaú":
+        return _parse_itau_recibida(texto)
     return None  # Copec / MercadoPago / desconocido → LLM
 
 

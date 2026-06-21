@@ -201,3 +201,38 @@ def test_mach_debito():
 def test_remitente_desconocido_cae_al_llm():
     # Copec/MercadoPago/otros no tienen parser determinista → None (el caller usa el LLM).
     assert finanzas._parsear_determinista("noreply@copec.cl", "Carga", "algo", RUT) is None
+
+
+BCH_CREDITO_USD = ("Nicolas Emilio Castro Cordova: Te informamos que se ha realizado una compra por US$10,00 con "
+                   "Tarjeta de Crédito ****9371 en VOYAGE AI +16098158888 US el 16/06/2026 12:23. Revisa Saldos")
+BCH_CREDITO_CLP = ("Nicolas Emilio Castro Cordova: Te informamos que se ha realizado una compra por $5.990 con "
+                   "Tarjeta de Crédito ****9371 en SPOTIFY el 15/06/2026 09:00. Revisa Saldos")
+ITAU_RECIBIDA = ("Estimado(a) Nicolas Castro, Informamos que con fecha 20/06/2026-08:41:28, nuestro(a) cliente "
+                 "MAURICIO ALEJANDRO CASTRO ACUÑA , ha instruido una transferencia de fondos con el siguiente detalle: "
+                 "Banco Destino: Banco de Chile / Edwards-Citi Numero Cuenta: 004480215502 Titular Cuenta: Nicolas Castro "
+                 "Monto: $150.000 Nuestro cliente ha dejado el siguiente comentario: medio julio Importante: Este email "
+                 "fue generado automaticamente, por favor no responda a este mensaje.")
+
+
+def test_bch_compra_credito_clp():
+    d = finanzas._parsear_determinista(FROM_BCH, "Compra con Tarjeta de Crédito", BCH_CREDITO_CLP, RUT)
+    assert d["tipo"] == "Gasto" and d["monto"] == 5990
+    assert d["comercio"] == "SPOTIFY" and d["categoria"] == "Suscripciones"
+    assert d["subcategoria"] == "****9371" and not d["dudosa"]
+
+
+def test_bch_compra_usd_estima_y_marca_dudosa():
+    d = finanzas._parsear_determinista(FROM_BCH, "Compra con Tarjeta de Crédito", BCH_CREDITO_USD, RUT)
+    assert d["tipo"] == "Gasto"
+    assert d["monto"] == round(10 * finanzas.TIPO_CAMBIO_USD)   # estimación CLP de US$10
+    assert d["dudosa"] is True and "US$10,00" in d["motivo_duda"]
+    assert "USD" in d["medio"] and d["fecha"] == "2026-06-16"
+
+
+def test_itau_transferencia_recibida_es_ingreso():
+    d = finanzas._parse_itau_recibida(ITAU_RECIBIDA)
+    assert d["tipo"] == "Ingreso"
+    assert d["monto"] == 150000
+    assert d["comercio"] == "MAURICIO ALEJANDRO CASTRO ACUÑA"
+    assert d["fecha"] == "2026-06-20"
+    assert d["subcategoria"] == "medio julio"
