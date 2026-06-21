@@ -40,6 +40,15 @@ def _hoy() -> str:
     return datetime.now(settings.tz).strftime("%Y-%m-%d")
 
 
+_AFIRMATIVO = {"sí", "si", "✓", "x", "true", "1", "hecho", "hice"}
+
+
+def _afirmativo(v) -> bool:
+    """¿La celda marca el hábito como HECHO? 'No' (o vacío) cuenta como no hecho — así el
+    'Hoy no' explícito queda registrado pero no rompe ni alimenta la racha."""
+    return str(v).strip().lower() in _AFIRMATIVO
+
+
 async def _set(campo: str, valor, fecha: str | None = None) -> str:
     fecha = fecha or _hoy()
     return await sheets.upsert_por_clave(HOJA, "Fecha", fecha, COLS[campo], valor)
@@ -96,7 +105,7 @@ async def calcular_racha(campo: str) -> int:
     """Días consecutivos hasta hoy con la columna del hábito no vacía."""
     filas = await sheets.get_dicts(HOJA)
     col = COLS[campo]
-    hechos = {str(f.get("Fecha", "")) for f in filas if str(f.get(col, "")).strip()}
+    hechos = {str(f.get("Fecha", "")) for f in filas if _afirmativo(f.get(col, ""))}
     racha = 0
     d = datetime.now(settings.tz).date()
     while d.strftime("%Y-%m-%d") in hechos:
@@ -153,7 +162,7 @@ async def _t_resumen_semana(inp: dict) -> str:
         recientes = await _ultimos(7)
         partes = []
         for c in ("ejercicio", "meditacion"):
-            n = sum(1 for f in recientes if str(f.get(COLS[c], "")).strip())
+            n = sum(1 for f in recientes if _afirmativo(f.get(COLS[c], "")))
             partes.append(f"{c}: {n}/7")
         n_sueno = sum(1 for f in recientes if str(f.get(COLS["sueno_7h"], "")).strip().lower() in ("sí", "si", "true", "x"))
         partes.append(f"sueño 7h+: {n_sueno}/7")

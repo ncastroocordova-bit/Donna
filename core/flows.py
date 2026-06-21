@@ -30,8 +30,10 @@ def teclado_cierre(estado: dict | None = None) -> InlineKeyboardMarkup:
         return ("✅ " + label) if on else label
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(mk("🏃 Ejercicio", e.get("ejercicio")), callback_data="hab:ejercicio"),
-         InlineKeyboardButton(mk("🧘 Meditación", e.get("meditacion")), callback_data="hab:meditacion")],
+        [InlineKeyboardButton(mk("🏃 Hice ejercicio", e.get("ejercicio") == "si"), callback_data="hab:ejercicio:si"),
+         InlineKeyboardButton(mk("🏃 Hoy no", e.get("ejercicio") == "no"), callback_data="hab:ejercicio:no")],
+        [InlineKeyboardButton(mk("🧘 Medité", e.get("meditacion") == "si"), callback_data="hab:meditacion:si"),
+         InlineKeyboardButton(mk("🧘 Hoy no", e.get("meditacion") == "no"), callback_data="hab:meditacion:no")],
         [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[:2]],
         [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[2:]],
         [InlineKeyboardButton(mk(f"Ánimo {n}", e.get("animo") == n), callback_data=f"animo:{n}") for n in ("1", "2", "3", "4")],
@@ -142,20 +144,23 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data.split(":", 1)[0] in ("hab", "comida", "animo", "mit"):
         # Panel del cierre: cada toque actualiza SOLO el teclado (marca ✅), sin cerrar el panel,
         # para poder anotar varios hábitos. El estado vive por message_id (no se arrastra entre días).
-        tipo, val = data.split(":", 1)
+        partes = data.split(":")
+        tipo = partes[0]
         estado = context.user_data.setdefault("cierre_estados", {}).setdefault(q.message.message_id, {})
         try:
-            if tipo == "hab":
-                estado[val] = True
-                await salud.marcar_habito(val)
+            if tipo == "hab":  # hab:ejercicio:si | hab:meditacion:no → anota "Sí"/"No" explícito
+                campo, signo = partes[1], partes[2]
+                estado[campo] = signo
+                await salud.marcar_habito(campo, "Sí" if signo == "si" else "No")
             elif tipo == "comida":
-                estado["comida"] = val
-                await salud.marcar_habito("ultima_comida", val)
+                hora = data.split(":", 1)[1]  # "20:00" lleva ':' → tomo todo lo que sigue al primer ':'
+                estado["comida"] = hora
+                await salud.marcar_habito("ultima_comida", hora)
             elif tipo == "animo":
-                estado["animo"] = val
-                await salud.registrar_animo(val)
+                estado["animo"] = partes[1]
+                await salud.registrar_animo(partes[1])
             elif tipo == "mit":
-                estado["mit"] = val
+                estado["mit"] = partes[1]
         except Exception:
             logger.exception("cierre: no pude anotar %s", data)
         try:
