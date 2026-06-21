@@ -68,6 +68,13 @@ SENDERS = [
         "hint": ("MercadoPago avisa pagos y cobros: 'Pagaste $X', 'Compraste', 'Te enviaron dinero'. Si entra "
                  "plata es Ingreso. Ignora correos de promoción/marketing (esos no son transacción: monto 0)."),
     },
+    {
+        "nombre": "Itaú",
+        "dominios": ["itau.cl"],
+        "medio": "Transferencia recibida",
+        "hint": ("Itaú avisa transferencias RECIBIDAS hacia las cuentas de Nico: 'nuestro cliente X ha instruido "
+                 "una transferencia ... Titular Cuenta: Nico ... Monto: $'. Eso es INGRESO (te transfieren/te pagan)."),
+    },
 ]
 _DOMINIOS = [d for s in SENDERS for d in s["dominios"]]
 
@@ -212,7 +219,7 @@ def _rut_norm(r: str) -> str:
     return re.sub(r"[.\-\s]", "", str(r or "")).lower()
 
 
-TIPO_CAMBIO_USD = 950  # estimación rough CLP/US$ (el correo solo trae US$); la compra se marca dudosa para confirmar.
+TIPO_CAMBIO_USD = 1000  # estimación CLP/US$ (el correo solo trae US$); la compra se marca dudosa para confirmar.
 
 
 def _parse_bch_cargo(texto: str) -> dict | None:

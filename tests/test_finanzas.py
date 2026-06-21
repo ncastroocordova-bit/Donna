@@ -230,7 +230,8 @@ def test_bch_compra_usd_estima_y_marca_dudosa():
 
 
 def test_itau_transferencia_recibida_es_ingreso():
-    d = finanzas._parse_itau_recibida(ITAU_RECIBIDA)
+    # Ruteo completo: remitente itau.cl → _parse_itau_recibida.
+    d = finanzas._parsear_determinista("transferencias@itau.cl", "Transferencia de fondos", ITAU_RECIBIDA, RUT)
     assert d["tipo"] == "Ingreso"
     assert d["monto"] == 150000
     assert d["comercio"] == "MAURICIO ALEJANDRO CASTRO ACUÑA"
