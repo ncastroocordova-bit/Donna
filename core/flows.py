@@ -64,7 +64,7 @@ def _texto_digest(d: dict) -> str:
     for m in d["movimientos"]:
         marca = f"  ⚠️ {m['motivo_duda']}" if m["dudosa"] else ""
         lineas.append(f"• {m['comercio'] or m['categoria']}: {finanzas.clp(m['monto'])} → {m['categoria']}{marca}")
-    cab = f"Hoy detecté {d['n']} movimiento(s) ({finanzas.clp(d['total'])})."
+    cab = f"Tienes {d['n']} movimiento(s) por confirmar ({finanzas.clp(d['total'])})."
     if d["n_dudosas"]:
         cab += f" Hay {d['n_dudosas']} que quiero confirmar contigo."
     return cab + "\n\n" + "\n".join(lineas) + "\n\nToca «Aceptar todo» o la línea que esté mal."

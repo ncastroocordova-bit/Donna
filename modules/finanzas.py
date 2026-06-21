@@ -435,12 +435,13 @@ async def ingerir_gastos_email(max_n: int = 25) -> dict:
 # ───────────────────────── (B) Digest nocturno ─────────────────────────
 
 async def armar_digest(fecha: str | None = None) -> dict:
-    """Lista del día pre-categorizada. Devuelve:
+    """Lista de movimientos por confirmar. Por defecto muestra TODOS los pendientes (no solo
+    los de hoy): cada gasto trae su fecha REAL de compra, que puede ser de días pasados, y
+    igual hay que confirmarlos. Devuelve:
     {movimientos: [{id, tipo, categoria, comercio, monto, medio, dudosa, motivo_duda}],
      total: int, n: int, n_dudosas: int}."""
-    fecha = fecha or _hoy()
     try:
-        pendientes = await memory.buffer_pendientes(fecha)
+        pendientes = await memory.buffer_pendientes(fecha)  # fecha=None → todos los pendientes
     except Exception:
         logger.exception("armar_digest: no pude leer el buffer")
         return {"movimientos": [], "total": 0, "n": 0, "n_dudosas": 0}
@@ -522,8 +523,7 @@ async def confirmar_digest(correcciones: dict | None = None) -> dict:
     confirmadas a Transacciones. Anti-duplicado en DOS niveles: el UNIQUE del buffer (ingreso)
     y el ID_Único ya presente en la planilla (acá). Devuelve {escritas, descartadas, duplicadas}."""
     correcciones = correcciones or {}
-    fecha = _hoy()
-    pendientes = await memory.buffer_pendientes(fecha)
+    pendientes = await memory.buffer_pendientes()  # TODOS los pendientes (cada uno con su fecha real)
     ya_en_planilla = await _ids_transacciones()
     plan = _planificar_digest(pendientes, correcciones, ya_en_planilla)
     for p in plan["a_descartar"]:
@@ -536,7 +536,7 @@ async def confirmar_digest(correcciones: dict | None = None) -> dict:
         p = item["p"]
         try:
             await sheets.append_row(HOJA_TX, [
-                p.get("fecha", fecha), p.get("tipo", "Gasto"), item["categoria"],
+                p.get("fecha") or _hoy(), p.get("tipo", "Gasto"), item["categoria"],
                 p.get("subcategoria", ""), p.get("comercio", ""), int(_num(item["monto"])),
                 p.get("medio", ""), p.get("fuente", ""), p.get("id_unico", ""),
             ], sheet_id=sheets.fin_id())
@@ -715,7 +715,7 @@ async def _t_armar_digest(inp: dict) -> str:
         + (f"  ⚠️ {m['motivo_duda']}" if m["dudosa"] else "")
         for m in d["movimientos"]
     ]
-    return f"Hoy detecté {d['n']} movimiento(s) ({clp(d['total'])}):\n" + "\n".join(lineas)
+    return f"Tienes {d['n']} movimiento(s) por confirmar ({clp(d['total'])}):\n" + "\n".join(lineas)
 
 
 # ───────────────────────── Señal destilada (brief) ─────────────────────────
