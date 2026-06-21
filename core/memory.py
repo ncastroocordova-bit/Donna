@@ -295,6 +295,27 @@ async def buffer_marcar(buffer_id: str, estado: str) -> None:
     await buffer_actualizar(buffer_id, {"estado": estado})
 
 
+# ───────────────────────── Comercios: nombre amigable + categoría aprendida ─────────────────────────
+
+async def get_comercios() -> list[dict]:
+    """Reglas de comercios que Donna aprendió: patrón → nombre amigable + categoría."""
+    db = await _get_db()
+    r = await db.table("comercios").select("patron, nombre, categoria").order("veces", desc=True).execute()
+    return r.data
+
+
+async def upsert_comercio(patron: str, nombre: str, categoria: str = "") -> None:
+    """Aprende/actualiza una regla de comercio. `patron` se guarda en minúsculas (substring del
+    comercio crudo del banco). Lo alimentan las correcciones del digest."""
+    patron = (patron or "").strip().lower()
+    if not patron:
+        return
+    db = await _get_db()
+    await db.table("comercios").upsert(
+        {"patron": patron, "nombre": nombre, "categoria": categoria}, on_conflict="patron"
+    ).execute()
+
+
 # ───────────────────────── jobs_log: resiliencia del scheduler ─────────────────────────
 
 async def job_ya_corrio(job: str, fecha: str | None = None) -> bool:

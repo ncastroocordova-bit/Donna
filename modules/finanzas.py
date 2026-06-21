@@ -153,23 +153,41 @@ def _parse_json(texto: str) -> dict:
     return json.loads(t)
 
 
-async def _bufferizar(datos: dict, fuente: str) -> dict | None:
-    """Normaliza la extracción y la mete al buffer del día. Devuelve el dict guardado o None."""
+def _aplicar_reglas_comercio(comercio: str, categoria: str, reglas: list[dict] | None) -> tuple[str, str]:
+    """Si el comercio crudo del banco calza con una regla aprendida, lo renombra a su nombre
+    amigable y aplica su categoría (ej. 'MERCADOPAGO*SANVA' → 'negocio San Vale' / Alimentación)."""
+    c = (comercio or "").lower()
+    for r in reglas or []:
+        patron = (r.get("patron") or "").lower()
+        if patron and patron in c:
+            return (r.get("nombre") or comercio), (r.get("categoria") or categoria)
+    return comercio, categoria
+
+
+async def _bufferizar(datos: dict, fuente: str, reglas: list[dict] | None = None) -> dict | None:
+    """Normaliza la extracción y la mete al buffer del día. Aplica las reglas de comercio
+    aprendidas (nombre amigable + categoría). Devuelve el dict guardado o None."""
     monto = datos.get("monto", 0)
     if _num(monto) <= 0:
         return None
     fecha = datos.get("fecha") or _hoy()
-    comercio = datos.get("comercio", "")
+    comercio_raw = datos.get("comercio", "")
+    if reglas is None:
+        try:
+            reglas = await memory.get_comercios()
+        except Exception:
+            reglas = []
+    comercio, categoria = _aplicar_reglas_comercio(comercio_raw, datos.get("categoria", "Otros"), reglas)
     tx = {
         "fecha": fecha,
         "tipo": "Ingreso" if str(datos.get("tipo", "")).lower().startswith("ing") else "Gasto",
-        "categoria": datos.get("categoria", "Otros"),
+        "categoria": categoria,
         "subcategoria": datos.get("subcategoria", ""),
         "comercio": comercio,
         "monto": int(_num(monto)),
         "medio": datos.get("medio", ""),
         "fuente": fuente,
-        "id_unico": _id_unico(fecha, monto, comercio),
+        "id_unico": _id_unico(fecha, monto, comercio_raw),  # id sobre el comercio CRUDO → estable ante reglas nuevas
         "dudosa": bool(datos.get("dudosa", False)),
         "motivo_duda": datos.get("motivo_duda", ""),
     }
@@ -346,7 +364,8 @@ async def procesar_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> d
         return None
 
 
-async def procesar_correo(raw: str, remitente: str = "", asunto: str = "", dueno_rut: str = "") -> dict | None:
+async def procesar_correo(raw: str, remitente: str = "", asunto: str = "", dueno_rut: str = "",
+                          reglas: list[dict] | None = None) -> dict | None:
     """Parseo AISLADO de un correo de gasto → buffer del día. PRIMERO intenta el parser
     determinista del banco (regex, cero tokens); solo si no reconoce el formato cae al LLM.
     Las transferencias entre cuentas propias de Nico (mismo RUT) se ignoran (no son gasto)."""
@@ -356,7 +375,7 @@ async def procesar_correo(raw: str, remitente: str = "", asunto: str = "", dueno
             logger.info("Transferencia interna detectada (no es gasto): %s $%s",
                         det.get("comercio", ""), det.get("monto", 0))
             return None
-        return await _bufferizar(det, "correo")
+        return await _bufferizar(det, "correo", reglas)
     # Residuo: formato no reconocido → LLM (con la pista del remitente).
     sender = _detectar_sender(remitente)
     system = EXTRACTOR_SYSTEM + (f"\n\nContexto del remitente ({sender['nombre']}): {sender['hint']}" if sender else "")
@@ -371,7 +390,7 @@ async def procesar_correo(raw: str, remitente: str = "", asunto: str = "", dueno
         datos = _parse_json(r.content[0].text)
         if sender and not str(datos.get("medio", "")).strip():
             datos["medio"] = sender["medio"]  # el medio de pago sale del remitente
-        return await _bufferizar(datos, "correo")
+        return await _bufferizar(datos, "correo", reglas)
     except Exception:
         logger.exception("procesar_correo falló")
         return None
@@ -392,12 +411,17 @@ async def ingerir_gastos_email(max_n: int = 25) -> dict:
         dueno_rut = (await memory.get_perfil()).get("rut", "")
     except Exception:
         logger.exception("ingerir_gastos_email: no pude leer el RUT del perfil")
+    try:
+        reglas = await memory.get_comercios()  # cargadas UNA vez para todo el lote
+    except Exception:
+        logger.exception("ingerir_gastos_email: no pude leer las reglas de comercios")
+        reglas = []
     nuevos = 0
     for m in msgs:
         try:
             if await memory.correo_visto(m["proveedor"], m["id"]):
                 continue
-            datos = await procesar_correo(m["texto"], m.get("remitente", ""), m.get("asunto", ""), dueno_rut)
+            datos = await procesar_correo(m["texto"], m.get("remitente", ""), m.get("asunto", ""), dueno_rut, reglas)
             await memory.marcar_correo_visto(m["proveedor"], m["id"], "gasto")
             if datos:
                 nuevos += 1

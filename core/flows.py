@@ -220,5 +220,16 @@ async def aplicar_correccion_tx(buffer_id: str, texto: str) -> str:
     if texto.strip().lower() in ("descartar", "bórralo", "borralo", "no es mío", "no"):
         await memory.buffer_marcar(buffer_id, "descartada")
         return "Descartada. No la anoto."
-    await memory.buffer_actualizar(buffer_id, {"categoria": texto.strip(), "dudosa": False, "motivo_duda": ""})
-    return f"Corregida a «{texto.strip()}». Cuando toques «Aceptar todo» queda."
+    categoria = texto.strip()
+    await memory.buffer_actualizar(buffer_id, {"categoria": categoria, "dudosa": False, "motivo_duda": ""})
+    # Aprende: este comercio → esta categoría, para reconocerlo solo la próxima vez.
+    aprendido = False
+    try:
+        linea = next((p for p in await memory.buffer_pendientes() if p["id"] == buffer_id), None)
+        if linea and linea.get("comercio"):
+            await memory.upsert_comercio(linea["comercio"], linea["comercio"], categoria)
+            aprendido = True
+    except Exception:
+        logger.exception("No pude aprender la categoría del comercio")
+    cola = " La próxima la reconozco sola." if aprendido else " Cuando toques «Aceptar todo» queda."
+    return f"Corregida a «{categoria}».{cola}"

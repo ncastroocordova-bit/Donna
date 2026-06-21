@@ -237,3 +237,25 @@ def test_itau_transferencia_recibida_es_ingreso():
     assert d["comercio"] == "MAURICIO ALEJANDRO CASTRO ACUÑA"
     assert d["fecha"] == "2026-06-20"
     assert d["subcategoria"] == "medio julio"
+
+
+# ───────────────────────── Reglas de comercio (nombre + categoría aprendidos) ─────────────────────────
+
+REGLAS = [{"patron": "sanva", "nombre": "negocio San Vale", "categoria": "Alimentación"}]
+
+
+def test_regla_comercio_renombra_y_categoriza():
+    for crudo in ("MERCADOPAGO*SANVA", "Merpago*sanvalentin"):
+        n, c = finanzas._aplicar_reglas_comercio(crudo, "Otros", REGLAS)
+        assert n == "negocio San Vale" and c == "Alimentación"
+
+
+def test_regla_comercio_no_toca_lo_que_no_calza():
+    n, c = finanzas._aplicar_reglas_comercio("STA ISABEL LOMAS", "Alimentación", REGLAS)
+    assert n == "STA ISABEL LOMAS" and c == "Alimentación"
+
+
+def test_regla_comercio_sin_categoria_conserva_la_actual():
+    reglas = [{"patron": "uber", "nombre": "Uber", "categoria": ""}]
+    n, c = finanzas._aplicar_reglas_comercio("UBER *TRIP", "Transporte", reglas)
+    assert n == "Uber" and c == "Transporte"
