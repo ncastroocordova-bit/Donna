@@ -25,7 +25,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from anthropic import AsyncAnthropic
 
@@ -585,6 +585,26 @@ def formatear_deuda(d: dict) -> str:
 
 
 # ───────────────────────── Saldo del mes / presupuesto (lectura del Dashboard) ─────────────────────────
+
+async def gasto_por_dia(dias: int = 60) -> dict:
+    """{fecha: total_gasto} de los últimos `dias`, leído de Transacciones SIN formato (para que
+    la coma de miles no rompa la suma). Interfaz pública para el correlador de la espina."""
+    try:
+        filas = await sheets.get_dicts(HOJA_TX, sheet_id=sheets.fin_id(), value_render="UNFORMATTED_VALUE")
+    except Exception:
+        logger.exception("gasto_por_dia: no pude leer Transacciones")
+        return {}
+    desde = (datetime.now(settings.tz).date() - timedelta(days=dias)).strftime("%Y-%m-%d")
+    out: dict[str, float] = {}
+    for f in filas:
+        if not str(f.get("Tipo", "")).strip().lower().startswith("gasto"):
+            continue
+        fecha = str(f.get("Fecha", "")).strip()
+        if fecha < desde:
+            continue
+        out[fecha] = out.get(fecha, 0.0) + _num(f.get("Monto", 0))
+    return out
+
 
 async def saldo_mes() -> dict:
     """Lee el saldo del mes del Dashboard (B4:B8) en UN request. Orden del bloque:

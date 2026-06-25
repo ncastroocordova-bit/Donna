@@ -120,6 +120,11 @@ async def _ultimos(dias: int) -> list[dict]:
     return [f for f in filas if str(f.get("Fecha", "")) >= desde]
 
 
+async def diario_reciente(dias: int = 60) -> list[dict]:
+    """Filas del Diario de los últimos `dias` (interfaz pública para el correlador de la espina)."""
+    return await _ultimos(dias)
+
+
 # ───────────────────────── Handlers de tools ─────────────────────────
 
 async def _t_marcar_habito(inp: dict) -> str:

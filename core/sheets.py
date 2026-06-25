@@ -99,9 +99,11 @@ def _fila_headers(filas: list[list], clave: str | None = None) -> tuple[int, lis
     return -1, []
 
 
-async def get_dicts(hoja: str, sheet_id: str | None = None) -> list[dict]:
-    """Lee una hoja y devuelve lista de dicts. Encuentra la fila de headers (salta el banner)."""
-    filas = await get_rows(hoja, sheet_id=sheet_id)
+async def get_dicts(hoja: str, sheet_id: str | None = None, value_render: str = "FORMATTED_VALUE") -> list[dict]:
+    """Lee una hoja y devuelve lista de dicts. Encuentra la fila de headers (salta el banner).
+    `value_render='UNFORMATTED_VALUE'` devuelve números crudos (para sumar montos sin que la
+    coma de miles del Sheet rompa el parseo)."""
+    filas = await get_rows(hoja, sheet_id=sheet_id, value_render=value_render)
     h_idx, headers = _fila_headers(filas)
     if h_idx < 0:
         return []

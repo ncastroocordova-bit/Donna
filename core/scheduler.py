@@ -15,7 +15,7 @@ from datetime import datetime, time, timedelta
 from telegram.ext import Application, ContextTypes
 
 from config import settings
-from core import agenda, brain, correo, flows, memory
+from core import agenda, brain, correlador, correo, flows, memory
 from modules import aprendizaje, finanzas, proactividad, proyectos, recordatorios, salud
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,11 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
         await finanzas.sembrar_espina()
     except Exception:
         logger.exception("No pude sembrar la espina de finanzas")
+    # 3.6) El correlador cruza dominios (sueño↔ánimo↔gasto) si ya hay datos suficientes.
+    try:
+        await correlador.correr()
+    except Exception:
+        logger.exception("No pude correr el correlador")
     # 4) Inferencia pendiente, si hay (puede ser la que acaba de sembrar la espina).
     await flows.preguntar_inferencia_pendiente(context.bot, chat)
     try:
