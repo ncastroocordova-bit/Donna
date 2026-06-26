@@ -104,6 +104,66 @@
 
 ---
 
+## Fases añadidas (mejoras del roadmap de 8 módulos)
+
+> Estas fases extienden el canon tras la sesión de revisión de las propuestas externas. Mapean a los módulos del `Roadmap_Modular.md`: **E8 → Salud (M2)**, **E9 → Compras (M3, nuevo)**, **E10 → Familia (M8, nuevo)**, **E11 → Finanzas v2 (M1)**. Misma regla: una a la vez, eval verde + deploy + 7 días estable antes de promover. **No se construye código en este paso documental**; aquí queda el runbook para cuando a cada módulo le toque su turno.
+
+### FASE E8 — Salud v2: nutrición, ventanas, peso, score, eventos ⭐
+
+> **PROMPT:**
+> Extiende `modules/salud.py` (prefijo `sal_`), `core/scheduler.py` (cierre), `core/flows.py` (panel) y `setup_sheets.py`. **Schema:** agrega a `Diario` (al final, merge aditivo) `Primera_Comida`, `Hora_Despertar`, `Agua`, `Proteina`, `Peso`; agrega a `Semanal` `Score_Habitos`, `Ventana_Comida`, `Ventana_Sueno`, `Peso`. Implementa:
+> - Toques en el cierre: **agua** sí/no y **proteína** sí/no (mismo patrón de `marcar_habito`); hora **1ª comida**, **última comida** (ya existe `Ultima_Comida`), hora **despertar** (ya existe `Hora_Dormi`).
+> - `sal_peso(kg)` → escribe `Peso` en la fila del día; se **pide los domingos** (no diario).
+> - `sal_resumen_ventanas(semana)` → mediana de ventana de comida (1ª→última) y de sueño (dormir→despertar), **semana vs fin de semana**. **Solo mide y muestra**; sin meta ni empuje (espera 2-3 semanas de baseline — canon "calla hasta tener datos").
+> - `sal_score_semana()` → % de hábitos cumplidos en la semana (default: sueño 7h, ejercicio, meditación, agua, proteína); escribe `Score_Habitos` en `Semanal` (es una lectura).
+> - **Eventos contextuales:** en el cierre, pregunta *"¿hubo algo hoy fuera de tu control que te bajó el ánimo o no te dejó hacer lo planeado?"* → texto libre → `core/memory` con tag `evento_externo`. El correlador lee ese tag y trata el día como **contexto, no patrón**.
+> Ver `Spec_Herramientas_Nuevas.md §sal_`.
+
+**LISTO CUANDO:** los toques de agua/proteína/comidas escriben en `Diario`; `sal_peso` registra el domingo; `sal_resumen_ventanas` da medianas coherentes (semana vs finde); `Score_Habitos` cuadra con los toques; un evento contextual queda en `memoria` y el correlador no lo cuenta como patrón.
+
+### FASE E9 — Compras: lista del súper (módulo nuevo `cmp_`, Fase 1) ⭐
+
+> **PROMPT:**
+> Crea `modules/compras.py` (prefijo `cmp_`, sin solapamiento), tab nuevo `Compras` en `setup_sheets.py` (`Item · Estado(pendiente|comprado) · Fecha_Agregado · Fecha_Comprado · Categoria`), e intents en `core/brain.py`/`main.py`. Implementa **solo Fase 1 (lista manual)**:
+> - `cmp_agregar(item)` → reconoce "Donna falta toalla nova", "queda poco arroz, anótalo a la lista" → agrega `Estado=pendiente`, `Fecha_Agregado=hoy`; anti-duplicado por nombre normalizado.
+> - `cmp_lista()` → "Donna dame la lista del súper" → devuelve **exactamente** los `pendiente`.
+> - `cmp_marcar_comprado(item)` → `Estado=comprado`, `Fecha_Comprado=hoy`; lo saca de la lista. (Toque o texto.)
+> - Degrada elegante si Sheets falla. **Fase 2 NO se construye aquí** (motor de frecuencia + alertas), pero la Fase 1 ya **siembra la fecha de cada compra** para que la inferencia futura tenga historial.
+> En `⚙️ Config` agrega `modulo_compras = ON`. Ver `Spec_Herramientas_Nuevas.md §cmp_`.
+
+**LISTO CUANDO:** "falta X" agrega sin duplicar; "dame la lista" devuelve solo lo pendiente; marcar comprado lo saca y registra `Fecha_Comprado`; nada de Fase 2 todavía.
+
+### FASE E10 — Familia (módulo nuevo `fam_`, opción B) ⭐
+
+> **PROMPT:**
+> Crea `modules/familia.py` (prefijo `fam_`), agrega a `Diario` (merge aditivo) `Fam_Emilio`, `Fam_Pareja`, `Fam_Cena`; en `core/scheduler.py` (cierre) suma 3 toques sí/no. Implementa:
+> - `fam_marcar(campo, valor)` → escribe el toque en la fila del día (reusa el patrón de `sal_marcar_habito`).
+> - `fam_senal()` → señal destilada hacia arriba (racha de días con/sin tiempo de calidad).
+> - **Espina:** escribe inferencias propias a Supabase; el correlador cruza **familia↔ánimo↔sueño** con su dato.
+> - **Nudge propio** (vía Proactividad, módulo 7): "llevas N días sin tiempo con Emilio" — respeta el tope 1/día.
+> En `⚙️ Config` agrega `modulo_familia = ON`. Ver `Spec_Herramientas_Nuevas.md §fam_`.
+
+**LISTO CUANDO:** los 3 toques escriben en `Diario`; `fam_senal` da una racha coherente; el correlador cruza familia con ánimo con su dato; el nudge dispara tras una racha sin tiempo de calidad.
+
+### FASE E11 — Finanzas v2: intención del gasto + metas ⭐
+
+> **PROMPT:**
+> Extiende `modules/finanzas.py` (prefijo `fin_`) y `setup_sheets.py`. **Schema:** agrega `Intencion` a `Transacciones` (merge aditivo) y crea tab `Metas` (`Meta · Objetivo · Actual · Progreso · Notas`). Implementa:
+> - **Intención del gasto:** el extractor (`procesar_correo`/`procesar_foto`) propone `Intencion ∈ {Necesario, Inversion, Deseo}`; se **confirma en el digest** junto con la categoría (mismo "aceptar todo / corrige excepciones", sin fricción nueva). Resumen mensual por intención.
+> - **Metas con progreso:** `fin_metas()` lee `Metas` y calcula `Progreso = Actual/Objetivo`; 2-3 metas (fondo de emergencia, pagar TC). Se muestran en el `Semanal`/digest. **Sin input diario.**
+> - **Alerta presupuesto 90%** (gatillo de Proactividad, módulo 7): cuando una categoría llega al 90% de su `Presupuesto`, un nudge (tope 1/día).
+> **No** construyas cuentas con saldos auto / doble-entrada (descartado: rompe "registro sin fricción"). Ver `Spec_Herramientas_Nuevas.md §fin_`.
+
+**LISTO CUANDO:** la intención se infiere y se corrige en el digest; el resumen mensual por intención cuadra; una meta muestra su % de avance; la alerta de presupuesto salta al 90% real.
+
+### Propagación de schema y evals (transversal a E8–E11)
+
+- `setup_sheets.py` — nuevas columnas (`Diario` +5, `Semanal` +4, `Transacciones` +`Intencion`), nuevos tabs (`Compras`, `Metas`), `CONFIG_SEED` +`modulo_salud`/`modulo_compras`/`modulo_familia`. **Merge aditivo:** respeta el orden existente, agrega faltantes al final; no borra filas.
+- `Donna_Canonico.xlsx` — refleja el mismo esquema (es la fuente de verdad del schema; `setup_sheets.py` debe calzar con él).
+- `tests/evals.py` + `tests/casos.yaml` — casos nuevos: ventanas/score (E8), lista de compras agregar/listar/marcar (E9), checks de familia + cruce con ánimo (E10), intención del gasto + meta con progreso (E11).
+
+---
+
 ## Reglas para Claude Code (en cada paso)
 - **No reconstruyas lo que ya calza** (ver `Alineacion_Donna.md` §3 "calza fuerte"). Extiende, no reescribas.
 - Respeta el contrato: prefijos `sal_`/`fin_`/`rec_`/`cor_`/`prod_`/`apr_`, sin solapamiento, señal destilada hacia arriba, trabajo pesado aislado, degradación elegante.

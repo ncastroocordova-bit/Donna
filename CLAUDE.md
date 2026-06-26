@@ -10,12 +10,12 @@ Python monolito · `python-telegram-bot` · Supabase + pgvector · Anthropic SDK
 
 ## Mapa del repo
 - `core/`: `brain` (carácter cacheado + inferencia validada), `memory` (Supabase), `sheets`, `scheduler` (brief/cierre), `voice` (Whisper), `agenda` (Calendar), `correo` + `email_gmail`, `flows`.
-- `modules/` (un prefijo por módulo): `salud` (`sal_`), `finanzas` (`fin_`), `recordatorios` (`rec_`), `correo`/`spam` (`cor_`), productividad/reconciliación (`prod_`), `aprendizaje` (`apr_`), `proactividad`, `proyectos`. Dormidos: `tiempo`, `metas`.
+- `modules/` (un prefijo por módulo): `salud` (`sal_`), `finanzas` (`fin_`), `compras` (`cmp_`), `recordatorios` (`rec_`), `correo`/`spam` (`cor_`), productividad/reconciliación (`prod_`), `aprendizaje` (`apr_`), `proactividad`, `familia` (`fam_`), `proyectos`. Dormidos: `tiempo` (`metas` puede despertar para las metas financieras de `fin_`).
 - `migrations/` 001–011 · `prompts/` (constitution, anchors, capacidades) · `tests/` (evals.py, casos.yaml) · `setup_sheets.py`.
 
 ## Dos capas de datos (NO las mezcles)
 Donna tiene dos almacenes con roles distintos:
-- **Google Sheets = los registros (lo que pasó y lo que Nico ve/edita).** Un workbook **Donna** (ver `Donna_Canonico.xlsx`): hojas de vida (Diario, Tareas, Proyectos, Recordatorios, Reconciliacion, Semanal, Config) + finanzas (Transacciones, Categorias, Tarjetas y Deuda, Dashboard, Comparativo). Estado y registros, legibles para Nico. El esquema lo fija `Donna_Canonico.xlsx`; `setup_sheets.py` debe calzar con él.
+- **Google Sheets = los registros (lo que pasó y lo que Nico ve/edita).** Un workbook **Donna** (ver `Donna_Canonico.xlsx`): hojas de vida (Diario, Tareas, Proyectos, Recordatorios, Reconciliacion, Semanal, Compras, Config) + finanzas (Transacciones, Categorias, Tarjetas y Deuda, Dashboard, Comparativo, Metas). Estado y registros, legibles para Nico. El esquema lo fija `Donna_Canonico.xlsx`; `setup_sheets.py` debe calzar con él.
 - **Supabase = lo que Donna APRENDE de esos registros.** `perfil`, `memoria` episódica (+ embeddings Voyage/pgvector), `inferencias`, `compromisos`, `aprendizaje` (calibración, factor de optimismo, lookup de correcciones). No es legible para Nico ni reemplaza los registros.
 
 **Flujo (una sola dirección para aprender):** registros en Sheets → Donna lee → infiere/calibra → **guarda el aprendizaje en Supabase** → aconseja usando esa memoria. Regla dura: el aprendizaje (patrones, ratios, inferencias) **se persiste en Supabase, nunca en el Sheet**. El Sheet puede mostrar un *resultado* (p. ej. `Factor_Optimismo` en `Semanal` es una lectura), pero el modelo que lo produce vive en Supabase. Y al revés: los registros crudos viven en Sheets, no en Supabase.
@@ -46,12 +46,15 @@ Donna aprende de Nico cruzando dominios; la memoria NO es un módulo, es una esp
 - **Factor de optimismo** sobre `aprendizaje`: aprende tu ratio plan-vs-real por frente y te frena al planificar de más (reference class forecasting). Calla hasta tener ≥2-3 semanas de datos.
 - **Recordatorios: escalera** (domingo + T-2 + T-0 con ✅ Hecho; vencido → push propio diario). Estado pendiente/hecho/pospuesto; tipos mensual/anual/única; posponer exige fecha; tras 3 posposiciones, nombra el patrón.
 - **Correo: triage 3 buckets** (spam→archivar, importante→resumen brief, financiero→digest) + correo dedicado financiero.
-- **Extras:** Aprendizaje ON · Proactividad 12:00 (máx 1/día) ON · **Tiempo log OFF** (dormido) · **Outlook OFF**.
-- **Finanzas:** deuda real **incluye la línea**. Faro: Deuda total real **$2.028.091**, Intereses muertos **$48.236/mes**.
+- **Salud (ampliada):** nutrición = toques de agua/proteína en el cierre; ventanas de ayuno + sueño (`Primera_Comida`/`Ultima_Comida`, `Hora_Dormi`/`Hora_Despertar`) → **resumen semanal de ventanas, solo medir** (sin meta hasta 2-3 semanas de baseline); peso **semanal** (kg); **score % semanal de hábitos** en `Semanal`; **eventos contextuales** = pregunta en el cierre por lo que no controlaste → `memoria` con tag `evento_externo` (el correlador lo trata como contexto, no patrón).
+- **Compras (`cmp_`, módulo nuevo, posición 3):** lista del súper por voz/texto ("Donna falta X" / "dame la lista"). **Fase 1 = lista manual**; **Fase 2 (diferida)** = motor de frecuencia que infiere reposición ("puede que toque comprar azúcar") vía Proactividad.
+- **Familia (`fam_`, módulo nuevo, último):** 3 toques en el cierre (Emilio / pareja / cena juntos) con inferencias y nudge propios; el correlador cruza familia↔ánimo↔sueño.
+- **Extras:** Aprendizaje ON · Proactividad 12:00 (máx 1/día) ON · Salud ON · **Compras Fase 1 ON / Fase 2 diferida** · **Familia ON** (al final del roadmap) · **Tiempo log OFF** (dormido) · **Outlook OFF**.
+- **Finanzas:** deuda real **incluye la línea**. Faro: Deuda total real **$2.028.091**, Intereses muertos **$48.236/mes**. **v2:** intención del gasto (Necesario/Inversión/Deseo en `Transacciones`, se confirma en el digest) + metas financieras con progreso (tab `Metas`, sin input diario). **No** se agregan cuentas con saldos auto / doble-entrada (rompe "registro sin fricción").
 
 ## Reglas de trabajo
 - **Entrega modular: un módulo a la vez.** Completo + deployado + 7 días estable + evals verdes antes de empezar el siguiente. Orden y fichas en `Roadmap_Modular.md`. No construyes el módulo N+1 hasta que N pasa su semana.
-- No reconstruyas lo que ya calza (ver `Alineacion_Donna.md`). El trabajo pendiente son las **8 brechas** del `Plan_Construccion_v7.md`.
+- No reconstruyas lo que ya calza (ver `Alineacion_Donna.md`). El trabajo pendiente son las brechas del `Plan_Construccion_v7.md` (las 8 originales E0–E7 + las fases añadidas: Salud-v2, Compras, Familia, Finanzas-v2).
 - Ningún paso está hecho hasta que **su eval pasa** y está **deployado**. Corre `pytest tests/evals.py`.
 - Commit por paso. Mensajes en español, concretos.
 - `.env` y `credentials.json` **nunca** al control de versiones.
