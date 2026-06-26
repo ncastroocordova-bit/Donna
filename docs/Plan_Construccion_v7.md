@@ -156,11 +156,27 @@
 
 **LISTO CUANDO:** la intención se infiere y se corrige en el digest; el resumen mensual por intención cuadra; una meta muestra su % de avance; la alerta de presupuesto salta al 90% real.
 
-### Propagación de schema y evals (transversal a E8–E11)
+### FASE E12 — Finanzas v3: detalle de compra (ítems) + correlación foto↔correo + captura al momento ⭐
 
-- `setup_sheets.py` — nuevas columnas (`Diario` +5, `Semanal` +4, `Transacciones` +`Intencion`), nuevos tabs (`Compras`, `Metas`), `CONFIG_SEED` +`modulo_salud`/`modulo_compras`/`modulo_familia`. **Merge aditivo:** respeta el orden existente, agrega faltantes al final; no borra filas.
+> **Contexto:** la predicción de Compras (Fase 2) necesita saber **qué** compraste, no solo cuánto gastaste. Esta fase enriquece la captura de Finanzas para producir ese detalle, sin doble conteo y sin fricción. Es **Finanzas la que escribe el detalle**; **Compras solo lo lee** (sin solapar tools).
+
+> **PROMPT:**
+> Extiende `modules/finanzas.py` (`fin_`), `setup_sheets.py`, `core/flows.py` y el ciclo de ingesta. **Schema:** crea el tab `Compras_Detalle` (`Fecha · Comercio · Item · Cantidad · Precio · Categoria · Predecible(si|no) · ID_Tx · Fuente(foto|desglose|lista)`); agrega un flag `es_compras` a las reglas de comercio (Supabase, `memory.get_comercios`) para saber qué cargos disparan la pregunta. Implementa:
+> - **Foto ítem-a-ítem:** cambia `procesar_foto` para extraer `items[]` (item, cantidad, precio) + `total` (hoy devuelve un solo total). Escribe **una** transacción en `Transacciones` (total) + N líneas en `Compras_Detalle` con `ID_Tx = ID_Unico` de la transacción. La suma de `Precio` debe **cuadrar al total** (línea "resto/varios" si falta).
+> - **Correlación foto↔correo:** `fin_correlacionar(buffer)` aparea la entrada de **foto** con la de **correo** del mismo gasto por **monto total + fecha (±1-2 días) + comercio** (fuzzy / vía reglas; resuelve "ALMACEN SAN VALENTIN" vs "MERCADOPAGO*SANVA"). El **correo es el total canónico** (medio + monto bancario); la **foto aporta los ítems**. Resultado: **una** transacción, **jamás dos** (extiende el anti-duplicado actual `_id_unico`/`_planificar_digest`, que hoy solo dedup por id exacto).
+> - **Captura al momento:** cuando la ingesta detecta un cargo de un comercio `es_compras=true` **sin detalle**, Donna manda un **prompt transaccional** por Telegram: *"vi $X en San Valentín — ¿qué compraste?"* con `📷 foto` / `✍️ desglosar` / `⏭️ después`. **No** cuenta contra el tope 1/día de Proactividad (es captura, no insight). Requiere que `ingerir_gastos_email` corra en **cadencia diurna** (poll periódico), no solo en el cierre. **El brief de las 8:00 no se toca.**
+> - **Desglose por categoría:** `fin_desglose(texto, total)` parsea "gasté 2000 en chanchería y el resto fue pan" → `[{cat: Chanchería, monto: 2000}, {cat: Pan, monto: total-2000}]` (el "resto" cuadra al total); cada línea → `Compras_Detalle`.
+> - **Filtro de predicción:** marca `Predecible` por categoría — **sí** = despensa/reposición (arroz, atún, fideos, aceite, azúcar, papel, limpieza); **no** = perecible/cotidiano (pan, chanchería, verdura, comida preparada). Solo `Predecible=sí` lo consumirá Compras Fase 2.
+> Ver `Spec_Herramientas_Nuevas.md §fin_` (detalle/correlación) y `§cmp_` (Fase 2 lee el detalle).
+
+**LISTO CUANDO:** una foto deja ítems con precio + total en `Compras_Detalle`; foto + correo del mismo gasto = **una** transacción (no dos); un cargo de comercio "de compras" sin detalle dispara el prompt al momento; "2000 chanchería, resto pan" cuadra al total; arroz/atún quedan `Predecible=sí` y pan/chanchería `no`; el detalle no rompe el total de `Transacciones`.
+
+### Propagación de schema y evals (transversal a E8–E12)
+
+- `setup_sheets.py` — nuevas columnas (`Diario` +5, `Semanal` +4, `Transacciones` +`Intencion`), nuevos tabs (`Compras`, `Metas`, `Compras_Detalle`), `CONFIG_SEED` +`modulo_salud`/`modulo_compras`/`modulo_familia`. **Merge aditivo:** respeta el orden existente, agrega faltantes al final; no borra filas.
 - `Donna_Canonico.xlsx` — refleja el mismo esquema (es la fuente de verdad del schema; `setup_sheets.py` debe calzar con él).
-- `tests/evals.py` + `tests/casos.yaml` — casos nuevos: ventanas/score (E8), lista de compras agregar/listar/marcar (E9), checks de familia + cruce con ánimo (E10), intención del gasto + meta con progreso (E11).
+- Supabase — flag `es_compras` en reglas de comercio; el historial de compras predecibles (item, fecha) que consume el predictor vive en `aprendizaje` (no en el Sheet).
+- `tests/evals.py` + `tests/casos.yaml` — casos nuevos: ventanas/score (E8), lista de compras agregar/listar/marcar (E9), checks de familia + cruce con ánimo (E10), intención del gasto + meta con progreso (E11), **correlación foto↔correo sin doble conteo + desglose que cuadra + filtro predecible (E12)**.
 
 ---
 

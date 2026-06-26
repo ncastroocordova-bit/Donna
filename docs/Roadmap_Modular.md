@@ -35,9 +35,14 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 - **Objetivo:** capturar tu plata sin fricción y mostrarte la verdad de tu deuda.
 - **Scope completo:** foto + manual + categorización + faro de deuda (con línea) + dashboard + digest nocturno en el cierre. **Correo NO** (va en Módulo 5).
 - **Scope v2 (añadido):** **intención del gasto** — columna `Intencion` (Necesario/Inversión/Deseo) en `Transacciones`, la infiere el extractor y la confirmas en el digest (sin fricción nueva); resumen mensual por intención. **Metas financieras con progreso** — tab `Metas` (`Meta · Objetivo · Actual · Progreso`), 2-3 metas (fondo de emergencia, pagar TC), leídas en el `Semanal`/digest. **Sin input diario.** *(No entra: cuentas con saldos auto / doble-entrada — rompe "registro sin fricción".)*
-- **Datos:** Sheets `Transacciones`/`Categorias`/`Tarjetas y Deuda`/`Dashboard`/`Metas`; Supabase `inferencias`.
+- **Scope v3 (detalle de compra — alimenta la predicción de Compras):** la boleta deja de ser un solo total y se vuelve **ítem por ítem**.
+  - **Foto ítem-a-ítem:** `procesar_foto` lee cada ítem + precio + total → escribe el detalle en la hoja nueva `Compras_Detalle` (`Fecha · Comercio · Item · Cantidad · Precio · Categoria · Predecible · ID_Tx · Fuente`).
+  - **Correlación foto↔correo (jamás doble conteo):** el correo del banco es el **total canónico** (medio + monto confirmado); la foto aporta los **ítems**. Se aparean por **monto total + fecha (±1-2 días) + comercio** (fuzzy / vía reglas de comercio) → **una** transacción en `Transacciones` + sus líneas en `Compras_Detalle`. Hoy se contarían dos veces porque la foto lee "ALMACEN SAN VALENTIN" y el correo "MERCADOPAGO*SANVA"; el matcher lo resuelve por monto+fecha.
+  - **Captura al momento:** cuando entra un cargo de un **comercio marcado "de compras"** (súper, almacén, San Valentín) **sin detalle**, Donna pregunta en el momento *"vi $X en San Valentín — ¿qué compraste?"* → respondes con **foto** (→ ítems) o con **desglose por categoría** ("2000 en chanchería, el resto pan" → 2000 Chanchería + resto Pan, el "resto" cuadra al total). Es un prompt **transaccional**, no cuenta contra el tope 1/día de Proactividad.
+  - **Filtro de predicción:** cada línea se marca `Predecible` = **sí solo para despensa/reposición** (arroz, atún, fideos, aceite, azúcar, papel, limpieza) y **no para lo cotidiano/perecible** (pan, chanchería, verdura, comida preparada). **Solo las `Predecible=sí` alimentan el predictor de Compras Fase 2.**
+- **Datos:** Sheets `Transacciones`/`Categorias`/`Tarjetas y Deuda`/`Dashboard`/`Metas`/`Compras_Detalle`; Supabase `inferencias`.
 - **Espina:** nace mínima. Siembra `perfil` con lo que ya sabemos de ti; escribe inferencias de gasto/deuda. **Se construye la vista `/perfil` (aún corta).** Sin correlación todavía.
-- **Eval:** foto→categoría correcta · "aceptar todo" escribe sin duplicar · faro da $2.028.091 y $48.236 · el freno muestra la deuda antes de una cuota · la intención se infiere y se corrige en el digest · una meta muestra su % de avance.
+- **Eval:** foto→categoría correcta · "aceptar todo" escribe sin duplicar · faro da $2.028.091 y $48.236 · el freno muestra la deuda antes de una cuota · la intención se infiere y se corrige en el digest · una meta muestra su % de avance · foto+correo del mismo gasto = **una** transacción (no dos) · un desglose "2000 chanchería, resto pan" cuadra al total · arroz/atún quedan `Predecible=sí`, pan/chanchería `no`.
 - **Semana:** 7 días registrando gastos reales, estable, evals verdes.
 
 ### 2. Salud `sal_`
@@ -57,9 +62,9 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 ### 3. Compras `cmp_`  ⟵ NUEVO
 - **Objetivo:** que no se te olvide qué comprar; lo dices suelto y Donna lo guarda.
 - **Scope completo (Fase 1 — lista manual):** `cmp_agregar` ("Donna falta toalla nova" / "queda poco arroz, anótalo") → guarda en la lista; `cmp_lista` ("Donna dame la lista del súper") → devuelve **exactamente** lo pendiente; marcar comprado por toque → sale de la lista. Hoja nueva `Compras` (`Item · Estado(pendiente|comprado) · Fecha_Agregado · Fecha_Comprado · Categoria`).
-- **Fase 2 (DIFERIDA — no en este módulo):** motor de frecuencia — cada compra marcada guarda su fecha (Fase 1 ya siembra ese historial); luego calcula el intervalo medio por ítem → infiere reposición → alerta *"puede que toque comprar azúcar"* (sale por **Proactividad**). Se persiste en Supabase (`aprendizaje`).
-- **Datos:** Sheets `Compras`; Supabase `aprendizaje` (recién en Fase 2).
-- **Espina:** Fase 1 siembra el historial de compras con fecha (insumo de la inferencia de Fase 2).
+- **Fase 2 (DIFERIDA — no en este módulo):** motor de frecuencia. **Lee dos fuentes** de eventos de compra (item, fecha): (a) la **lista Fase 1** (ítems marcados `comprado`) y (b) las líneas **`Predecible=sí`** de `Compras_Detalle` que escribe Finanzas v3 (foto + desglose). Calcula el intervalo medio por ítem → infiere reposición → alerta *"puede que toque comprar arroz"* (sale por **Proactividad**). Se persiste en Supabase (`aprendizaje`). **Solo despensa/reposición** (arroz, atún, fideos, limpieza); **nunca lo cotidiano/perecible** (pan, chanchería) — esos quedan fuera del predictor por diseño.
+- **Datos:** Sheets `Compras` (Fase 1) + `Compras_Detalle` (lee, lo escribe Finanzas); Supabase `aprendizaje` (recién en Fase 2).
+- **Espina:** Fase 1 siembra el historial de compras con fecha; Fase 2 lo cruza con el detalle predecible de las boletas (insumo del predictor).
 - **Eval:** "falta X" agrega sin duplicar · "dame la lista" devuelve solo lo pendiente · marcar comprado lo saca y registra la fecha.
 - **Semana:** 7 días usándolo de verdad (agregar al vuelo + pedir la lista antes de ir al súper).
 

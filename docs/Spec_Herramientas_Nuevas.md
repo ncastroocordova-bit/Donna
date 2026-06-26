@@ -121,7 +121,7 @@ Detalle de implementación de las herramientas que el canon agrega o cambia. Aco
 - `cmp_lista() -> list` — "Donna dame la lista del súper" → devuelve **exactamente** los `pendiente`.
 - `cmp_marcar_comprado(item)` — `Estado=comprado`, `Fecha_Comprado=hoy`; sale de la lista. Toque o texto.
 
-**Fase 2 (DIFERIDA, no en este módulo):** `cmp_frecuencia(item)` calcula el intervalo medio entre compras (del historial que la Fase 1 ya siembra con `Fecha_Comprado`) → infiere reposición → alerta *"puede que toque comprar azúcar"* vía Proactividad. Se persiste en Supabase (`aprendizaje`).
+**Fase 2 (DIFERIDA, no en este módulo):** `cmp_frecuencia(item)` calcula el intervalo medio entre compras → infiere reposición → alerta *"puede que toque comprar arroz"* vía Proactividad. **Lee dos fuentes** de eventos (item, fecha): (a) la lista Fase 1 (ítems `comprado` con `Fecha_Comprado`) y (b) las líneas `Predecible=sí` de `Compras_Detalle` que escribe Finanzas v3 (`§fin_ v3`). **Solo despensa/reposición** (arroz, atún, fideos, limpieza); **nunca** lo cotidiano/perecible (pan, chanchería). Se persiste en Supabase (`aprendizaje`).
 
 **Invariantes:** prefijo `cmp_` sin solapamiento. Degrada elegante si Sheets falla. Fase 1 **no** infiere nada; solo lista. La fecha de compra se guarda desde día 1 (insumo de Fase 2).
 
@@ -168,3 +168,24 @@ Detalle de implementación de las herramientas que el canon agrega o cambia. Aco
 **Borde:** gasto ambiguo entre Necesario/Deseo → marca dudoso para que Nico lo confirme en el digest, no asume. Meta sin `Objetivo` → no calcula progreso, la muestra como informativa.
 
 **LISTO CUANDO:** la intención se infiere y se corrige en el digest; el resumen mensual por intención cuadra; una meta muestra su % de avance; la alerta de presupuesto salta al 90% real.
+
+---
+
+## §fin_ v3 — Detalle de compra (ítems) + correlación foto↔correo + captura al momento
+
+**Propósito:** que la boleta deje de ser un solo total y se vuelva ítem-a-ítem, **sin doble conteo** entre la foto y el correo, y que Donna pregunte qué compraste cuando el cargo no trae detalle. Es el insumo que la **predicción de Compras (Fase 2)** necesita. **Finanzas escribe el detalle; Compras solo lo lee** (sin solapar tools).
+
+**Esquema:** tab nuevo `Compras_Detalle` (`Fecha · Comercio · Item · Cantidad · Precio · Categoria · Predecible(si|no) · ID_Tx · Fuente(foto|desglose|lista)`). `ID_Tx` = `ID_Unico` de la transacción padre en `Transacciones`. La suma de `Precio` por `ID_Tx` **cuadra al total** de la transacción (línea "resto/varios" si falta). Flag `es_compras` en las reglas de comercio (Supabase).
+
+**Firmas:**
+- `procesar_foto(img) -> {items:[{item,cantidad,precio}], total, comercio, fecha}` — Vision aislada; **lee cada ítem** (hoy devuelve un solo total). Escribe 1 fila en `Transacciones` (total) + N en `Compras_Detalle`.
+- `fin_correlacionar(buffer)` — aparea la entrada **foto** con la **correo** del mismo gasto por **monto total + fecha (±1-2 días) + comercio** (fuzzy / vía reglas de comercio; resuelve "ALMACEN SAN VALENTIN" vs "MERCADOPAGO*SANVA"). El **correo manda en total/medio** (bancario); la **foto aporta los ítems**. Resultado: **una** transacción. Extiende el anti-duplicado actual (`_id_unico`/`_planificar_digest`), que hoy solo dedup por id exacto.
+- `fin_preguntar_compra(tx) -> prompt` — si el cargo viene de un comercio `es_compras=true` **sin detalle**, manda prompt **transaccional** ("vi $X en San Valentín — ¿qué compraste?" · 📷 foto / ✍️ desglosar / ⏭️ después). **No** cuenta contra el tope 1/día de Proactividad. Requiere ingesta en **cadencia diurna** (poll), no solo en el cierre. **El brief no se toca.**
+- `fin_desglose(texto, total) -> [{categoria, monto}]` — parsea "gasté 2000 en chanchería y el resto fue pan" → `[{Chanchería, 2000}, {Pan, total-2000}]`; usa el mapa de categorías + LLM para el residuo; el "resto" cuadra al total. Cada línea → `Compras_Detalle`.
+- `fin_predecible(categoria|item) -> bool` — **sí** = despensa/reposición (arroz, atún, fideos, aceite, azúcar, papel, limpieza); **no** = perecible/cotidiano (pan, chanchería, verdura, comida preparada). Whitelist de categorías; ítems de la lista Fase 1 cuentan como predecibles.
+
+**Invariantes:** **jamás doble conteo** (foto+correo del mismo gasto = una transacción). El detalle **cuadra al total** de `Transacciones`. La pregunta "¿qué compraste?" es captura, no insight → fuera del presupuesto proactivo. Solo `Predecible=sí` se expone a la Fase 2.
+
+**Borde:** llega la foto antes que el correo (o al revés) → se guarda y se correlaciona cuando aparezca el par; si el correo nunca llega, la foto sostiene la transacción. Foto cuyo total ≠ correo → marca `dudosa` para confirmar en el digest, no asume. Comercio no `es_compras` (Uber, Netflix, bencina) → **no** pregunta.
+
+**LISTO CUANDO:** una foto deja ítems con precio + total; foto + correo del mismo gasto = una sola transacción; un cargo de comercio "de compras" sin detalle dispara el prompt al momento; "2000 chanchería, resto pan" cuadra al total; arroz/atún `Predecible=sí`, pan/chanchería `no`.
