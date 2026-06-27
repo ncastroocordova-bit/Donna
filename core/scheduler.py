@@ -132,6 +132,47 @@ async def job_sync_correos(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("Sync de correos: %d gasto(s) nuevo(s) al buffer.", res["nuevos"])
 
 
+# ───────────────────────── Compras: detalle (v3) ─────────────────────────
+
+POLL_COMPRAS = timedelta(hours=5)        # cada cuánto Donna revisa cargos de compras sin detalle
+DELAY_CORRELACION = timedelta(minutes=30)  # tras dictar una compra, espera el correo del banco
+MAX_PREGUNTAS_COMPRA = 3                  # tope por corrida, para no inundar de mensajes
+
+
+async def job_preguntar_compras(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Poll cada 5h: por cada cargo de un comercio 'de compras' sin detalle, Donna pregunta
+    '¿qué compraste?'. Marca el cargo como preguntado para no insistir."""
+    if not correo.disponible():
+        return
+    await finanzas.ingerir_gastos_email()  # trae cargos nuevos + correlaciona lo que ya tenga detalle
+    cargos = await finanzas.cargos_sin_detalle()
+    for c in cargos[:MAX_PREGUNTAS_COMPRA]:
+        try:
+            await context.bot.send_message(
+                settings.nico_telegram_id,
+                f"Vi {finanzas.clp(c.get('monto'))} en {c.get('comercio') or 'un comercio'} — ¿qué compraste?",
+                reply_markup=flows.teclado_pregunta_compra(c["id"]),
+            )
+            await memory.buffer_marcar_preguntado(c["id"])
+        except Exception:
+            logger.exception("job_preguntar_compras: no pude preguntar por un cargo")
+    if cargos:
+        logger.info("Compras: pregunté por %d cargo(s) sin detalle.", min(len(cargos), MAX_PREGUNTAS_COMPRA))
+
+
+async def job_correlacionar_una_vez(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """One-shot a +30 min de que Nico dicta una compra: ingiere el correo (ya debería haber
+    llegado el cargo del banco) y lo cruza con el detalle dictado, sin doble conteo."""
+    if not correo.disponible():
+        return
+    res = await finanzas.ingerir_gastos_email()
+    if res.get("correlacionados"):
+        await context.bot.send_message(
+            settings.nico_telegram_id,
+            "Listo, crucé tu compra con el cargo del banco — quedó como un solo gasto para el cierre.",
+        )
+
+
 async def job_spam(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Digest diario de spam (con borrado por confirmación)."""
     if not correo.disponible() or await memory.job_ya_corrio("spam"):
@@ -168,8 +209,9 @@ def setup_scheduler(app: Application) -> None:
     jq.run_repeating(job_decay, interval=timedelta(days=7), first=timedelta(hours=1))
     if correo.disponible():
         jq.run_repeating(job_sync_correos, interval=timedelta(hours=3), first=timedelta(minutes=2))
+        jq.run_repeating(job_preguntar_compras, interval=POLL_COMPRAS, first=timedelta(minutes=15))
         jq.run_daily(job_spam, time=time(settings.spam_hora, 0, tzinfo=tz))
-        logger.info("Correo activo (%s): sync de gastos cada 3h + digest de spam %d:00.",
+        logger.info("Correo activo (%s): sync de gastos cada 3h + pregunta-compras cada 5h + digest de spam %d:00.",
                     ", ".join(correo.proveedores_activos()), settings.spam_hora)
     jq.run_once(check_pendientes, when=10)  # recupera el toque perdido tras un reinicio
     logger.info(

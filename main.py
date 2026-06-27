@@ -16,7 +16,7 @@ from telegram.ext import (
 
 from config import settings
 from core import brain, correo, flows, memory, voice
-from core.scheduler import setup_scheduler
+from core.scheduler import DELAY_CORRELACION, job_correlacionar_una_vez, setup_scheduler
 from modules import aprendizaje, finanzas, salud
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -141,6 +141,12 @@ async def manejar_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await flows.enviar_digest(context.bot, update.effective_chat.id)  # re-muestra con "Aceptar todo"
         return
 
+    # ¿Está respondiendo "¿qué compraste?" con el desglose de un cargo? (v3)
+    cargo_id = context.user_data.pop("desglosando_cargo", None)
+    if cargo_id:
+        await update.message.reply_text(await finanzas.desglosar_cargo(cargo_id, texto))
+        return
+
     # ¿Está corrigiendo una inferencia? (la deducción original falló → cuenta como descarte)
     inf_id = context.user_data.pop("corrigiendo_inferencia", None)
     if inf_id:
@@ -152,9 +158,12 @@ async def manejar_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     off = texto.lower().startswith(OFF_RECORD)
     history = context.chat_data.get("history", [])
-    respuesta, history = await brain.responder(texto, history, off_record=off)
+    respuesta, history, tools, _ = await brain.responder(texto, history, off_record=off, _return_tools=True)
     context.chat_data["history"] = history
     await update.message.reply_text(respuesta)
+    # Si dictó una compra con detalle, agenda la correlación con el correo del banco a +30 min.
+    if "fin_compra_detallada" in tools and context.job_queue:
+        context.job_queue.run_once(job_correlacionar_una_vez, DELAY_CORRELACION)
 
 
 async def manejar_voz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -180,9 +189,11 @@ async def manejar_voz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     history = context.chat_data.get("history", [])
-    respuesta, history = await brain.responder(texto, history)
+    respuesta, history, tools, _ = await brain.responder(texto, history, _return_tools=True)
     context.chat_data["history"] = history
     await update.message.reply_text(f"_{texto}_\n\n{respuesta}", parse_mode="Markdown")
+    if "fin_compra_detallada" in tools and context.job_queue:
+        context.job_queue.run_once(job_correlacionar_una_vez, DELAY_CORRELACION)
 
 
 async def _guardar_mits(texto: str) -> str:
@@ -201,10 +212,12 @@ async def manejar_foto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     buf = bytes(await f.download_as_bytearray())
     datos = await finanzas.procesar_foto(buf, "image/jpeg")
     if datos:
-        marca = f" (¿{datos['motivo_duda']})" if datos.get("dudosa") and datos.get("motivo_duda") else ""
+        n_items = len(datos.get("items") or [])
+        detalle = f", {n_items} ítem(s)" if n_items else ""
+        cruce = " Lo cruzo con el cargo de tu correo para no contarlo dos veces." if n_items else ""
         await update.message.reply_text(
-            f"Leí la boleta: ${datos['monto']:,.0f} → {datos.get('categoria', 'otros')}{marca}. "
-            "Lo tienes en el digest del cierre para confirmar."
+            f"Leí la boleta: {finanzas.clp(datos['monto'])} → {datos.get('categoria', 'otros')}{detalle}.{cruce} "
+            "Lo confirmas en el digest del cierre."
         )
     else:
         await update.message.reply_text("No pude leer bien la boleta. Pásame el monto y lo dejo listo para el cierre.")

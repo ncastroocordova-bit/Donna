@@ -63,6 +63,15 @@ def _teclado_digest(d: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(filas)
 
 
+def teclado_pregunta_compra(buffer_id: str) -> InlineKeyboardMarkup:
+    """Botones de la pregunta '¿qué compraste?' (v3): foto, desglosar por texto, o después."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📷 Mandar foto", callback_data=f"compra:foto:{buffer_id}"),
+         InlineKeyboardButton("✍️ Desglosar", callback_data=f"compra:desglosar:{buffer_id}")],
+        [InlineKeyboardButton("⏭️ Después", callback_data=f"compra:despues:{buffer_id}")],
+    ])
+
+
 def _texto_digest(d: dict) -> str:
     if d["n"] == 0:
         return "Hoy no detecté movimientos. Tu plata quedó quieta."
@@ -70,7 +79,8 @@ def _texto_digest(d: dict) -> str:
     for m in d["movimientos"]:
         marca = f"  ⚠️ {m['motivo_duda']}" if m["dudosa"] else ""
         intencion = f" · {m['intencion']}" if m.get("intencion") else ""
-        lineas.append(f"• {m['comercio'] or m['categoria']}: {finanzas.clp(m['monto'])} → {m['categoria']}{intencion}{marca}")
+        detalle = f" · {m['n_items']} ítems" if m.get("n_items") else ""
+        lineas.append(f"• {m['comercio'] or m['categoria']}: {finanzas.clp(m['monto'])} → {m['categoria']}{intencion}{detalle}{marca}")
     cab = f"Tienes {d['n']} movimiento(s) por confirmar ({finanzas.clp(d['total'])})."
     if d["n_dudosas"]:
         cab += f" Hay {d['n_dudosas']} que quiero confirmar contigo."
@@ -191,6 +201,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "Dime la categoría correcta para esa línea (o escribe «descartar» para botarla). "
             "Después toca el cierre de nuevo para aceptar el resto."
         )
+        return
+
+    if data.startswith("compra:"):
+        _, accion, buffer_id = data.split(":", 2)
+        if accion == "desglosar":
+            context.user_data["desglosando_cargo"] = buffer_id
+            await q.edit_message_text(
+                "Dale: ¿qué compraste? Dímelo como «arroz 1290, leche 990» o «2000 chanchería, resto pan»."
+            )
+        elif accion == "foto":
+            await q.edit_message_text("Mándame la foto de la boleta y la cruzo con este cargo. 📷")
+        else:  # despues
+            await q.edit_message_text("Ok, lo dejamos para el cierre.")
         return
 
     if data == "spam:borrar":

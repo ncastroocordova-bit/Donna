@@ -95,6 +95,7 @@ HOJA_CAT = "Categorias"
 HOJA_DASH = "Dashboard"
 HOJA_TARJETAS = "Tarjetas y Deuda"
 HOJA_METAS = "Metas"
+HOJA_DETALLE = "Compras_Detalle"
 
 # Celdas fijas del faro (la planilla las calcula; Donna solo las lee). Layout canónico
 # de 'Tarjetas y Deuda' (Donna_Canonico.xlsx): el faro vive en el encabezado (A3 "🔦 FARO
@@ -150,6 +151,18 @@ EXTRACTOR_SYSTEM = (
     "Si no logras leer un monto, devuelve monto 0."
 )
 
+# Visión por ÍTEM (v3): cuando la boleta lista productos, queremos el detalle, no solo el total.
+EXTRACTOR_ITEMS_SYSTEM = (
+    "Lees boletas/facturas chilenas de compras (supermercado, almacén). Devuelve SOLO un JSON, sin "
+    "texto extra, con: tipo ('Gasto'), comercio, fecha (YYYY-MM-DD si está), total (entero en pesos, "
+    "sin separadores), medio si aparece, e items: una lista donde cada elemento es "
+    "{item (nombre del producto), cantidad (entero, 1 si no dice), precio (entero en pesos del total "
+    "de esa línea), categoria (tu mejor apuesta: Alimentación, Limpieza, Bebidas, Chanchería, etc.)}. "
+    "Incluye TODAS las líneas de producto que puedas leer. La suma de los precios debe acercarse al "
+    "total. Si la boleta NO lista productos (solo un monto), devuelve items: [] y el total. "
+    "Si no logras leer el total, devuelve total 0."
+)
+
 
 def _parse_json(texto: str) -> dict:
     t = texto.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
@@ -181,6 +194,8 @@ async def _bufferizar(datos: dict, fuente: str, reglas: list[dict] | None = None
         except Exception:
             reglas = []
     comercio, categoria = _aplicar_reglas_comercio(comercio_raw, datos.get("categoria", "Otros"), reglas)
+    items_raw = datos.get("items") or None
+    items = [_linea_detalle(l, comercio) for l in items_raw] if items_raw else None
     tx = {
         "fecha": fecha,
         "tipo": "Ingreso" if str(datos.get("tipo", "")).lower().startswith("ing") else "Gasto",
@@ -191,7 +206,9 @@ async def _bufferizar(datos: dict, fuente: str, reglas: list[dict] | None = None
         "medio": datos.get("medio", ""),
         "fuente": fuente,
         "id_unico": _id_unico(fecha, monto, comercio_raw),  # id sobre el comercio CRUDO → estable ante reglas nuevas
-        "intencion": datos.get("intencion") or _intencion_de(categoria),
+        # Intención: si hay detalle, es el resumen de las líneas (Mixto si difieren); si no, la de la categoría.
+        "intencion": _intencion_resumen(items) if items else (datos.get("intencion") or _intencion_de(categoria)),
+        "items": items,                            # detalle ítem-a-ítem (v3) o None
         "dudosa": bool(datos.get("dudosa", False)),
         "motivo_duda": datos.get("motivo_duda", ""),
     }
@@ -210,7 +227,7 @@ _MESES = {"enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 
 # Mejor apuesta de categoría sin LLM (Nico corrige en el digest si hace falta).
 _CATEGORIAS_KW = [
     ("Alimentación",  ["isabel", "jumbo", "lider", "unimarc", "tottus", "acuenta", "mayorista", "minimarket", "supermerc"]),
-    ("Chanchería",    ["uber eats", "rappi", "pedidosya", "mcdonald", "doggis", "burger", "kfc", "sushi", "pizza"]),
+    ("Chanchería",    ["chancher", "uber eats", "rappi", "pedidosya", "mcdonald", "doggis", "burger", "kfc", "sushi", "pizza", "fiambre"]),
     ("Transporte",    ["uber", "cabify", "didi", "copec", "shell", "petrobras", "combustible"]),
     ("Suscripciones", ["netflix", "spotify", "disney", "hbo", "prime", "youtube", "icloud", "google one", "openai", "claude"]),
     ("Salud",         ["farmacia", "cruz verde", "salcobrand", "ahumada", "clinica", "consulta"]),
@@ -256,6 +273,126 @@ def _progreso(actual, objetivo) -> int | None:
     if o <= 0:
         return None
     return max(0, min(100, round(_num(actual) / o * 100)))
+
+
+# ───────────────────────── (v3) Detalle de compra: predecible, desglose, correlación ─────────────────────────
+
+# Predecible = despensa/reposición (entra al futuro predictor de Compras Fase 2). Lo cotidiano
+# y perecible queda fuera POR DISEÑO (no molestar con reposición espuria). NO gana al PREDECIBLE.
+_NO_PREDECIBLE_KW = ["pan", "marraqueta", "hallulla", "dobladita", "chancher", "fiambre", "verdura",
+                     "fruta", "palta", "tomate", "lechuga", "platano", "plátano", "comida preparada",
+                     "almuerzo", "completo", "sushi", "pizza", "delivery", "helado", "pastel"]
+_PREDECIBLE_KW = ["arroz", "atun", "atún", "fideo", "tallarin", "aceite", "azucar", "azúcar", "sal ",
+                  "harina", "papel", "higienic", "higiénic", "confort", "toalla nova", "cloro",
+                  "detergente", "lavaloza", "jabon", "jabón", "shampoo", "pasta de diente", "conserva",
+                  "legumbre", "lenteja", "poroto", "garbanzo", "te ", "cafe", "café", "leche en polvo",
+                  "mermelada", "salsa de tomate", "ketchup", "mayonesa", "servilleta", "desodorante",
+                  "limpieza", "abarrote", "despensa", "arvej"]
+
+
+def _predecible(texto: str) -> bool:
+    """¿Es un ítem de despensa/reposición (sí) o cotidiano/perecible (no)? Recibe el nombre del
+    ítem y/o su categoría. Conservador: si no calza con la despensa, NO es predecible."""
+    t = (texto or "").lower()
+    if any(k in t for k in _NO_PREDECIBLE_KW):
+        return False
+    return any(k in t for k in _PREDECIBLE_KW)
+
+
+def _intencion_resumen(items: list[dict] | None) -> str:
+    """Intención a nivel de transacción a partir de las líneas: 'Mixto' si hay ≥2 distintas,
+    la única si todas coinciden, '' si no hay detalle."""
+    ints = {str(l.get("intencion", "")).strip() for l in (items or []) if l.get("intencion")}
+    ints.discard("")
+    if not ints:
+        return ""
+    return next(iter(ints)) if len(ints) == 1 else "Mixto"
+
+
+def _categoria_item(nombre: str) -> str:
+    """Categoría de una línea de detalle a partir del nombre del ítem. Usa el mapa de comercios
+    si calza (ej. 'chanchería'→Chanchería); si no, capitaliza el nombre como categoría suelta."""
+    cat = _categoria_de(nombre)
+    return cat if cat != "Otros" else (nombre.strip().capitalize() or "Otros")
+
+
+def _linea_detalle(raw: dict, comercio: str = "") -> dict:
+    """Normaliza una línea de detalle (de foto o desglose) con categoría/intención/predecible."""
+    nombre = str(raw.get("item") or raw.get("nombre") or "").strip()
+    categoria = str(raw.get("categoria") or "").strip() or _categoria_item(nombre)
+    blob = f"{nombre} {categoria}"
+    return {
+        "item": nombre,
+        "cantidad": raw.get("cantidad", ""),
+        "precio": int(_num(raw.get("precio", raw.get("monto", 0)))),
+        "categoria": categoria,
+        "intencion": str(raw.get("intencion") or "").strip() or _intencion_de(blob),
+        "predecible": bool(raw.get("predecible")) if "predecible" in raw else _predecible(blob),
+    }
+
+
+def _desglose_determinista(texto: str, total=None) -> list[dict]:
+    """Parsea un desglose dictado SIN LLM. Reconoce:
+      · 'arroz 1290, leche 990, chocolate 2000'   (nombre monto)
+      · '2000 en chanchería, el resto pan'         (monto en/de nombre + 'resto')
+    El 'resto' cuadra al total. Devuelve líneas enriquecidas (categoría/intención/predecible)."""
+    chunks = re.split(r",|;|\s+y\s+", (texto or "").strip())
+    lineas, resto_nombre, suma = [], None, 0
+    for ch in chunks:
+        ch = ch.strip().rstrip(".")
+        if not ch:
+            continue
+        m_resto = re.match(r"(?:el\s+|lo\s+)?resto\s+(?:fue\s+|en\s+|de\s+|para\s+|pa\s+)?(.+)", ch, re.I)
+        if m_resto:
+            resto_nombre = m_resto.group(1).strip()
+            continue
+        m1 = re.match(r"\$?\s*([\d.]+)\s+(?:en|de|para|pa)\s+(.+)", ch, re.I)        # "2000 en chanchería"
+        m2 = re.match(r"(.+?)\s+\$?\s*([\d.]+)\s*$", ch)                              # "arroz 1290"
+        if m1:
+            monto, nombre = _num(m1.group(1)), m1.group(2).strip()
+        elif m2:
+            nombre, monto = m2.group(1).strip(), _num(m2.group(2))
+        else:
+            continue
+        lineas.append(_linea_detalle({"item": nombre, "precio": monto}))
+        suma += monto
+    if resto_nombre is not None and total:
+        resto = _num(total) - suma
+        if resto > 0:
+            lineas.append(_linea_detalle({"item": resto_nombre, "precio": resto}))
+    return lineas
+
+
+def _fecha_cerca(f1: str, f2: str, dias: int = 2) -> bool:
+    try:
+        d1 = datetime.strptime(f1[:10], "%Y-%m-%d")
+        d2 = datetime.strptime(f2[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return False
+    return abs((d1 - d2).days) <= dias
+
+
+def fin_correlacionar(pendientes: list[dict]) -> list[dict]:
+    """Aparea las entradas del buffer CON detalle (foto/dictado, traen `items`) con la entrada
+    del CORREO del mismo gasto (sin detalle) por monto total + fecha (±2 días). El correo es el
+    total canónico (medio + monto bancario); el detalle aporta los ítems. Resultado: instrucciones
+    de merge `{keep, drop, items}` — keep = la del correo enriquecida; drop = la de detalle. Así
+    NUNCA se cuenta dos veces. Puro y testeable (no toca red)."""
+    con_detalle = [p for p in pendientes if p.get("items")]
+    correos = [p for p in pendientes if not p.get("items") and str(p.get("fuente", "")).startswith("correo")]
+    usados, merges = set(), []
+    for d in con_detalle:
+        match = next(
+            (c for c in correos
+             if c["id"] not in usados
+             and int(_num(c.get("monto"))) == int(_num(d.get("monto")))
+             and _fecha_cerca(str(c.get("fecha", "")), str(d.get("fecha", "")))),
+            None,
+        )
+        if match:
+            usados.add(match["id"])
+            merges.append({"keep": match["id"], "drop": d["id"], "items": d.get("items")})
+    return merges
 
 
 def _fecha_iso(s: str) -> str:
@@ -378,23 +515,46 @@ def _parsear_determinista(remitente: str, asunto: str, texto: str, dueno_rut: st
     return None  # Copec / MercadoPago / desconocido → LLM
 
 
+def _cuadrar_resto(items: list[dict], total) -> list[dict]:
+    """Si la suma de los ítems no llega al total, agrega una línea 'Resto' que cuadra (no
+    predecible). Si se pasa, no inventa: deja el detalle tal cual (Nico corrige en el digest)."""
+    total = int(_num(total))
+    suma = sum(int(_num(l.get("precio"))) for l in items)
+    if total and 0 < total - suma:
+        items = items + [_linea_detalle({"item": "Resto", "precio": total - suma, "categoria": "Otros"})]
+    return items
+
+
 async def procesar_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> dict | None:
-    """Vision AISLADA sobre una boleta → buffer del día. Degrada a None si falla."""
+    """Vision AISLADA sobre una boleta → buffer del día, ÍTEM POR ÍTEM cuando se puede (v3).
+    El correo del banco sigue siendo el total canónico; estos ítems se correlacionan con él en
+    el cierre (fin_correlacionar). Degrada: si no logra itemizar, queda como un solo total."""
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
     try:
         r = await _anthropic.messages.create(
             model=settings.model_cheap,
-            max_tokens=300,
-            system=EXTRACTOR_SYSTEM,
+            max_tokens=800,
+            system=EXTRACTOR_ITEMS_SYSTEM,
             messages=[{
                 "role": "user",
                 "content": [
                     {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
-                    {"type": "text", "text": "Extrae los datos de este comprobante."},
+                    {"type": "text", "text": "Extrae el comercio, el total y la lista de ítems de esta boleta."},
                 ],
             }],
         )
-        return await _bufferizar(_parse_json(r.content[0].text), "foto")
+        d = _parse_json(r.content[0].text)
+        total = d.get("total", d.get("monto", 0))
+        items = [_linea_detalle(l) for l in (d.get("items") or []) if _num(l.get("precio", l.get("monto", 0))) > 0]
+        if items:
+            items = _cuadrar_resto(items, total)
+        datos = {
+            "tipo": "Gasto", "monto": total, "comercio": d.get("comercio", ""),
+            "fecha": d.get("fecha", ""), "medio": d.get("medio", ""),
+            "categoria": (items[0]["categoria"] if items else d.get("categoria", "Otros")),
+            "items": items or None,
+        }
+        return await _bufferizar(datos, "foto")
     except Exception:
         logger.exception("procesar_foto falló")
         return None
@@ -465,7 +625,9 @@ async def ingerir_gastos_email(max_n: int = 25) -> dict:
             logger.exception("ingerir_gastos_email: falló un correo")
     if nuevos:
         logger.info("Correos de gasto ingeridos al buffer: %d nuevos de %d revisados.", nuevos, len(msgs))
-    return {"revisados": len(msgs), "nuevos": nuevos}
+    # Tras ingerir, cruza foto/dictado con su cargo del correo (no doble conteo).
+    correlacionados = await fin_aplicar_correlacion()
+    return {"revisados": len(msgs), "nuevos": nuevos, "correlacionados": correlacionados}
 
 
 # ───────────────────────── (B) Digest nocturno ─────────────────────────
@@ -488,7 +650,10 @@ async def armar_digest(fecha: str | None = None) -> dict:
         "comercio": p.get("comercio", ""),
         "monto": int(_num(p.get("monto"))),
         "medio": p.get("medio", ""),
-        "intencion": p.get("intencion") or _intencion_de(p.get("categoria", "Otros")),
+        "intencion": (_intencion_resumen(p["items"]) if p.get("items")
+                      else (p.get("intencion") or _intencion_de(p.get("categoria", "Otros")))),
+        "items": p.get("items") or [],
+        "n_items": len(p.get("items") or []),
         "dudosa": bool(p.get("dudosa")),
         "motivo_duda": p.get("motivo_duda", ""),
     } for p in pendientes]
@@ -548,10 +713,13 @@ def _planificar_digest(pendientes: list[dict], correcciones: dict, ya_en_planill
         if idu:
             seen.add(idu)
         categoria = corr.get("categoria", p.get("categoria", "Otros"))
-        # Intención: override explícito gana; si corrigen la categoría, se re-deriva de ella
-        # (la guardada quedó obsoleta); si no, la guardada o la derivada de la categoría.
+        items = p.get("items")
+        # Intención: override explícito gana; con detalle, es el resumen de las líneas (Mixto si
+        # difieren); si corrigen la categoría se re-deriva; si no, la guardada o la derivada.
         if "intencion" in corr:
             intencion = corr["intencion"]
+        elif items:
+            intencion = _intencion_resumen(items)
         elif "categoria" in corr:
             intencion = _intencion_de(categoria)
         else:
@@ -561,8 +729,20 @@ def _planificar_digest(pendientes: list[dict], correcciones: dict, ya_en_planill
             "categoria": categoria,
             "monto": corr.get("monto", p.get("monto", 0)),
             "intencion": intencion,
+            "items": items,
         })
     return {"a_escribir": a_escribir, "a_descartar": a_descartar, "duplicadas": duplicadas}
+
+
+def _filas_detalle(p: dict, items: list[dict]) -> list[list]:
+    """Construye las filas de Compras_Detalle para una transacción confirmada (ID_Tx = id_unico)."""
+    fecha, comercio = p.get("fecha") or _hoy(), p.get("comercio", "")
+    idu, fuente = p.get("id_unico", ""), p.get("fuente", "")
+    return [[
+        fecha, comercio, l.get("item", ""), l.get("cantidad", ""), int(_num(l.get("precio"))),
+        l.get("categoria", ""), l.get("intencion", ""), "sí" if l.get("predecible") else "no",
+        idu, fuente,
+    ] for l in items]
 
 
 async def confirmar_digest(correcciones: dict | None = None) -> dict:
@@ -588,11 +768,120 @@ async def confirmar_digest(correcciones: dict | None = None) -> dict:
                 p.get("medio", ""), p.get("fuente", ""), p.get("id_unico", ""),
                 item["intencion"],
             ], sheet_id=sheets.fin_id())
+            # Detalle ítem-a-ítem (v3): N líneas a Compras_Detalle, ligadas por ID_Tx = id_unico.
+            for fila in _filas_detalle(p, item.get("items") or []):
+                try:
+                    await sheets.append_row(HOJA_DETALLE, fila, sheet_id=sheets.fin_id())
+                except Exception:
+                    logger.exception("confirmar_digest: no pude escribir una línea de detalle")
             await memory.buffer_marcar(p["id"], "confirmada")
             escritas += 1
         except Exception:
             logger.exception("confirmar_digest: no pude escribir una transacción")
     return {"escritas": escritas, "descartadas": len(plan["a_descartar"]), "duplicadas": len(plan["duplicadas"])}
+
+
+# ───────────────────────── (v3) Desglose dictado + correlación aplicada ─────────────────────────
+
+DESGLOSE_SYSTEM = (
+    "Conviertes un desglose de compra dictado en JSON. Devuelve SOLO {items: [{item, precio, "
+    "categoria}]}, precios enteros en pesos. Ej: 'gasté 2000 en chanchería y el resto pan' con "
+    "total 5000 → [{item:'chanchería', precio:2000, categoria:'Chanchería'}, {item:'pan', "
+    "precio:3000, categoria:'Alimentación'}]. Si dan un total y un 'resto', el resto cuadra al total."
+)
+
+
+async def fin_desglose(texto: str, total=None) -> list[dict]:
+    """Desglose dictado → líneas de detalle. Determinista primero (regex, cero tokens); si no
+    saca nada, cae al LLM. Cada línea trae categoría/intención/predecible."""
+    lineas = _desglose_determinista(texto, total)
+    if lineas:
+        return lineas
+    try:
+        sys = DESGLOSE_SYSTEM + (f"\n\nEl total de la compra es {int(_num(total))}." if total else "")
+        r = await _anthropic.messages.create(
+            model=settings.model_cheap, max_tokens=400, system=sys,
+            messages=[{"role": "user", "content": f"Desglosa esta compra:\n\n{texto}"}],
+        )
+        d = _parse_json(r.content[0].text)
+        return [_linea_detalle(l) for l in (d.get("items") or []) if _num(l.get("precio", 0)) > 0]
+    except Exception:
+        logger.exception("fin_desglose LLM falló")
+        return []
+
+
+async def desglosar_cargo(buffer_id: str, texto: str) -> str:
+    """Aplica un desglose (texto) a un cargo del buffer detectado sin detalle (respuesta a la
+    pregunta '¿qué compraste?'). Usa el monto del cargo como total para cuadrar el 'resto'."""
+    try:
+        cargo = next((p for p in await memory.buffer_pendientes() if p["id"] == buffer_id), None)
+    except Exception:
+        cargo = None
+    if not cargo:
+        return "Ese cargo ya no está pendiente."
+    lineas = await fin_desglose(texto, cargo.get("monto"))
+    if not lineas:
+        return "No te entendí el desglose. Dímelo como '2000 chanchería, resto pan' o mándame la foto."
+    try:
+        await memory.buffer_actualizar(buffer_id, {"items": lineas, "intencion": _intencion_resumen(lineas)})
+    except Exception:
+        logger.exception("desglosar_cargo: no pude guardar el detalle")
+        return "No pude guardar el detalle ahora. Reintenta en un rato."
+    return f"Anotado: {len(lineas)} ítem(s). Queda en el digest del cierre para confirmar."
+
+
+async def fin_aplicar_correlacion() -> int:
+    """Corre la correlación sobre el buffer y aplica los merges: el cargo del correo se queda con
+    los ítems del detalle (foto/dictado); la entrada de detalle se descarta. Evita doble conteo.
+    Devuelve cuántos correlacionó. Se llama tras cada ingesta de correos."""
+    try:
+        pend = await memory.buffer_pendientes()
+    except Exception:
+        return 0
+    n = 0
+    for m in fin_correlacionar(pend):
+        try:
+            await memory.buffer_actualizar(m["keep"], {
+                "items": m["items"], "intencion": _intencion_resumen(m["items"]),
+            })
+            await memory.buffer_marcar(m["drop"], "descartada")
+            n += 1
+        except Exception:
+            logger.exception("fin_aplicar_correlacion: no pude aplicar un merge")
+    if n:
+        logger.info("Correlación: %d gasto(s) foto/dictado cruzados con su cargo del correo.", n)
+    return n
+
+
+# Comercios "de compras": despensa/almacén donde tiene sentido itemizar. Por categoría o por
+# el flag aprendido `es_compras` de la regla de comercio.
+_CATEGORIAS_COMPRAS = {"alimentación", "alimentacion", "supermercado", "hogar", "almacén",
+                       "almacen", "limpieza", "despensa", "abarrotes"}
+
+
+def _es_compras(p: dict, reglas: list[dict] | None = None) -> bool:
+    if str(p.get("categoria", "")).strip().lower() in _CATEGORIAS_COMPRAS:
+        return True
+    comercio = str(p.get("comercio", "")).lower()
+    for r in reglas or []:
+        if r.get("es_compras") and ((r.get("patron") or "").lower() in comercio
+                                    or (r.get("nombre") or "").lower() in comercio):
+            return True
+    return False
+
+
+async def cargos_sin_detalle() -> list[dict]:
+    """Cargos pendientes de comercios 'de compras' SIN detalle y SIN preguntar aún. Insumo del
+    poll de 5h: por cada uno, Donna pregunta '¿qué compraste?'."""
+    try:
+        pend = await memory.buffer_pendientes()
+        reglas = await memory.get_comercios()
+    except Exception:
+        logger.exception("cargos_sin_detalle: no pude leer buffer/comercios")
+        return []
+    return [p for p in pend
+            if str(p.get("tipo", "Gasto")) == "Gasto" and not p.get("items")
+            and not p.get("preguntado_en") and _es_compras(p, reglas)]
 
 
 # ───────────────────────── (C) Faro de deuda (el freno) ─────────────────────────
@@ -864,6 +1153,28 @@ async def _t_aportar_meta(inp: dict) -> str:
     return await aportar_meta(nombre, inp.get("monto", 0))
 
 
+async def _t_compra_detallada(inp: dict) -> str:
+    """Nico dicta una compra CON detalle ('compré en el súper arroz 1290, leche 990'). Guarda el
+    detalle en el buffer; el cargo del correo se cruza luego por monto+fecha (no doble conteo)."""
+    comercio = str(inp.get("comercio", "")).strip()
+    total = inp.get("total")
+    items_in = inp.get("items")
+    if items_in:
+        lineas = [_linea_detalle(l, comercio) for l in items_in if _num(l.get("precio", l.get("monto", 0))) > 0]
+    else:
+        lineas = await fin_desglose(str(inp.get("desglose", "")), total)
+    if not lineas:
+        return "No te pillé el desglose. Dímelo como «arroz 1290, leche 990» o mándame la foto de la boleta."
+    suma = sum(int(_num(l["precio"])) for l in lineas)
+    monto = int(_num(total)) or suma
+    guardado = await _bufferizar(
+        {"tipo": "Gasto", "monto": monto, "comercio": comercio, "fecha": _hoy(), "items": lineas}, "dictado")
+    if not guardado:
+        return "Esa compra ya la tenía anotada para hoy. No la duplico."
+    return (f"Anotado: {comercio or 'compra'} {clp(monto)}, {len(lineas)} ítem(s). "
+            "En un rato lo cruzo con el cargo de tu correo para no contarlo dos veces; lo confirmas en el cierre.")
+
+
 # ───────────────────────── Señal destilada (brief) ─────────────────────────
 
 async def senal_finanzas() -> str:
@@ -953,6 +1264,24 @@ TOOLS = [
             "required": ["meta", "monto"],
         },
     },
+    {
+        "name": "fin_compra_detallada",
+        "description": (
+            "OBLIGATORIO cuando Nico cuenta una compra CON su detalle por ítem o por categoría ('compré en el "
+            "súper arroz 1290, leche 990 y chocolate 2000', 'en San Valentín gasté 2000 en chanchería y el resto "
+            "pan'). Guarda el detalle; Donna lo cruza después con el cargo del banco para no contarlo dos veces. "
+            "Distinto de fin_registrar_gasto (ese es un gasto simple sin desglose)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "comercio": {"type": "string", "description": "Dónde compró (súper, San Valentín, etc.)"},
+                "desglose": {"type": "string", "description": "El desglose tal cual lo dijo Nico, ej 'arroz 1290, leche 990'"},
+                "total": {"type": "number", "description": "Total de la compra si lo dijo, en pesos sin separadores (opcional)"},
+            },
+            "required": ["desglose"],
+        },
+    },
 ]
 
 HANDLERS = {
@@ -963,4 +1292,5 @@ HANDLERS = {
     "fin_armar_digest": _t_armar_digest,
     "fin_metas": _t_metas,
     "fin_aportar_meta": _t_aportar_meta,
+    "fin_compra_detallada": _t_compra_detallada,
 }

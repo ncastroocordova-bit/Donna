@@ -150,6 +150,77 @@ def test_progreso_meta():
     assert finanzas._progreso(50, 0) is None           # objetivo no positivo → sin progreso
 
 
+# ───────────────────────── Detalle de compra (v3): predecible / desglose / correlación ─────────────────────────
+
+def test_predecible_despensa_si_perecible_no():
+    assert finanzas._predecible("arroz") is True
+    assert finanzas._predecible("atún en lata") is True
+    assert finanzas._predecible("cloro gel") is True
+    assert finanzas._predecible("papel higiénico") is True
+    assert finanzas._predecible("pan") is False           # cotidiano/perecible
+    assert finanzas._predecible("chanchería") is False
+    assert finanzas._predecible("") is False              # default conservador
+
+
+def test_intencion_resumen():
+    assert finanzas._intencion_resumen([]) == ""
+    assert finanzas._intencion_resumen([{"intencion": "Necesario"}, {"intencion": "Necesario"}]) == "Necesario"
+    assert finanzas._intencion_resumen([{"intencion": "Necesario"}, {"intencion": "Deseo"}]) == "Mixto"
+
+
+def test_desglose_nombre_monto():
+    lineas = finanzas._desglose_determinista("arroz 1290, leche 990, chocolate 2000")
+    assert [l["item"] for l in lineas] == ["arroz", "leche", "chocolate"]
+    assert [l["precio"] for l in lineas] == [1290, 990, 2000]
+    assert next(l for l in lineas if l["item"] == "arroz")["predecible"] is True
+
+
+def test_desglose_con_resto_cuadra_al_total():
+    lineas = finanzas._desglose_determinista("2000 en chanchería, el resto pan", total=5000)
+    assert len(lineas) == 2
+    chan = next(l for l in lineas if "chan" in l["item"].lower())
+    pan = next(l for l in lineas if l["item"] == "pan")
+    assert chan["precio"] == 2000 and chan["intencion"] == "Deseo" and chan["predecible"] is False
+    assert pan["precio"] == 3000                          # el "resto" cuadra al total
+    assert sum(l["precio"] for l in lineas) == 5000
+
+
+def test_correlacion_foto_y_correo_un_solo_gasto():
+    pend = [
+        {"id": "foto1", "fuente": "foto", "monto": 42000, "fecha": "2026-06-20",
+         "items": [{"item": "arroz", "precio": 42000, "intencion": "Necesario"}]},
+        {"id": "mail1", "fuente": "correo", "monto": 42000, "fecha": "2026-06-20"},
+    ]
+    merges = finanzas.fin_correlacionar(pend)
+    assert len(merges) == 1
+    assert merges[0]["keep"] == "mail1" and merges[0]["drop"] == "foto1"   # el correo es el canónico
+
+
+def test_correlacion_no_aparea_montos_distintos():
+    pend = [
+        {"id": "foto1", "fuente": "dictado", "monto": 42000, "fecha": "2026-06-20",
+         "items": [{"item": "x", "precio": 42000}]},
+        {"id": "mail1", "fuente": "correo", "monto": 9990, "fecha": "2026-06-20"},
+    ]
+    assert finanzas.fin_correlacionar(pend) == []
+
+
+def test_digest_intencion_mixta_con_detalle():
+    items = [{"intencion": "Necesario"}, {"intencion": "Deseo"}]
+    pendientes = [_pend("b1", "2026-06-20_42000_super", items=items, categoria="Alimentación")]
+    plan = finanzas._planificar_digest(pendientes, {}, set())
+    assert plan["a_escribir"][0]["intencion"] == "Mixto"   # ≥2 intenciones → Mixto
+    assert plan["a_escribir"][0]["items"] == items
+
+
+def test_filas_detalle_shape():
+    p = {"fecha": "2026-06-20", "comercio": "Súper", "id_unico": "ID1", "fuente": "foto"}
+    items = [{"item": "arroz", "cantidad": 1, "precio": 1290, "categoria": "Arroz",
+              "intencion": "Necesario", "predecible": True}]
+    assert finanzas._filas_detalle(p, items)[0] == [
+        "2026-06-20", "Súper", "arroz", 1, 1290, "Arroz", "Necesario", "sí", "ID1", "foto"]
+
+
 # ───────────────────────── Utilidades base ─────────────────────────
 
 def test_num_parsea_formato_chileno():

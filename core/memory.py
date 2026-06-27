@@ -268,6 +268,8 @@ async def buffer_agregar(tx: dict) -> bool:
         "medio": tx.get("medio", ""),
         "fuente": tx.get("fuente", ""),
         "id_unico": id_unico or None,
+        "intencion": tx.get("intencion", ""),
+        "items": tx.get("items"),                  # detalle ítem-a-ítem (v3), o None
         "dudosa": bool(tx.get("dudosa", False)),
         "motivo_duda": tx.get("motivo_duda", ""),
         "estado": "pendiente",
@@ -295,25 +297,34 @@ async def buffer_marcar(buffer_id: str, estado: str) -> None:
     await buffer_actualizar(buffer_id, {"estado": estado})
 
 
+async def buffer_marcar_preguntado(buffer_id: str) -> None:
+    """Marca un cargo como ya-preguntado ('¿qué compraste?') para que el poll no insista."""
+    await buffer_actualizar(buffer_id, {"preguntado_en": datetime.now(settings.tz).isoformat()})
+
+
 # ───────────────────────── Comercios: nombre amigable + categoría aprendida ─────────────────────────
 
 async def get_comercios() -> list[dict]:
-    """Reglas de comercios que Donna aprendió: patrón → nombre amigable + categoría."""
+    """Reglas de comercios que Donna aprendió: patrón → nombre amigable + categoría.
+    `es_compras` marca los de despensa/almacén (súper, San Valentín): sus cargos sin detalle
+    gatillan la pregunta '¿qué compraste?' (Finanzas v3)."""
     db = await _get_db()
-    r = await db.table("comercios").select("patron, nombre, categoria").order("veces", desc=True).execute()
+    r = await db.table("comercios").select("patron, nombre, categoria, es_compras").order("veces", desc=True).execute()
     return r.data
 
 
-async def upsert_comercio(patron: str, nombre: str, categoria: str = "") -> None:
+async def upsert_comercio(patron: str, nombre: str, categoria: str = "", es_compras: bool | None = None) -> None:
     """Aprende/actualiza una regla de comercio. `patron` se guarda en minúsculas (substring del
-    comercio crudo del banco). Lo alimentan las correcciones del digest."""
+    comercio crudo del banco). Lo alimentan las correcciones del digest. `es_compras` solo se
+    escribe si se pasa explícito (None = no tocar el flag existente)."""
     patron = (patron or "").strip().lower()
     if not patron:
         return
+    fila = {"patron": patron, "nombre": nombre, "categoria": categoria}
+    if es_compras is not None:
+        fila["es_compras"] = bool(es_compras)
     db = await _get_db()
-    await db.table("comercios").upsert(
-        {"patron": patron, "nombre": nombre, "categoria": categoria}, on_conflict="patron"
-    ).execute()
+    await db.table("comercios").upsert(fila, on_conflict="patron").execute()
 
 
 # ───────────────────────── jobs_log: resiliencia del scheduler ─────────────────────────
