@@ -94,6 +94,7 @@ HOJA_TX = "Transacciones"
 HOJA_CAT = "Categorias"
 HOJA_DASH = "Dashboard"
 HOJA_TARJETAS = "Tarjetas y Deuda"
+HOJA_METAS = "Metas"
 
 # Celdas fijas del faro (la planilla las calcula; Donna solo las lee). Layout canónico
 # de 'Tarjetas y Deuda' (Donna_Canonico.xlsx): el faro vive en el encabezado (A3 "🔦 FARO
@@ -143,6 +144,8 @@ EXTRACTOR_SYSTEM = (
     "Mach, MercadoPago). Devuelve SOLO un JSON, sin texto extra, con estos campos: "
     "tipo ('Gasto' o 'Ingreso'), monto (número entero en pesos, sin separadores), "
     "categoria (tu mejor apuesta), subcategoria, comercio, medio (Banco de Chile/Mach/MP/débito/crédito/transferencia), "
+    "intencion ('Necesario' = indispensable como comida/transporte/cuentas/salud; 'Inversion' = algo que rinde "
+    "como cursos/herramientas/publicidad o insumos de Ñoomi; 'Deseo' = gusto como comida rápida/ropa/entretención), "
     "dudosa (true si NO estás seguro de la categoría), motivo_duda (si dudosa: la pregunta corta, ej '¿Tecnología o Suscripción?'). "
     "Si no logras leer un monto, devuelve monto 0."
 )
@@ -188,6 +191,7 @@ async def _bufferizar(datos: dict, fuente: str, reglas: list[dict] | None = None
         "medio": datos.get("medio", ""),
         "fuente": fuente,
         "id_unico": _id_unico(fecha, monto, comercio_raw),  # id sobre el comercio CRUDO → estable ante reglas nuevas
+        "intencion": datos.get("intencion") or _intencion_de(categoria),
         "dudosa": bool(datos.get("dudosa", False)),
         "motivo_duda": datos.get("motivo_duda", ""),
     }
@@ -220,6 +224,38 @@ def _categoria_de(comercio: str) -> str:
         if any(k in c for k in kws):
             return cat
     return "Otros"
+
+
+# Intención del gasto (v2): por qué se gastó, no solo en qué. Mejor apuesta por categoría;
+# Nico la confirma/corrige en el digest. Orden: Inversión gana, luego Deseo, luego Necesario.
+_INTENCION_KW = [
+    ("Inversion", ["curso", "herramienta", "publicidad", "marketing", "educac", "libro",
+                   "software", "insumo", "capacit", "ñoomi", "noomi"]),
+    ("Deseo",     ["chancher", "delivery", "uber eats", "rappi", "pedidosya", "restau",
+                   "comida rapida", "ropa", "entreten", "suscrip", "juego", "bar", "cafe",
+                   "cine", "antojo"]),
+    ("Necesario", ["aliment", "supermerc", "transporte", "combustible", "bencina", "salud",
+                   "farmacia", "hogar", "cuenta", "servicio", "luz", "agua", "gas",
+                   "arriendo", "abarrote", "limpieza"]),
+]
+
+
+def _intencion_de(categoria: str) -> str:
+    """Necesario (indispensable) / Inversión (rinde) / Deseo (gusto). Default conservador:
+    Necesario. Es solo la mejor apuesta — se confirma en el digest."""
+    c = (categoria or "").lower()
+    for intencion, kws in _INTENCION_KW:
+        if any(k in c for k in kws):
+            return intencion
+    return "Necesario"
+
+
+def _progreso(actual, objetivo) -> int | None:
+    """% de avance de una meta (0-100, con tope). None si el objetivo no es positivo."""
+    o = _num(objetivo)
+    if o <= 0:
+        return None
+    return max(0, min(100, round(_num(actual) / o * 100)))
 
 
 def _fecha_iso(s: str) -> str:
@@ -452,6 +488,7 @@ async def armar_digest(fecha: str | None = None) -> dict:
         "comercio": p.get("comercio", ""),
         "monto": int(_num(p.get("monto"))),
         "medio": p.get("medio", ""),
+        "intencion": p.get("intencion") or _intencion_de(p.get("categoria", "Otros")),
         "dudosa": bool(p.get("dudosa")),
         "motivo_duda": p.get("motivo_duda", ""),
     } for p in pendientes]
@@ -510,10 +547,20 @@ def _planificar_digest(pendientes: list[dict], correcciones: dict, ya_en_planill
             continue
         if idu:
             seen.add(idu)
+        categoria = corr.get("categoria", p.get("categoria", "Otros"))
+        # Intención: override explícito gana; si corrigen la categoría, se re-deriva de ella
+        # (la guardada quedó obsoleta); si no, la guardada o la derivada de la categoría.
+        if "intencion" in corr:
+            intencion = corr["intencion"]
+        elif "categoria" in corr:
+            intencion = _intencion_de(categoria)
+        else:
+            intencion = p.get("intencion") or _intencion_de(categoria)
         a_escribir.append({
             "p": p,
-            "categoria": corr.get("categoria", p.get("categoria", "Otros")),
+            "categoria": categoria,
             "monto": corr.get("monto", p.get("monto", 0)),
+            "intencion": intencion,
         })
     return {"a_escribir": a_escribir, "a_descartar": a_descartar, "duplicadas": duplicadas}
 
@@ -539,6 +586,7 @@ async def confirmar_digest(correcciones: dict | None = None) -> dict:
                 p.get("fecha") or _hoy(), p.get("tipo", "Gasto"), item["categoria"],
                 p.get("subcategoria", ""), p.get("comercio", ""), int(_num(item["monto"])),
                 p.get("medio", ""), p.get("fuente", ""), p.get("id_unico", ""),
+                item["intencion"],
             ], sheet_id=sheets.fin_id())
             await memory.buffer_marcar(p["id"], "confirmada")
             escritas += 1
@@ -673,6 +721,51 @@ async def sembrar_espina() -> dict:
     return sembrado
 
 
+# ───────────────────────── (D) Metas financieras (v2 — sin input diario) ─────────────────────────
+
+async def metas_estado() -> list[dict]:
+    """Lee la hoja `Metas` y calcula el progreso de cada meta (Actual/Objetivo). El % es una
+    LECTURA derivada; el dato vive en las celdas Objetivo/Actual que Nico ve y edita."""
+    try:
+        filas = await sheets.get_dicts(HOJA_METAS, sheet_id=sheets.fin_id(), value_render="UNFORMATTED_VALUE")
+    except Exception:
+        logger.exception("metas_estado: no pude leer Metas")
+        return []
+    out = []
+    for f in filas:
+        meta = str(f.get("Meta", "")).strip()
+        if not meta:
+            continue
+        obj, act = _num(f.get("Objetivo")), _num(f.get("Actual"))
+        out.append({"meta": meta, "objetivo": obj, "actual": act, "progreso": _progreso(act, obj)})
+    return out
+
+
+async def aportar_meta(nombre: str, monto) -> str:
+    """Suma un aporte al Actual de una meta y recalcula el Progreso en la hoja. Manual (sin
+    doble-entrada): el avance lo reporta Nico ('aboné 50k al fondo'), no se deduce de saldos."""
+    monto = _num(monto)
+    if monto <= 0:
+        return "¿Cuánto aportaste? Pásame el monto y lo sumo a la meta."
+    metas = await metas_estado()
+    if not metas:
+        return "Todavía no tienes metas cargadas. Dime una (nombre + objetivo) y la dejo en la hoja Metas."
+    m = next((x for x in metas if nombre.lower() in x["meta"].lower()), None)
+    if not m:
+        return f"No encuentro esa meta. Tienes: {', '.join(x['meta'] for x in metas)}."
+    nuevo = m["actual"] + monto
+    prog = _progreso(nuevo, m["objetivo"])
+    try:
+        await sheets.upsert_por_clave(HOJA_METAS, "Meta", m["meta"], "Actual", int(nuevo), sheet_id=sheets.fin_id())
+        if prog is not None:
+            await sheets.upsert_por_clave(HOJA_METAS, "Meta", m["meta"], "Progreso", f"{prog}%", sheet_id=sheets.fin_id())
+    except Exception:
+        logger.exception("aportar_meta: no pude actualizar la meta")
+        return "No pude actualizar la meta ahora. Reintenta en un rato."
+    cola = f" — vas {prog}%" if prog is not None else ""
+    return f"Aboné {clp(monto)} a «{m['meta']}». Llevas {clp(nuevo)} de {clp(m['objetivo'])}{cola}."
+
+
 # ───────────────────────── Handlers de tools ─────────────────────────
 
 async def _t_registrar_gasto(inp: dict) -> str:
@@ -687,6 +780,7 @@ async def _t_registrar_gasto(inp: dict) -> str:
         "fecha": fecha, "tipo": tipo, "categoria": inp.get("categoria", "Otros"),
         "comercio": comercio, "monto": int(monto), "medio": inp.get("medio", ""),
         "fuente": "manual", "id_unico": _id_unico(fecha, monto, comercio),
+        "intencion": _intencion_de(inp.get("categoria", "Otros")),
     }
     try:
         nuevo = await memory.buffer_agregar(tx)
@@ -744,10 +838,30 @@ async def _t_armar_digest(inp: dict) -> str:
         return "Hoy no detecté movimientos. El digest está limpio."
     lineas = [
         f"- {m['comercio'] or m['categoria']}: {clp(m['monto'])} → {m['categoria']}"
+        + (f" · {m['intencion']}" if m.get("intencion") else "")
         + (f"  ⚠️ {m['motivo_duda']}" if m["dudosa"] else "")
         for m in d["movimientos"]
     ]
     return f"Tienes {d['n']} movimiento(s) por confirmar ({clp(d['total'])}):\n" + "\n".join(lineas)
+
+
+async def _t_metas(inp: dict) -> str:
+    metas = await metas_estado()
+    if not metas:
+        return ("Aún no tienes metas financieras cargadas. Dime una (ej. «fondo de emergencia, "
+                "objetivo 3 millones») y la dejo en la hoja Metas.")
+    lineas = []
+    for m in metas:
+        barra = f"{m['progreso']}%" if m["progreso"] is not None else "—"
+        lineas.append(f"• {m['meta']}: {clp(m['actual'])} de {clp(m['objetivo'])} ({barra})")
+    return "Tus metas:\n" + "\n".join(lineas)
+
+
+async def _t_aportar_meta(inp: dict) -> str:
+    nombre = str(inp.get("meta", "")).strip()
+    if not nombre:
+        return "¿A qué meta aportaste? (fondo de emergencia, pagar la tarjeta, terreno…)"
+    return await aportar_meta(nombre, inp.get("monto", 0))
 
 
 # ───────────────────────── Señal destilada (brief) ─────────────────────────
@@ -816,6 +930,29 @@ TOOLS = [
         "description": "Muestra el digest del día (movimientos pendientes de confirmar) si Nico lo pide antes del cierre.",
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "fin_metas",
+        "description": (
+            "OBLIGATORIO cuando Nico pregunta por sus metas financieras (fondo de emergencia, pagar la "
+            "tarjeta, ahorro para algo) o cómo va con ellas. Lee la hoja Metas y muestra avance vs objetivo. No inventes."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "fin_aportar_meta",
+        "description": (
+            "OBLIGATORIO cuando Nico dice que aportó/abonó/ahorró hacia una meta financiera ('aboné 50 mil al "
+            "fondo', 'pagué 100 mil de la meta de la tarjeta'). Suma el aporte al avance de esa meta."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "meta": {"type": "string", "description": "Nombre de la meta (fondo de emergencia, pagar tarjeta, terreno…)"},
+                "monto": {"type": "number", "description": "Monto aportado en pesos, sin separadores"},
+            },
+            "required": ["meta", "monto"],
+        },
+    },
 ]
 
 HANDLERS = {
@@ -824,4 +961,6 @@ HANDLERS = {
     "fin_presupuesto": _t_presupuesto,
     "fin_estado_deuda": _t_estado_deuda,
     "fin_armar_digest": _t_armar_digest,
+    "fin_metas": _t_metas,
+    "fin_aportar_meta": _t_aportar_meta,
 }

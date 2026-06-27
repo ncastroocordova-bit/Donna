@@ -69,7 +69,8 @@ def _texto_digest(d: dict) -> str:
     lineas = []
     for m in d["movimientos"]:
         marca = f"  ⚠️ {m['motivo_duda']}" if m["dudosa"] else ""
-        lineas.append(f"• {m['comercio'] or m['categoria']}: {finanzas.clp(m['monto'])} → {m['categoria']}{marca}")
+        intencion = f" · {m['intencion']}" if m.get("intencion") else ""
+        lineas.append(f"• {m['comercio'] or m['categoria']}: {finanzas.clp(m['monto'])} → {m['categoria']}{intencion}{marca}")
     cab = f"Tienes {d['n']} movimiento(s) por confirmar ({finanzas.clp(d['total'])})."
     if d["n_dudosas"]:
         cab += f" Hay {d['n_dudosas']} que quiero confirmar contigo."
@@ -235,7 +236,11 @@ async def aplicar_correccion_tx(buffer_id: str, texto: str) -> str:
         await memory.buffer_marcar(buffer_id, "descartada")
         return "Descartada. No la anoto."
     categoria = texto.strip()
-    await memory.buffer_actualizar(buffer_id, {"categoria": categoria, "dudosa": False, "motivo_duda": ""})
+    # Al corregir la categoría, la intención se re-deriva de ella (la guardada quedó obsoleta).
+    await memory.buffer_actualizar(buffer_id, {
+        "categoria": categoria, "intencion": finanzas._intencion_de(categoria),
+        "dudosa": False, "motivo_duda": "",
+    })
     # Aprende: este comercio → esta categoría, para reconocerlo solo la próxima vez.
     aprendido = False
     try:

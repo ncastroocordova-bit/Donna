@@ -164,7 +164,7 @@ _CORE_HANDLERS = {
 # verifica porque el nombre se registra antes de ejecutar.
 WRITE_TOOLS = {
     "guardar_memoria", "actualizar_perfil", "abrir_inferencia", "registrar_compromiso",
-    "fin_registrar_gasto",
+    "fin_registrar_gasto", "fin_aportar_meta",
     "sal_marcar_habito", "sal_registrar_animo", "sal_registrar_sueno",
     "rec_agregar",
     "proy_crear", "proy_actualizar", "proy_cerrar", "tarea_crear", "tarea_completar",

@@ -109,6 +109,47 @@ def test_correccion_de_categoria_se_respeta():
     assert plan["a_escribir"][0]["categoria"] == "Supermercado"
 
 
+# ───────────────────────── Intención del gasto (v2) ─────────────────────────
+
+def test_intencion_por_categoria():
+    assert finanzas._intencion_de("Alimentación") == "Necesario"
+    assert finanzas._intencion_de("Transporte") == "Necesario"
+    assert finanzas._intencion_de("Chanchería") == "Deseo"        # comida rápida/delivery
+    assert finanzas._intencion_de("Suscripciones") == "Deseo"
+    assert finanzas._intencion_de("Cursos") == "Inversion"
+    assert finanzas._intencion_de("") == "Necesario"              # default conservador
+
+
+def test_digest_deriva_la_intencion_de_la_categoria():
+    pendientes = [_pend("b1", "2026-06-20_1000_x", categoria="Alimentación")]
+    plan = finanzas._planificar_digest(pendientes, {}, set())
+    assert plan["a_escribir"][0]["intencion"] == "Necesario"
+
+
+def test_corregir_categoria_recalcula_la_intencion():
+    # Venía como Alimentación (Necesario); Nico la corrige a Cursos → la intención sigue.
+    pendientes = [_pend("b1", "2026-06-20_1000_x", categoria="Alimentación", intencion="Necesario")]
+    plan = finanzas._planificar_digest(pendientes, {"b1": {"categoria": "Cursos"}}, set())
+    assert plan["a_escribir"][0]["categoria"] == "Cursos"
+    assert plan["a_escribir"][0]["intencion"] == "Inversion"
+
+
+def test_intencion_explicita_gana():
+    pendientes = [_pend("b1", "2026-06-20_1000_x", categoria="Alimentación")]
+    plan = finanzas._planificar_digest(pendientes, {"b1": {"intencion": "Deseo"}}, set())
+    assert plan["a_escribir"][0]["intencion"] == "Deseo"
+
+
+# ───────────────────────── Metas financieras (v2) ─────────────────────────
+
+def test_progreso_meta():
+    assert finanzas._progreso(40, 100) == 40
+    assert finanzas._progreso(0, 100) == 0
+    assert finanzas._progreso(150, 100) == 100        # tope en 100
+    assert finanzas._progreso("$1.500", "3.000") == 50  # formato chileno
+    assert finanzas._progreso(50, 0) is None           # objetivo no positivo → sin progreso
+
+
 # ───────────────────────── Utilidades base ─────────────────────────
 
 def test_num_parsea_formato_chileno():
