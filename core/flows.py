@@ -58,8 +58,12 @@ async def enviar_panel_cierre(bot, chat_id: int, intro: str) -> None:
 def _teclado_digest(d: dict) -> InlineKeyboardMarkup:
     filas = [[InlineKeyboardButton("✅ Aceptar todo", callback_data="digest:aceptar")]]
     for m in d["movimientos"][:10]:
-        etiqueta = ("⚠️ " if m["dudosa"] else "✏️ ") + (m["comercio"] or m["categoria"])[:25]
-        filas.append([InlineKeyboardButton(etiqueta, callback_data=f"digest:fix:{m['id']}")])
+        etiqueta = ("⚠️ " if m["dudosa"] else "✏️ ") + (m["comercio"] or m["categoria"])[:20]
+        fila = [InlineKeyboardButton(etiqueta, callback_data=f"digest:fix:{m['id']}")]
+        # Gastos sin detalle aún → ofrece detallar ítem por ítem (foto o dictado).
+        if m.get("tipo", "Gasto") == "Gasto" and not m.get("n_items"):
+            fila.append(InlineKeyboardButton("📝 Detallar", callback_data=f"digest:detallar:{m['id']}"))
+        filas.append(fila)
     return InlineKeyboardMarkup(filas)
 
 
@@ -200,6 +204,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await q.edit_message_text(
             "Dime la categoría correcta para esa línea (o escribe «descartar» para botarla). "
             "Después toca el cierre de nuevo para aceptar el resto."
+        )
+        return
+
+    if data.startswith("digest:detallar:"):
+        buffer_id = data.split(":", 2)[2]
+        await q.edit_message_text(
+            "¿Qué compraste en esta compra? Mándame la 📷 foto de la boleta o ✍️ desglósalo por texto "
+            "(«arroz 1290, leche 990»). Le pongo categoría y deseo a cada ítem.",
+            reply_markup=teclado_pregunta_compra(buffer_id),
         )
         return
 
