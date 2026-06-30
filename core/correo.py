@@ -16,6 +16,11 @@ def disponible() -> bool:
     return gmail.disponible() or outlook.disponible()
 
 
+def gmail_token_invalido() -> bool:
+    """True si el refresh token de Gmail murió (hay que re-autorizar)."""
+    return gmail.token_invalido()
+
+
 def proveedores_activos() -> list[str]:
     activos = []
     if gmail.disponible():

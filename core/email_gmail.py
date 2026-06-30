@@ -29,10 +29,17 @@ def _html_a_texto(html: str) -> str:
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 _service = None
+_token_invalido = False  # se prende si el refresh token murió (invalid_grant) → Donna avisa
 
 
 def disponible() -> bool:
     return settings.gmail_activo
+
+
+def token_invalido() -> bool:
+    """True si la última llamada falló porque el refresh token expiró/se revocó (hay que
+    re-autorizar). Las apps OAuth en modo 'Testing' expiran el token a los 7 días."""
+    return _token_invalido
 
 
 def _svc():
@@ -107,10 +114,19 @@ async def buscar(query: str, max_n: int = 25, label_ids: list[str] | None = None
             out.append(_normalizar(full))
         return out
 
+    global _token_invalido
     try:
-        return await asyncio.to_thread(_call)
-    except Exception:
-        logger.exception("Gmail buscar falló")
+        out = await asyncio.to_thread(_call)
+        _token_invalido = False  # una llamada OK limpia el flag
+        return out
+    except Exception as e:
+        from google.auth.exceptions import RefreshError
+        if isinstance(e, RefreshError) or "invalid_grant" in str(e):
+            _token_invalido = True
+            logger.error("Gmail: TOKEN INVÁLIDO (invalid_grant). Re-autoriza con `python auth_email.py gmail` "
+                         "y publica la app OAuth a Producción para que no expire cada 7 días.")
+        else:
+            logger.exception("Gmail buscar falló")
         return []
 
 

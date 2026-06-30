@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 async def _texto_brief() -> str:
     eventos = await agenda.eventos_de_hoy()
     ag = "; ".join(f"{e['hora']} {e['titulo']}" for e in eventos) or "sin eventos"
+    aviso_correo = ("AVISO REAL para decirle a Nico: perdí el acceso a tu correo financiero "
+                    "(el token venció); no estoy registrando gastos por mail hasta que me re-autorices."
+                    if correo.disponible() and correo.gmail_token_invalido() else "")
     señales = " ".join(s for s in [
+        aviso_correo,
         await finanzas.senal_finanzas(),
         await salud.senal_salud(),
         await recordatorios.texto_proximos(7),
