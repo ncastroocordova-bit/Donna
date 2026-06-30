@@ -60,11 +60,78 @@ def _teclado_digest(d: dict) -> InlineKeyboardMarkup:
     for m in d["movimientos"][:10]:
         etiqueta = ("⚠️ " if m["dudosa"] else "✏️ ") + (m["comercio"] or m["categoria"])[:20]
         fila = [InlineKeyboardButton(etiqueta, callback_data=f"digest:fix:{m['id']}")]
-        # Gastos sin detalle aún → ofrece detallar ítem por ítem (foto o dictado).
-        if m.get("tipo", "Gasto") == "Gasto" and not m.get("n_items"):
-            fila.append(InlineKeyboardButton("📝 Detallar", callback_data=f"digest:detallar:{m['id']}"))
+        if m.get("tipo", "Gasto") == "Gasto":
+            if m.get("n_items"):  # ya detallado → revisar/corregir ítems
+                fila.append(InlineKeyboardButton(f"📋 {m['n_items']} ítems", callback_data=f"digest:items:{m['id']}"))
+            else:                 # sin detalle → ofrecer detallar (foto o dictado)
+                fila.append(InlineKeyboardButton("📝 Detallar", callback_data=f"digest:detallar:{m['id']}"))
         filas.append(fila)
     return InlineKeyboardMarkup(filas)
+
+
+# ───────────────────────── Editor de ítems (v3, mini-panel) ─────────────────────────
+
+_DESEOS = ["Necesario", "Inversion", "Deseo"]
+
+
+def _texto_panel_items(comercio: str, items: list[dict]) -> str:
+    lineas = []
+    for i, it in enumerate(items, 1):
+        pred = "📦 despensa" if it.get("predecible") else "🥖 perecible"
+        lineas.append(f"{i}) {it.get('item', '') or '—'} · {finanzas.clp(it.get('precio', 0))} · "
+                      f"{it.get('categoria', '')} · {it.get('intencion', '')} · {pred}")
+    return (f"Detalle de {comercio or 'la compra'} — {len(items)} ítem(s). "
+            f"Toca uno para corregir su deseo, categoría o si es de despensa:\n\n" + "\n".join(lineas))
+
+
+def _teclado_panel_items(items: list[dict]) -> InlineKeyboardMarkup:
+    filas = [[InlineKeyboardButton(f"✏️ {i + 1}. {(it.get('item') or '—')[:24]}", callback_data=f"it:p:{i}")]
+             for i, it in enumerate(items[:12])]
+    filas.append([InlineKeyboardButton("✅ Listo", callback_data="it:ok")])
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_item_editor(it: dict) -> InlineKeyboardMarkup:
+    d, p = it.get("intencion", ""), it.get("predecible")
+
+    def mk(label, on):
+        return ("✅ " + label) if on else label
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(mk(x, d == x), callback_data=f"it:d:{x}") for x in _DESEOS],
+        [InlineKeyboardButton(mk("📦 Despensa", p is True), callback_data="it:pr:1"),
+         InlineKeyboardButton(mk("🥖 Perecible", p is False), callback_data="it:pr:0")],
+        [InlineKeyboardButton("🏷️ Categoría", callback_data="it:cat"),
+         InlineKeyboardButton("⬅️ Volver", callback_data="it:back")],
+    ])
+
+
+def _texto_item(it: dict) -> str:
+    return (f"«{it.get('item', '') or '—'}» · {finanzas.clp(it.get('precio', 0))}\n"
+            f"Categoría: {it.get('categoria', '')} · Deseo: {it.get('intencion', '')} · "
+            f"{'despensa' if it.get('predecible') else 'perecible'}")
+
+
+async def enviar_panel_items(bot, chat_id: int, buffer_id: str) -> bool:
+    """Muestra el detalle ítem-a-ítem de un cargo para revisar/corregir. Devuelve si lo abrió."""
+    b = await memory.get_buffer(buffer_id)
+    items = (b or {}).get("items") or []
+    if not items:
+        return False
+    await bot.send_message(chat_id, _texto_panel_items((b or {}).get("comercio", ""), items),
+                           reply_markup=_teclado_panel_items(items))
+    return True
+
+
+async def corregir_categoria_item(buffer_id: str, idx: int, categoria: str) -> dict | None:
+    """Aplica la categoría dictada a un ítem y devuelve el ítem actualizado (o None)."""
+    b = await memory.get_buffer(buffer_id)
+    items = (b or {}).get("items") or []
+    if not (0 <= idx < len(items)):
+        return None
+    items[idx]["categoria"] = categoria.strip()
+    await memory.buffer_actualizar(buffer_id, {"items": items})
+    return items[idx]
 
 
 def teclado_pregunta_compra(buffer_id: str) -> InlineKeyboardMarkup:
@@ -214,6 +281,52 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "(«arroz 1290, leche 990»). Le pongo categoría y deseo a cada ítem.",
             reply_markup=teclado_pregunta_compra(buffer_id),
         )
+        return
+
+    if data.startswith("digest:items:"):  # revisar el detalle de un gasto ya detallado
+        buffer_id = data.split(":", 2)[2]
+        context.user_data["items_buffer"] = buffer_id
+        if not await enviar_panel_items(context.bot, q.message.chat_id, buffer_id):
+            await q.answer("Ese gasto no tiene ítems detallados.")
+        return
+
+    if data.startswith("it:"):  # editor de ítems (mini-panel v3)
+        buffer_id = context.user_data.get("items_buffer")
+        b = await memory.get_buffer(buffer_id) if buffer_id else None
+        items = (b or {}).get("items") or []
+        if not items:
+            await q.answer("Esa lista ya no está activa.")
+            return
+        partes = data.split(":")
+        accion = partes[1]
+        if accion == "ok":
+            context.user_data.pop("items_buffer", None)
+            context.user_data.pop("item_idx", None)
+            await q.edit_message_text(f"Listo, {len(items)} ítem(s) guardados. Quedan en el digest para aceptar.")
+            return
+        if accion == "back":
+            await q.edit_message_text(_texto_panel_items(b.get("comercio", ""), items),
+                                      reply_markup=_teclado_panel_items(items))
+            return
+        if accion == "p":  # elegir ítem → abre su editor
+            idx = int(partes[2])
+            context.user_data["item_idx"] = idx
+            await q.edit_message_text(_texto_item(items[idx]), reply_markup=_teclado_item_editor(items[idx]))
+            return
+        idx = context.user_data.get("item_idx")
+        if idx is None or idx >= len(items):
+            await q.answer("Elegí el ítem de nuevo.")
+            return
+        if accion == "cat":
+            context.user_data["corrigiendo_item_cat"] = True
+            await q.edit_message_text(f"¿Qué categoría para «{items[idx].get('item', '')}»? Escríbela.")
+            return
+        if accion == "d":
+            items[idx]["intencion"] = partes[2]
+        elif accion == "pr":
+            items[idx]["predecible"] = (partes[2] == "1")
+        await memory.buffer_actualizar(buffer_id, {"items": items})
+        await q.edit_message_text(_texto_item(items[idx]), reply_markup=_teclado_item_editor(items[idx]))
         return
 
     if data.startswith("compra:"):

@@ -278,6 +278,13 @@ async def buffer_agregar(tx: dict) -> bool:
     return True
 
 
+async def get_buffer(buffer_id: str) -> dict | None:
+    """Una entrada del buffer por id (para el editor de ítems del digest)."""
+    db = await _get_db()
+    r = await db.table("buffer_transacciones").select("*").eq("id", buffer_id).limit(1).execute()
+    return r.data[0] if r.data else None
+
+
 async def buffer_pendientes(fecha: str | None = None) -> list[dict]:
     """Las transacciones del día aún sin confirmar (para armar el digest)."""
     db = await _get_db()

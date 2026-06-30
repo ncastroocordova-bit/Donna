@@ -141,10 +141,23 @@ async def manejar_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await flows.enviar_digest(context.bot, update.effective_chat.id)  # re-muestra con "Aceptar todo"
         return
 
+    # ¿Está corrigiendo la categoría de un ítem en el mini-panel? (v3)
+    if context.user_data.pop("corrigiendo_item_cat", None):
+        buf = context.user_data.get("items_buffer")
+        idx = context.user_data.get("item_idx")
+        it = await flows.corregir_categoria_item(buf, idx, texto) if buf is not None and idx is not None else None
+        if it:
+            await update.message.reply_text(flows._texto_item(it), reply_markup=flows._teclado_item_editor(it))
+        else:
+            await update.message.reply_text("No pude actualizar ese ítem.")
+        return
+
     # ¿Está respondiendo "¿qué compraste?" con el desglose de un cargo? (v3)
     cargo_id = context.user_data.pop("desglosando_cargo", None)
     if cargo_id:
         await update.message.reply_text(await finanzas.desglosar_cargo(cargo_id, texto))
+        context.user_data["items_buffer"] = cargo_id
+        await flows.enviar_panel_items(context.bot, update.effective_chat.id, cargo_id)  # abre el editor por ítem
         return
 
     # ¿Está corrigiendo una inferencia? (la deducción original falló → cuenta como descarte)
