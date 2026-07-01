@@ -34,6 +34,10 @@ def teclado_cierre(estado: dict | None = None) -> InlineKeyboardMarkup:
          InlineKeyboardButton(mk("🏃 Hoy no", e.get("ejercicio") == "no"), callback_data="hab:ejercicio:no")],
         [InlineKeyboardButton(mk("🧘 Medité", e.get("meditacion") == "si"), callback_data="hab:meditacion:si"),
          InlineKeyboardButton(mk("🧘 Hoy no", e.get("meditacion") == "no"), callback_data="hab:meditacion:no")],
+        [InlineKeyboardButton(mk("💧 Tomé agua", e.get("agua") == "si"), callback_data="hab:agua:si"),
+         InlineKeyboardButton(mk("💧 Hoy no", e.get("agua") == "no"), callback_data="hab:agua:no")],
+        [InlineKeyboardButton(mk("🥩 Comí proteína", e.get("proteina") == "si"), callback_data="hab:proteina:si"),
+         InlineKeyboardButton(mk("🥩 Hoy no", e.get("proteina") == "no"), callback_data="hab:proteina:no")],
         [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[:2]],
         [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[2:]],
         [InlineKeyboardButton(mk(f"Ánimo {n}", e.get("animo") == n), callback_data=f"animo:{n}") for n in ("1", "2", "3", "4")],
@@ -174,12 +178,12 @@ def _texto_spam(correos: list[dict]) -> str:
     lineas = [f"• {spam_mod._dominio(c['remitente'])} — {c['asunto'][:50]}" for c in correos]
     return (
         f"Spam de hoy: {len(correos)} correo(s).\n\n" + "\n".join(lineas)
-        + "\n\nToca «Borrar todo» o «Conservar» el que sí quieras guardar."
+        + "\n\nToca «Archivar todo» o «Conservar» el que sí quieras guardar."
     )
 
 
 def _teclado_spam(correos: list[dict]) -> InlineKeyboardMarkup:
-    filas = [[InlineKeyboardButton("🗑️ Borrar todo", callback_data="spam:borrar")]]
+    filas = [[InlineKeyboardButton("🗄️ Archivar todo", callback_data="spam:archivar")]]
     for i, c in enumerate(correos[:10]):
         filas.append([InlineKeyboardButton(f"✋ Conservar {spam_mod._dominio(c['remitente'])[:22]}", callback_data=f"spam:keep:{i}")])
     return InlineKeyboardMarkup(filas)
@@ -342,9 +346,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await q.edit_message_text("Ok, lo dejamos para el cierre.")
         return
 
-    if data == "spam:borrar":
-        n = await spam_mod.borrar_todo()
-        await q.edit_message_text(f"Listo. Mandé {n} correo(s) a la papelera (recuperables 30 días).")
+    if data == "spam:archivar":
+        n = await spam_mod.archivar_todo()
+        await q.edit_message_text(
+            f"Listo. Archivé {n} correo(s) — quedan con la etiqueta Donna/Archivado, recuperables cuando quieras."
+        )
         return
 
     if data.startswith("spam:keep:"):

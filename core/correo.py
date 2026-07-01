@@ -48,13 +48,14 @@ async def obtener_spam(max_n: int | None = None) -> list[dict]:
     return msgs
 
 
-async def borrar(msgs: list[dict]) -> int:
-    """Borra (papelera) una lista de mensajes normalizados, agrupando por proveedor."""
+async def archivar(msgs: list[dict]) -> int:
+    """Invariante duro: JAMÁS borra. Archiva (etiqueta/carpeta según proveedor) una lista de
+    mensajes normalizados, agrupando por proveedor."""
     ids_gmail = [m["id"] for m in msgs if m.get("proveedor") == "gmail"]
     ids_outlook = [m["id"] for m in msgs if m.get("proveedor") == "outlook"]
     n = 0
     if ids_gmail:
-        n += await gmail.borrar(ids_gmail)
+        n += await gmail.archivar(ids_gmail)
     if ids_outlook:
-        n += await outlook.borrar(ids_outlook)
+        n += await outlook.archivar(ids_outlook)
     return n

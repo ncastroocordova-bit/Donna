@@ -1,11 +1,12 @@
-"""Módulo Spam. Tools `spam_*`. Digest diario de correo basura con borrado por confirmación.
+"""Módulo Spam. Tools `spam_*`. Digest diario de correo basura con archivado por confirmación.
 
-Filosofía de Donna: nunca borra sin tu visto bueno. Cada día lista el spam (Gmail + Outlook)
-y tú borras con un toque ("🗑️ Borrar todo") o rescatas líneas ("✋ Conservar"). El borrado
-manda a la papelera (recuperable), no es permanente.
+Invariante duro: JAMÁS borra. Cada día lista el spam (Gmail + Outlook) y tú lo archivas con
+un toque ("🗄️ Archivar todo") o rescatas líneas ("✋ Conservar"). Archivar etiqueta
+`Donna/Archivado` + quita `INBOX` (Gmail) o mueve a la carpeta `Donna Archivado` (Outlook) —
+recuperable de un clic, no expira como la papelera.
 
 Cache de una sola sesión (bot de un usuario): la lista mostrada se guarda en memoria para
-que los botones sepan qué borrar. Se opera por ÍNDICE (los ids de Outlook no caben en el
+que los botones sepan qué archivar. Se opera por ÍNDICE (los ids de Outlook no caben en el
 callback_data de Telegram). Si el proceso reinicia, simplemente se re-lista.
 """
 import logging
@@ -14,7 +15,7 @@ from core import correo
 
 logger = logging.getLogger(__name__)
 
-# Lista mostrada en el último digest: lo que se borrará al confirmar (orden estable).
+# Lista mostrada en el último digest: lo que se archivará al confirmar (orden estable).
 _PENDIENTE: list[dict] = []
 
 
@@ -34,18 +35,18 @@ def pendientes() -> list[dict]:
 
 
 def conservar_idx(i: int) -> str:
-    """Rescata por índice un correo del set a borrar. Devuelve su dominio (o '' si fuera de rango)."""
+    """Rescata por índice un correo del set a archivar. Devuelve su dominio (o '' si fuera de rango)."""
     if 0 <= i < len(_PENDIENTE):
         return _dominio(_PENDIENTE.pop(i)["remitente"])
     return ""
 
 
-async def borrar_todo() -> int:
-    """Manda a la papelera todo lo que quedó en el set pendiente. Devuelve cuántos borró."""
+async def archivar_todo() -> int:
+    """Archiva (JAMÁS borra) todo lo que quedó en el set pendiente. Devuelve cuántos archivó."""
     global _PENDIENTE
     if not _PENDIENTE:
         return 0
-    n = await correo.borrar(_PENDIENTE)
+    n = await correo.archivar(_PENDIENTE)
     _PENDIENTE = []
     return n
 
@@ -64,7 +65,7 @@ async def _t_resumen(inp: dict) -> str:
         return "Tu bandeja de spam está limpia. Nada que botar."
     muestra = "; ".join(f"{_dominio(c['remitente'])}: {c['asunto'][:40]}" for c in d["correos"][:5])
     cola = "" if d["n"] <= 5 else f" (y {d['n'] - 5} más)"
-    return f"Tienes {d['n']} correo(s) en spam. Por ejemplo: {muestra}{cola}. ¿Te los muestro para borrarlos?"
+    return f"Tienes {d['n']} correo(s) en spam. Por ejemplo: {muestra}{cola}. ¿Te los muestro para archivarlos?"
 
 
 TOOLS = [

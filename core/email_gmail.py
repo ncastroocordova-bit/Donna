@@ -1,7 +1,10 @@
 """Cliente de Gmail vía API oficial (OAuth2 con refresh token).
 
-Scope: gmail.modify (leer + mover a papelera + etiquetas). El refresh token se genera
-una vez con `python auth_email.py`. Degrada a vacío/seguro si no hay credenciales.
+Scope: gmail.modify (leer + etiquetar). Invariante duro: JAMÁS borra ni manda a la
+papelera — el spam se archiva con la etiqueta `Donna/Archivado` + se le quita `INBOX`,
+recuperable de un clic desde esa etiqueta en Gmail (a diferencia de la papelera, no expira).
+El refresh token se genera una vez con `python auth_email.py`. Degrada a vacío/seguro si
+no hay credenciales.
 
 Devuelve mensajes normalizados: {proveedor, id, remitente, asunto, fecha, texto}.
 """
@@ -139,20 +142,46 @@ async def obtener_spam(max_n: int | None = None) -> list[dict]:
     return await buscar("", max_n or settings.spam_max, label_ids=["SPAM"])
 
 
-async def borrar(ids: list[str]) -> int:
-    """Mueve a la papelera (recuperable 30 días). Devuelve cuántos borró."""
+LABEL_ARCHIVO = "Donna/Archivado"
+_label_archivo_id: str | None = None
+
+
+def _obtener_o_crear_label_archivo(svc) -> str:
+    """Id de la etiqueta `Donna/Archivado`, creándola si no existe. Se cachea en memoria
+    (el id de una etiqueta no cambia una vez creada)."""
+    global _label_archivo_id
+    if _label_archivo_id:
+        return _label_archivo_id
+    labels = svc.users().labels().list(userId="me").execute().get("labels", [])
+    existente = next((l for l in labels if l["name"] == LABEL_ARCHIVO), None)
+    if existente:
+        _label_archivo_id = existente["id"]
+    else:
+        creada = svc.users().labels().create(userId="me", body={
+            "name": LABEL_ARCHIVO, "labelListVisibility": "labelShow", "messageListVisibility": "show",
+        }).execute()
+        _label_archivo_id = creada["id"]
+    return _label_archivo_id
+
+
+async def archivar(ids: list[str]) -> int:
+    """Invariante duro: JAMÁS borra. Etiqueta `Donna/Archivado` + quita `INBOX` — recuperable
+    de un clic desde esa etiqueta, no expira como la papelera. Devuelve cuántos archivó."""
     if not disponible() or not ids:
         return 0
 
     def _call():
         svc = _svc()
+        label_id = _obtener_o_crear_label_archivo(svc)
         n = 0
         for mid in ids:
             try:
-                svc.users().messages().trash(userId="me", id=mid).execute()
+                svc.users().messages().modify(
+                    userId="me", id=mid, body={"removeLabelIds": ["INBOX"], "addLabelIds": [label_id]}
+                ).execute()
                 n += 1
             except Exception:
-                logger.exception("Gmail trash falló para %s", mid)
+                logger.exception("Gmail archivar falló para %s", mid)
         return n
 
     return await asyncio.to_thread(_call)

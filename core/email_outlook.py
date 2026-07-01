@@ -3,6 +3,10 @@
 OAuth2 con refresh token (cuentas personales → authority 'consumers'). Permiso delegado
 Mail.ReadWrite + offline_access. El refresh token se genera una vez con `python auth_email.py`.
 Degrada a vacío/seguro si no hay credenciales. Mensajes normalizados igual que Gmail.
+
+Invariante duro: JAMÁS borra. El equivalente de la etiqueta `Donna/Archivado` de Gmail acá
+es una carpeta propia (`FOLDER_ARCHIVO`) — el spam se MUEVE ahí, nunca se manda a Elementos
+eliminados. Outlook está OFF por canon (no se usa hoy); igual queda alineado con el invariante.
 """
 import asyncio
 import logging
@@ -103,8 +107,37 @@ async def obtener_spam(max_n: int | None = None) -> list[dict]:
     return await _mensajes_carpeta("JunkEmail", max_n or settings.spam_max)
 
 
-async def borrar(ids: list[str]) -> int:
-    """DELETE de Graph → mueve a Elementos eliminados. Devuelve cuántos borró."""
+FOLDER_ARCHIVO = "Donna Archivado"
+_folder_archivo_id: str | None = None
+
+
+def _obtener_o_crear_folder_archivo(token: str) -> str | None:
+    """Id de la carpeta `Donna Archivado`, creándola si no existe. Se cachea en memoria."""
+    import requests
+    global _folder_archivo_id
+    if _folder_archivo_id:
+        return _folder_archivo_id
+    r = requests.get(
+        f"{GRAPH}/me/mailFolders", headers=_headers(token),
+        params={"$filter": f"displayName eq '{FOLDER_ARCHIVO}'"}, timeout=30,
+    )
+    r.raise_for_status()
+    existentes = r.json().get("value", [])
+    if existentes:
+        _folder_archivo_id = existentes[0]["id"]
+        return _folder_archivo_id
+    r = requests.post(
+        f"{GRAPH}/me/mailFolders", headers=_headers(token),
+        json={"displayName": FOLDER_ARCHIVO}, timeout=30,
+    )
+    r.raise_for_status()
+    _folder_archivo_id = r.json()["id"]
+    return _folder_archivo_id
+
+
+async def archivar(ids: list[str]) -> int:
+    """Invariante duro: JAMÁS borra. Mueve a la carpeta `Donna Archivado` (nunca a Elementos
+    eliminados). Devuelve cuántos archivó."""
     if not disponible() or not ids:
         return 0
 
@@ -113,14 +146,20 @@ async def borrar(ids: list[str]) -> int:
         token = _token()
         if not token:
             return 0
+        folder_id = _obtener_o_crear_folder_archivo(token)
+        if not folder_id:
+            return 0
         n = 0
         for mid in ids:
             try:
-                r = requests.delete(f"{GRAPH}/me/messages/{mid}", headers=_headers(token), timeout=30)
-                if r.status_code in (200, 204):
+                r = requests.post(
+                    f"{GRAPH}/me/messages/{mid}/move", headers=_headers(token),
+                    json={"destinationId": folder_id}, timeout=30,
+                )
+                if r.status_code in (200, 201):
                     n += 1
             except Exception:
-                logger.exception("Outlook delete falló para %s", mid)
+                logger.exception("Outlook archivar falló para %s", mid)
         return n
 
     return await asyncio.to_thread(_call)

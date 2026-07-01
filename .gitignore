@@ -12,5 +12,4 @@ venv/
 dist/
 build/
 .claude/
-setup_sheets.py
 eval_*.txt
