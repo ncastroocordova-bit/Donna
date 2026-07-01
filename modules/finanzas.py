@@ -166,7 +166,15 @@ EXTRACTOR_ITEMS_SYSTEM = (
 
 def _parse_json(texto: str) -> dict:
     t = texto.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(t)
+    try:
+        return json.loads(t)
+    except json.JSONDecodeError:
+        # El LLM a veces agrega texto antes/después del JSON → tomo el primer objeto válido.
+        i = t.find("{")
+        if i >= 0:
+            obj, _ = json.JSONDecoder().raw_decode(t[i:])
+            return obj
+        raise
 
 
 def _aplicar_reglas_comercio(comercio: str, categoria: str, reglas: list[dict] | None) -> tuple[str, str]:
