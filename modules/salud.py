@@ -1,20 +1,29 @@
-"""Módulo Salud. Contrato de módulo. Tools `sal_` (Plan_Construccion_v7 Paso 1.4).
+"""Módulo Salud. Contrato de módulo. Tools `sal_` (Plan_Construccion_v7 Paso 1.4 + E8 v2).
 
-Sobre la hoja `Diario` de Vida_v6: una fila por día. Donna busca/crea la fila del día
-y setea la columna. Salud es el eje #1 (el sueño es salud).
+Sobre la hoja `Diario`: una fila por día. Donna busca/crea la fila del día y setea la
+columna. Salud es el eje #1 (el sueño es salud).
 
-Columnas (Guía Parte B): Fecha · Ejercicio · Meditacion · Ultima_Comida · Sueno_7h ·
-Animo · Hora_Dormi · MITs · Brief · Cierre · Excepcion · Notas.
+v2 (E8) suma nutrición (Agua/Proteína), ventanas de ayuno+sueño (Primera_Comida +
+Hora_Despertar; Última_Comida y Hora_Dormi ya existían), peso semanal, un score % de
+hábitos y eventos contextuales — sin inflar el cierre (toques + conversación, un panel).
+El score/ventanas/peso de la semana se escriben en `Semanal` (lectura; el domingo, vía
+`generar_resumen_semanal`, disparado por `core/scheduler.py`).
+
+Columnas (Donna_Canonico.xlsx, Diario fila 2): Fecha · Ejercicio · Meditación ·
+Última comida · Sueño 7h+ · Ánimo (1-4) · Hora dormí · MITs de mañana · Brief ✓ ·
+Cierre ✓ · Excepción · Notas · Primera comida · Hora desperté · Agua · Proteína · Peso (kg).
 """
 import logging
+import statistics
 from datetime import datetime, timedelta
 
 from config import settings
-from core import sheets
+from core import memory, sheets
 
 logger = logging.getLogger(__name__)
 
 HOJA = "Diario"
+HOJA_SEMANAL = "Semanal"
 
 # campo conversacional → columna real en la hoja (nombres EXACTOS del canon Donna_Canonico.xlsx).
 COLS = {
@@ -29,15 +38,40 @@ COLS = {
     "cierre": "Cierre ✓",
     "excepcion": "Excepción",
     "notas": "Notas",
+    # --- v2 (E8) ---
+    "primera_comida": "Primera comida",
+    "hora_despertar": "Hora desperté",
+    "agua": "Agua",
+    "proteina": "Proteína",
+    "peso": "Peso (kg)",
+}
+COLS_SEMANAL = {
+    "score_habitos": "Score hábitos",
+    "ventana_comida": "Ventana comida",
+    "ventana_sueno": "Ventana sueño",
+    "peso": "Peso",
 }
 # Hábitos binarios (presencia = cumplido) → admiten racha y default "Sí".
-BINARIOS = ("ejercicio", "meditacion")
-# Hábitos que el cierre pregunta por toque (Guía Parte A).
-HABITOS_TOQUE = ("ejercicio", "meditacion", "ultima_comida")
+BINARIOS = ("ejercicio", "meditacion", "agua", "proteina")
+# Hábitos que el cierre pregunta por toque (ejercicio/meditación/última comida = panel único;
+# agua/proteína también son toque, mismo patrón, ver core/flows.py teclado_cierre).
+HABITOS_TOQUE = ("ejercicio", "meditacion", "ultima_comida", "agua", "proteina")
+# Composición del score semanal de hábitos (default del canon, E8).
+HABITOS_SCORE = ("ejercicio", "meditacion", "sueno_7h", "agua", "proteina")
+# Campos de hora libres (conversacionales, sal_set_hora) — Hora_Dormi tiene su propio tool
+# (sal_registrar_sueno) porque va junto con el sueno_7h.
+CAMPOS_HORA = ("primera_comida", "ultima_comida", "hora_despertar")
 
 
 def _hoy() -> str:
     return datetime.now(settings.tz).strftime("%Y-%m-%d")
+
+
+def _lunes_de_semana(fecha=None) -> str:
+    """Fecha (YYYY-MM-DD) del lunes de la semana de `fecha` (hoy si no se pasa)."""
+    d = fecha or datetime.now(settings.tz).date()
+    lunes = d - timedelta(days=d.weekday())
+    return lunes.strftime("%Y-%m-%d")
 
 
 _AFIRMATIVO = {"sí", "si", "✓", "x", "true", "1", "hecho", "hice"}
@@ -86,6 +120,45 @@ async def registrar_mits(texto: str) -> str:
     return "MITs de mañana anotados."
 
 
+# ───────────────────────── v2 (E8): horas, peso, eventos ─────────────────────────
+
+async def registrar_hora(campo: str, hora: str) -> str:
+    """Primera_Comida / Ultima_Comida / Hora_Despertar por chat o voz (HH:MM)."""
+    campo = campo.lower()
+    if campo not in CAMPOS_HORA:
+        return f"No anoto horas para '{campo}'."
+    if not str(hora).strip():
+        return "¿A qué hora? Dime la hora y la dejo anotada."
+    await _set(campo, hora)
+    return f"{campo.replace('_', ' ').capitalize()} a las {hora}, anotado."
+
+
+_EVENTO_NULO = {"no", "nada", "no pasó nada", "no paso nada", "ninguna", "ninguno", "todo normal", "nada raro"}
+
+
+async def registrar_peso(kg) -> str:
+    """Se pide los domingos (no diario) — igual acepta el registro cualquier día si Nico lo dice."""
+    try:
+        valor = float(str(kg).replace(",", "."))
+    except (TypeError, ValueError):
+        return "¿Cuántos kilos? Pásame el número y lo anoto."
+    if valor <= 0:
+        return "Ese peso no me cuadra. Dime el número de nuevo."
+    await _set("peso", valor)
+    return f"Peso anotado: {valor} kg."
+
+
+async def evento_contextual(texto: str) -> str:
+    """Lo que Nico no controló hoy → memoria episódica, tag `evento_externo`. El correlador
+    trata ese día como CONTEXTO, no como patrón (guardia anti-patrón-falso). Si dice que no
+    pasó nada, no guarda nada — no hay evento que registrar."""
+    limpio = str(texto or "").strip().lower().rstrip(".")
+    if not limpio or limpio in _EVENTO_NULO:
+        return ""
+    await memory.guardar_memoria(texto.strip(), dominio="evento_externo", forzar=True)
+    return "Anotado como algo fuera de tu control hoy — no lo cuento como patrón, es contexto."
+
+
 async def marcar_excepcion() -> str:
     await _set("excepcion", "Sí")
     return "Día de excepción marcado. La racha no se rompe."
@@ -123,6 +196,127 @@ async def _ultimos(dias: int) -> list[dict]:
 async def diario_reciente(dias: int = 60) -> list[dict]:
     """Filas del Diario de los últimos `dias` (interfaz pública para el correlador de la espina)."""
     return await _ultimos(dias)
+
+
+# ───────────────────────── v2 (E8): ventanas de ayuno + sueño ─────────────────────────
+
+def _parse_hora(hhmm: str) -> int | None:
+    """'HH:MM' → minutos desde medianoche, o None si no se puede leer (no inventa)."""
+    s = str(hhmm or "").strip()
+    if not s or ":" not in s:
+        return None
+    try:
+        h, m = s.split(":")[:2]
+        h, m = int(h), int(m)
+        if not (0 <= h < 24 and 0 <= m < 60):
+            return None
+        return h * 60 + m
+    except ValueError:
+        return None
+
+
+def _ventana_minutos(inicio: str, fin: str) -> int | None:
+    """Minutos entre `inicio` y `fin` (HH:MM). Cruza medianoche si `fin` <= `inicio`
+    (ej. dormí 23:30 → desperté 07:00 = 7h30, no un número negativo)."""
+    i, f = _parse_hora(inicio), _parse_hora(fin)
+    if i is None or f is None:
+        return None
+    if f <= i:
+        f += 24 * 60
+    return f - i
+
+
+def _fmt_minutos(m: float | None) -> str:
+    if m is None:
+        return "—"
+    m = round(m)
+    return f"{m // 60}h{m % 60:02d}" if m % 60 else f"{m // 60}h"
+
+
+def _calcular_ventanas(filas: list[dict]) -> dict:
+    """Mediana de ventana de comida (primera→última) y de sueño (dormir→despertar),
+    semana vs fin de semana. Un día sin ambas horas de un par no entra a esa mediana
+    (no inventa). Devuelve minutos crudos (para escribir/comparar) + texto formateado."""
+    comida = {"semana": [], "finde": []}
+    sueno = {"semana": [], "finde": []}
+    for f in filas:
+        try:
+            d = datetime.strptime(str(f.get("Fecha", "")).strip(), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        grupo = "finde" if d.weekday() >= 5 else "semana"
+        vc = _ventana_minutos(f.get(COLS["primera_comida"], ""), f.get(COLS["ultima_comida"], ""))
+        if vc is not None:
+            comida[grupo].append(vc)
+        vs = _ventana_minutos(f.get(COLS["hora_dormi"], ""), f.get(COLS["hora_despertar"], ""))
+        if vs is not None:
+            sueno[grupo].append(vs)
+    out = {}
+    for nombre, datos in (("comida", comida), ("sueno", sueno)):
+        for grupo, valores in datos.items():
+            mediana = statistics.median(valores) if valores else None
+            out[f"{nombre}_{grupo}"] = mediana
+            out[f"{nombre}_{grupo}_n"] = len(valores)
+            out[f"{nombre}_{grupo}_txt"] = _fmt_minutos(mediana)
+    return out
+
+
+async def resumen_ventanas(dias: int = 7) -> dict:
+    """Interfaz pública: mediana de ventanas sobre los últimos `dias` días. Solo mide y
+    muestra — sin meta ni empuje (canon: calla hasta tener baseline)."""
+    return _calcular_ventanas(await _ultimos(dias))
+
+
+# ───────────────────────── v2 (E8): score semanal de hábitos ─────────────────────────
+
+def _calcular_score(filas: list[dict]) -> dict:
+    """% de hábitos cumplidos sobre los días con fila (sueño 7h, ejercicio, meditación,
+    agua, proteína). Cuadra 1:1 con los toques: cada 'Sí' de cada hábito, cada día, suma."""
+    total = len(filas) * len(HABITOS_SCORE)
+    if total == 0:
+        return {"score": None, "cumplidos": 0, "total": 0}
+    cumplidos = sum(
+        1 for f in filas for campo in HABITOS_SCORE if _afirmativo(f.get(COLS[campo], ""))
+    )
+    return {"score": round(100 * cumplidos / total), "cumplidos": cumplidos, "total": total}
+
+
+async def score_semana(dias: int = 7) -> dict:
+    return _calcular_score(await _ultimos(dias))
+
+
+# ───────────────────────── v2 (E8): resumen semanal → Semanal (domingo) ─────────────────────────
+
+async def _ultimo_peso(filas: list[dict]) -> str:
+    """Última lectura de peso disponible (no falla si esta semana no hubo registro)."""
+    con_peso = [(str(f.get("Fecha", "")), f.get(COLS["peso"])) for f in filas if str(f.get(COLS["peso"], "")).strip()]
+    if not con_peso:
+        return ""
+    con_peso.sort(key=lambda t: t[0])
+    return str(con_peso[-1][1])
+
+
+async def generar_resumen_semanal() -> dict:
+    """Domingo: calcula score + ventanas + último peso y los escribe en `Semanal` (lectura;
+    el modelo no vive en el Sheet). Disparado por core/scheduler.py. Idempotente (upsert)."""
+    semana_clave = _lunes_de_semana()
+    filas = await _ultimos(7)
+    score = _calcular_score(filas)
+    ventanas = _calcular_ventanas(filas)
+    peso = await _ultimo_peso(await _ultimos(90))  # el peso se pide semanal; mira más atrás si esta semana no hubo
+
+    async def _w(campo: str, valor) -> None:
+        await sheets.upsert_por_clave(HOJA_SEMANAL, "Semana (lunes)", semana_clave, COLS_SEMANAL[campo], valor)
+
+    if score["score"] is not None:
+        await _w("score_habitos", f"{score['score']}%")
+    ventana_comida = f"L-V {ventanas['comida_semana_txt']} · S-D {ventanas['comida_finde_txt']}"
+    ventana_sueno = f"L-V {ventanas['sueno_semana_txt']} · S-D {ventanas['sueno_finde_txt']}"
+    await _w("ventana_comida", ventana_comida)
+    await _w("ventana_sueno", ventana_sueno)
+    if peso:
+        await _w("peso", peso)
+    return {"semana": semana_clave, "score": score, "ventanas": ventanas, "peso": peso}
 
 
 # ───────────────────────── Handlers de tools ─────────────────────────
@@ -166,7 +360,7 @@ async def _t_resumen_semana(inp: dict) -> str:
     try:
         recientes = await _ultimos(7)
         partes = []
-        for c in ("ejercicio", "meditacion"):
+        for c in ("ejercicio", "meditacion", "agua", "proteina"):
             n = sum(1 for f in recientes if _afirmativo(f.get(COLS[c], "")))
             partes.append(f"{c}: {n}/7")
         n_sueno = sum(1 for f in recientes if str(f.get(COLS["sueno_7h"], "")).strip().lower() in ("sí", "si", "true", "x"))
@@ -178,6 +372,58 @@ async def _t_resumen_semana(inp: dict) -> str:
     except Exception:
         logger.exception("sal_resumen_semana falló")
         return "No pude armar el resumen."
+
+
+async def _t_set_hora(inp: dict) -> str:
+    try:
+        return await registrar_hora(str(inp.get("campo", "")), str(inp.get("hora", "")))
+    except Exception:
+        logger.exception("sal_set_hora falló")
+        return "No pude anotar la hora ahora."
+
+
+async def _t_peso(inp: dict) -> str:
+    try:
+        return await registrar_peso(inp.get("kg", inp.get("valor", "")))
+    except Exception:
+        logger.exception("sal_peso falló")
+        return "No pude anotar el peso ahora."
+
+
+async def _t_resumen_ventanas(inp: dict) -> str:
+    try:
+        v = await resumen_ventanas(7)
+        if not (v["comida_semana_n"] or v["comida_finde_n"] or v["sueno_semana_n"] or v["sueno_finde_n"]):
+            return "Todavía no tengo suficientes horas de comida/despertar registradas para medir ventanas."
+        return (
+            f"Ventana de comida — semana: {v['comida_semana_txt']} ({v['comida_semana_n']} día(s)), "
+            f"finde: {v['comida_finde_txt']} ({v['comida_finde_n']} día(s)). "
+            f"Ventana de sueño — semana: {v['sueno_semana_txt']} ({v['sueno_semana_n']} día(s)), "
+            f"finde: {v['sueno_finde_txt']} ({v['sueno_finde_n']} día(s)). Solo mido, sin meta todavía."
+        )
+    except Exception:
+        logger.exception("sal_resumen_ventanas falló")
+        return "No pude calcular las ventanas ahora."
+
+
+async def _t_score_semana(inp: dict) -> str:
+    try:
+        s = await score_semana(7)
+        if s["score"] is None:
+            return "Sin datos esta semana para el score."
+        return f"Score de hábitos de la semana: {s['score']}% ({s['cumplidos']}/{s['total']} toques)."
+    except Exception:
+        logger.exception("sal_score_semana falló")
+        return "No pude calcular el score ahora."
+
+
+async def _t_evento_contextual(inp: dict) -> str:
+    try:
+        r = await evento_contextual(str(inp.get("texto", "")))
+        return r or "Ok."
+    except Exception:
+        logger.exception("sal_evento_contextual falló")
+        return "No pude anotarlo ahora."
 
 
 # ───────────────────────── Señal destilada (el eje #1) ─────────────────────────
@@ -212,14 +458,15 @@ TOOLS = [
     {
         "name": "sal_marcar_habito",
         "description": (
-            "OBLIGATORIO cuando Nico dice que cumplió un hábito del día: ejercicio, meditación o a qué hora "
-            "comió por última vez (ayuno). Anota en la fila del día. Sin esta llamada NO queda registrado."
+            "OBLIGATORIO cuando Nico dice que cumplió un hábito del día: ejercicio, meditación, si tomó agua, "
+            "si comió proteína, o a qué hora comió por última vez (ayuno). Anota en la fila del día. Sin esta "
+            "llamada NO queda registrado."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "habito": {"type": "string", "enum": list(HABITOS_TOQUE)},
-                "valor": {"type": "string", "description": "Para ultima_comida: la hora (ej '21:30'). Ejercicio/meditación: omitir."},
+                "valor": {"type": "string", "description": "Para ultima_comida: la hora (ej '21:30'). El resto: 'Sí'/'No', o se omite (default Sí)."},
             },
             "required": ["habito"],
         },
@@ -259,6 +506,56 @@ TOOLS = [
         "description": "Resume cuántos días de los últimos 7 cumplió cada hábito + ánimo promedio. Para una mirada general.",
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "sal_set_hora",
+        "description": (
+            "OBLIGATORIO cuando Nico dice a qué hora comió por primera vez, comió por última vez, o a qué "
+            "hora despertó (sin mezclar con la hora en que se durmió — esa es sal_registrar_sueno)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "campo": {"type": "string", "enum": list(CAMPOS_HORA)},
+                "hora": {"type": "string", "description": "Hora HH:MM, ej '08:15'"},
+            },
+            "required": ["campo", "hora"],
+        },
+    },
+    {
+        "name": "sal_peso",
+        "description": (
+            "OBLIGATORIO cuando Nico dice cuánto pesa o pesó ('peso 78 kilos', 'esta semana 77.5'). "
+            "Se pide normalmente los domingos, pero anótalo cualquier día que lo diga."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"kg": {"type": "number", "description": "Peso en kilos"}},
+            "required": ["kg"],
+        },
+    },
+    {
+        "name": "sal_resumen_ventanas",
+        "description": "OBLIGATORIO cuando Nico pregunta por su ventana de comida (ayuno) o de sueño, o cómo le está yendo con eso. Da la mediana real semana vs fin de semana. No inventes.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "sal_score_semana",
+        "description": "OBLIGATORIO cuando Nico pregunta por su score o % de hábitos de la semana. Lo computa real. No inventes el número.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "sal_evento_contextual",
+        "description": (
+            "OBLIGATORIO cuando Nico cuenta que algo FUERA DE SU CONTROL afectó su día (le cambiaron una "
+            "reunión, se enfermó alguien, un imprevisto le arruinó el plan). NO la llames si dice que no "
+            "pasó nada o que fue un día normal — en ese caso no hay evento que registrar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"texto": {"type": "string", "description": "Lo que pasó, tal cual lo contó Nico"}},
+            "required": ["texto"],
+        },
+    },
 ]
 
 HANDLERS = {
@@ -267,4 +564,9 @@ HANDLERS = {
     "sal_registrar_sueno": _t_registrar_sueno,
     "sal_racha": _t_racha,
     "sal_resumen_semana": _t_resumen_semana,
+    "sal_set_hora": _t_set_hora,
+    "sal_peso": _t_peso,
+    "sal_resumen_ventanas": _t_resumen_ventanas,
+    "sal_score_semana": _t_score_semana,
+    "sal_evento_contextual": _t_evento_contextual,
 }

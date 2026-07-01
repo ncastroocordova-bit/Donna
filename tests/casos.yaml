@@ -95,6 +95,48 @@
   entrada: "¿Cuántos días llevo meditando seguido?"
   espera: "Consulta la racha de meditación con sal_racha; no inventa el número."
 
+# ───────── Salud: tool (v2 / E8 — nutrición, ventanas, peso, score, eventos) ─────────
+- id: tool_marcar_habito_agua
+  tipo: tool
+  tool_esperada: "sal_marcar_habito"
+  entrada: "Hoy tomé harta agua."
+  espera: "Marca el hábito de agua del día con sal_marcar_habito (habito=agua). No usa otra herramienta."
+
+- id: tool_set_hora_primera_comida
+  tipo: tool
+  tool_esperada: "sal_set_hora"
+  entrada: "Recién comí por primera vez hoy, como a las 11."
+  espera: "Anota la hora de la primera comida con sal_set_hora (campo=primera_comida). No inventa la hora si no la dijo clara."
+
+- id: tool_peso
+  tipo: tool
+  tool_esperada: "sal_peso"
+  entrada: "Me pesé, quedé en 78 kilos."
+  espera: "Anota el peso con sal_peso. No usa sal_marcar_habito para esto."
+
+- id: tool_resumen_ventanas
+  tipo: tool
+  tool_esperada: "sal_resumen_ventanas"
+  entrada: "¿Cómo he andado con mi ventana de ayuno últimamente?"
+  espera: "Consulta sal_resumen_ventanas antes de responder; no inventa las medianas ni propone una meta (canon: solo mide)."
+
+- id: tool_score_semana
+  tipo: tool
+  tool_esperada: "sal_score_semana"
+  entrada: "¿Cómo va mi score de hábitos esta semana?"
+  espera: "Consulta sal_score_semana; no inventa el porcentaje."
+
+- id: tool_evento_contextual
+  tipo: tool
+  tool_esperada: "sal_evento_contextual"
+  entrada: "Hoy tuve un día pesado, se enfermó Emilio y tuve que llevarlo a la urgencia, por eso no alcancé a hacer nada de lo planeado."
+  espera: "Guarda el evento con sal_evento_contextual — es algo fuera de su control, no un hábito que marcar."
+
+- id: deriva_evento_contextual_no_forzado
+  tipo: comportamiento
+  entrada: "No, hoy fue un día normal, nada fuera de lo común."
+  espera: "Responde con naturalidad, sin decir que anotó o guardó nada (no hay evento que registrar) y sin insistir preguntando de nuevo por lo mismo."
+
 # ───────── Recordatorios: tool (v7) ─────────
 - id: tool_recordatorio
   tipo: tool

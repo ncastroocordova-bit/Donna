@@ -129,6 +129,21 @@ async def buscar_memoria(consulta: str, k: int | None = None) -> list[dict]:
     return r.data
 
 
+async def fechas_evento_externo() -> set[str]:
+    """Fechas (YYYY-MM-DD) con un evento contextual guardado (dominio `evento_externo`, E8).
+    El correlador las usa para tratar ese día como CONTEXTO, no como patrón."""
+    db = await _get_db()
+    r = await db.table("memoria").select("created_at").eq("dominio", "evento_externo").execute()
+    fechas = set()
+    for fila in r.data:
+        try:
+            dt = datetime.fromisoformat(str(fila["created_at"]).replace("Z", "+00:00")).astimezone(settings.tz)
+            fechas.add(dt.strftime("%Y-%m-%d"))
+        except (ValueError, TypeError, KeyError):
+            continue
+    return fechas
+
+
 async def olvidar(fragmento: str) -> int:
     db = await _get_db()
     r = await db.table("memoria").select("id").ilike("texto", f"%{fragmento}%").execute()

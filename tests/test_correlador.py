@@ -63,3 +63,16 @@ def test_dias_con_dato_mapea_sueno_animo_gasto(monkeypatch):
     assert dias[0]["sueno_ok"] is False and dias[0]["animo"] == 2 and dias[0]["gasto"] == 25000
     assert dias[1]["sueno_ok"] is True and dias[1]["animo"] == 4 and dias[1]["gasto"] is None
     assert dias[2]["sueno_ok"] is None  # celda vacía → sin dato, no se cruza
+
+
+def test_dias_con_dato_evento_externo_excluye_el_animo(monkeypatch):
+    # E8: un día con evento_externo se trata como CONTEXTO, no como patrón — su ánimo no
+    # debe ensuciar el cruce sueño↔ánimo aunque haya durmido mal ese día.
+    from modules import salud
+    diario = [
+        {"Fecha": "2026-06-01", salud.COLS["sueno_7h"]: "No", salud.COLS["animo"]: "1"},
+        {"Fecha": "2026-06-02", salud.COLS["sueno_7h"]: "No", salud.COLS["animo"]: "2"},
+    ]
+    dias = c._dias_con_dato(diario, {}, dias_contexto={"2026-06-01"})
+    assert dias[0]["sueno_ok"] is False and dias[0]["animo"] is None  # contexto: se excluye
+    assert dias[1]["sueno_ok"] is False and dias[1]["animo"] == 2     # día normal: se conserva

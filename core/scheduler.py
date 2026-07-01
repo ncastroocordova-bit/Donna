@@ -80,6 +80,14 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
     # 2) MITs de mañana por voz (la próxima nota de voz se interpreta como MITs).
     context.bot_data["esperando_mits"] = datetime.now(settings.tz).strftime("%Y-%m-%d")
     await context.bot.send_message(chat, "Y por voz: dime tus 1 a 3 prioridades de mañana. 🎙️")
+    # 2.5) Evento contextual (E8): lo que Nico no controló hoy, para que el correlador no lo
+    # confunda con un patrón. Conversacional — no bloquea el panel ni cuenta contra Proactividad.
+    await context.bot.send_message(
+        chat, "¿Hubo algo hoy fuera de tu control que te bajó el ánimo o no te dejó hacer lo planeado?"
+    )
+    # 2.6) Peso (E8): se pide solo los domingos, no diario.
+    if datetime.now(settings.tz).weekday() == 6:
+        await context.bot.send_message(chat, "Y como es domingo: ¿cuánto pesaste esta semana?")
     # 3) Digest financiero del día.
     await flows.enviar_digest(context.bot, chat)
     # 3.5) La espina aprende de la plata (perfil + inferencia de deuda con su dato).
@@ -100,6 +108,18 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("No pude marcar Cierre ✓ en Diario")
     await memory.marcar_job("cierre")
     logger.info("Cierre enviado.")
+
+
+# ───────────────────────── Resumen semanal (domingo, E8) ─────────────────────────
+
+async def job_resumen_semanal(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Domingo: Salud calcula score de hábitos + ventanas de ayuno/sueño + último peso y los
+    deja en `Semanal` (lectura). No manda mensaje aparte — se lee bajo demanda o el domingo."""
+    try:
+        r = await salud.generar_resumen_semanal()
+        logger.info("Resumen semanal escrito (%s): score=%s", r["semana"], r["score"].get("score"))
+    except Exception:
+        logger.exception("No pude generar el resumen semanal de Salud")
 
 
 # ───────────────────────── Proactividad 12:00 ─────────────────────────
@@ -210,6 +230,7 @@ def setup_scheduler(app: Application) -> None:
     jq.run_daily(job_brief, time=time(8, 0, tzinfo=tz))
     jq.run_daily(job_proactividad, time=time(12, 0, tzinfo=tz))
     jq.run_daily(job_cierre, time=time(22, 0, tzinfo=tz))
+    jq.run_daily(job_resumen_semanal, time=time(22, 30, tzinfo=tz), days=(0,))  # domingo (PTB: 0=domingo)
     jq.run_repeating(job_decay, interval=timedelta(days=7), first=timedelta(hours=1))
     if correo.disponible():
         jq.run_repeating(job_sync_correos, interval=timedelta(hours=3), first=timedelta(minutes=2))
@@ -219,6 +240,7 @@ def setup_scheduler(app: Application) -> None:
                     ", ".join(correo.proveedores_activos()), settings.spam_hora)
     jq.run_once(check_pendientes, when=10)  # recupera el toque perdido tras un reinicio
     logger.info(
-        "Scheduler listo (%s): brief 8:00, proactividad 12:00, cierre 22:00 (+digest), decay semanal, + resiliencia.",
+        "Scheduler listo (%s): brief 8:00, proactividad 12:00, cierre 22:00 (+digest), "
+        "resumen semanal domingo 22:30, decay semanal, + resiliencia.",
         settings.timezone,
     )

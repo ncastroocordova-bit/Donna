@@ -34,8 +34,12 @@ def _num_o_none(v):
         return None
 
 
-def _dias_con_dato(diario: list[dict], gasto_por_dia: dict) -> list[dict]:
-    """Normaliza el Diario + gasto a [{sueno_ok: bool|None, animo: float|None, gasto: float|None}]."""
+def _dias_con_dato(diario: list[dict], gasto_por_dia: dict, dias_contexto: set[str] | None = None) -> list[dict]:
+    """Normaliza el Diario + gasto a [{sueno_ok: bool|None, animo: float|None, gasto: float|None}].
+    `dias_contexto` (E8, evento_externo): esos días quedan con animo=None — el ánimo bajo tiene
+    una explicación conocida ese día, así que no debe ensuciar el cruce sueño↔ánimo (guardia
+    anti-patrón-falso: contexto, no patrón)."""
+    dias_contexto = dias_contexto or set()
     dias = []
     for f in diario:
         fecha = str(f.get("Fecha", "")).strip()
@@ -43,7 +47,7 @@ def _dias_con_dato(diario: list[dict], gasto_por_dia: dict) -> list[dict]:
         dias.append({
             "fecha": fecha,
             "sueno_ok": salud._afirmativo(sueno_raw) if sueno_raw else None,
-            "animo": _num_o_none(f.get(salud.COLS["animo"])),
+            "animo": _num_o_none(f.get(salud.COLS["animo"])) if fecha not in dias_contexto else None,
             "gasto": gasto_por_dia.get(fecha),
         })
     return dias
@@ -88,8 +92,13 @@ async def correr() -> dict:
     except Exception:
         logger.exception("correlador: no pude leer los datos")
         return {"creadas": 0, "dias": 0}
+    try:
+        dias_contexto = await memory.fechas_evento_externo()
+    except Exception:
+        logger.exception("correlador: no pude leer los eventos contextuales")
+        dias_contexto = set()
 
-    dias = _dias_con_dato(diario, gpd)
+    dias = _dias_con_dato(diario, gpd, dias_contexto)
     con_sueno = [d for d in dias if d["sueno_ok"] is not None]
     if len(con_sueno) < MIN_DIAS:  # guardia: aún no hay historial para cruzar
         logger.info("Correlador: %d/%d días con sueño — junto datos, no infiero aún.", len(con_sueno), MIN_DIAS)

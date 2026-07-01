@@ -113,17 +113,87 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 ---
 
 ## Tablero (una línea por módulo)
-Estados: ⬜ pendiente · 🔨 construyendo · 🧪 prueba sem X/7 · ✅ promovido
+**Actualizado 2026-06-30 por auditoría de código** (qué existe y está enganchado en `brain`/`scheduler`/`flows`,
+no telemetría de producción — el repo no dice si algo lleva sus 7 días estables en Railway).
 
-1. Finanzas — ⬜
-2. Salud — ⬜
-3. Compras — ⬜  *(nuevo)*
-4. Recordatorios/Calendario — ⬜
-5. Correo — ⬜
-6. Productividad — ⬜
-7. Proactividad — ⬜
-8. Familia — ⬜  *(nuevo)*
+Estados: ⬜ pendiente · 🔨 construido (scope de la ficha completo) · 🔶 parcial (falta scope de la ficha) ·
+🧪 prueba sem X/7 · ✅ promovido · ⚠️ riesgo (viola un invariante duro de `CLAUDE.md`)
+
+**Nota importante:** la regla madre de este documento ("un módulo a la vez, 7 días estable antes del
+siguiente") ya no se está siguiendo — el código de casi todos los módulos existe en paralelo. Este tablero
+registra ese hecho en vez de fingir que la secuencia se respetó.
+
+1. **Finanzas** `fin_` — 🔨 completo (v1 + v2 intención/metas + v3 detalle ítem-a-ítem/correlación). 39/39
+   evals unitarios verdes (`tests/test_finanzas.py`). Semana de 7 días estable: **sin confirmar** (no es
+   verificable desde el repo).
+2. **Salud** `sal_` — 🔨 completo (base + v2/E8: nutrición, ventanas, peso, score, eventos). El correlador
+   ya está **encendido** (`core/correlador.py`, cruza sueño↔ánimo↔gasto en el cierre) y ahora respeta la
+   guardia de eventos contextuales (un día con evento_externo no ensucia el patrón). 20 evals unitarios
+   verdes (`tests/test_salud.py`) + `Semanal` se genera por primera vez (job domingo 22:30). Semana de 7
+   días estable: **sin confirmar**. Bug de paso encontrado y corregido de camino: `setup_sheets.py` leía
+   la fila 1 (el banner) en vez de la fila 2 (headers reales) de cada tab — se habría corrompido la
+   planilla real en la primera corrida; ver commit correspondiente.
+3. **Compras** `cmp_` — ⬜ pendiente. Sin `modules/compras.py`; ni Fase 1 (lista manual) tiene código.
+4. **Recordatorios/Calendario** `rec_` — 🔶 parcial. `modules/recordatorios.py` construido y enganchado
+   (avisa próximos a 3 días, tool de agregar), pero no encontré la escalera completa que pide la ficha
+   (domingo + T-2 + T-0 con ✅Hecho), el posponer-exige-fecha, ni el "nombra el patrón" tras 3 posposiciones.
+5. **Correo** `cor_` — 🔶 parcial. `modules/spam.py` + `core/correo.py` construidos y enganchados
+   (digest de spam, archivar/conservar por toque — Gmail etiqueta `Donna/Archivado` + quita `INBOX`,
+   Outlook mueve a la carpeta `Donna Archivado`; ninguno de los dos borra). El bucket "importante→resumen
+   brief" todavía no es visible en el código; el bucket financiero ya lo cubre Finanzas
+   (`ingerir_gastos_email`, Gmail-only, Outlook OFF por canon).
+6. **Productividad** `prod_`/`apr_` — 🔶 parcial. Tareas + Proyectos simple (`modules/proyectos.py`)
+   construido y enganchado. La reconciliación nocturna, el tiempo-por-frente en `Semanal` y el factor de
+   optimismo (pieza central del canon) **no están construidos**; `modules/tiempo.py` sigue dormido como
+   manda el canon, pero eso implica que la reconciliación tampoco existe todavía.
+7. **Proactividad** `pro_` — 🔨 completo el scope base. `modules/proactividad.py` prioriza compromiso
+   vencido > proyecto en riesgo > meta atrasada; el tope de 1/día está enforced en `core/scheduler.py`
+   (`job_ya_corrio("proactividad")`). El scope ampliado (alerta de presupuesto al 90%, nudge de familia,
+   alertas de Compras Fase 2) depende de módulos que aún no existen (Familia, Compras Fase 2), así que
+   sigue pendiente.
+8. **Familia** `fam_` — ⬜ pendiente. Sin `modules/familia.py`.
+
+**Transversal (la espina):** `modules/aprendizaje.py` construido (calibración por dominio, patrones con
+decay, guardia anti-patrones-falsos) y el correlador ya corre con 2 dominios vivos (Finanzas + Salud), antes
+de lo que sugiere la secuencia del roadmap.
+
+## Auditoría contra la planilla real (2026-07-01)
+
+Se descargó y comparó el workbook "Donna" real de Google Drive (no la plantilla `Donna_Canonico.xlsx`)
+contra el código. Lo que calza y lo que no:
+
+**Calza (verificado con datos reales, no solo la plantilla):**
+- El faro de deuda da exacto lo que dice el canon en la planilla real: $2.028.091 / $48.236 (celdas ya
+  calculadas, no solo la fórmula).
+- Las fechas de `Diario`/`Transacciones` están formateadas `yyyy-mm-dd` — calzan con lo que el código
+  construye y busca (descarté un riesgo real de duplicados por formato de fecha regional).
+- La Intención del gasto (Finanzas v2) sí se está escribiendo en las transacciones recientes.
+
+**No calza — brechas reales, no solo documentales:**
+- **No existe el tab `Metas`** en la planilla real (sí está en la plantilla/canon). `fin_metas`/
+  `fin_aportar_meta` degradan bien (no truenan) pero hoy SIEMPRE van a decir "no tienes metas cargadas" —
+  la función está muerta en producción hasta correr `setup_sheets.py`.
+- **`⚙️ Config` existe y tiene más filas que el `CONFIG_SEED` del código** (incluye hasta una fila que
+  describe el triage de correo de 3 buckets y "jamás borra — solo etiqueta"), pero **ningún módulo lee
+  ese tab** — es 100% decorativo. Y `setup_sheets.py` sigue referenciando `"Config"` sin el emoji: si
+  corriera tal cual, crearía una pestaña `Config` duplicada y vacía en vez de reconocer la real.
+- **Colisión de nombres:** `modules/metas.py` (legacy, "MetasSemanales", semana `Sem 03`) sigue con sus
+  tools (`metas_get_semana`, `metas_actualizar`) registradas en `core/brain.py` junto a las nuevas
+  `fin_metas`/`fin_aportar_meta` de Finanzas v2 — descripciones casi idénticas ("cómo van mis metas"),
+  mismo riesgo de que el LLM llame la equivocada. Y el tab `MetasSemanales` que usa el legacy tampoco
+  existe en la planilla real. Viola la regla del contrato "sin solapamiento de tools".
+- **`Categorias` real tiene 14 categorías** (incluye GGCC, Hijo, Tecnología, Ropa, Educación, Entretenimiento,
+  Tarjeta Crédito) pero el mapeador de categorías por palabra clave del código (`_CATEGORIAS_KW` en
+  `finanzas.py`) solo cubre 6 y cae a `"Otros"` — categoría que ni siquiera existe como fila en la
+  `Categorias` real (ahí el cajón default se llama `"Otro Gasto"`). La mayoría de tus categorías reales
+  nunca se auto-asignan; todo lo demás depende de que corrijas a mano en el digest.
+- `Recordatorios` real todavía tiene la fila placeholder `"(verifica tu 9° recordatorio de Vida_v6)"` sin
+  limpiar, y `⚙️ Config` tiene `Telegram Chat ID = "(llenar)"` sin llenar (inofensivo, el código no lo lee).
+- La hoja `Ideas` que define `setup_sheets.py` no existe ni en la planilla real ni en la plantilla canon —
+  definición huérfana, nada la usa.
 
 ---
 
-*El próximo artefacto no es un documento. Es Finanzas en 🧪 prueba sem 1/7.*
+*Antes de seguir construyendo, dos cosas para decidir con Nico: (1) si el gate "un módulo a la vez" se
+abandona formalmente o se retoma, y (2) qué hacer con el uso de `trash` en Correo, que hoy no cumple el
+invariante "jamás borra".*

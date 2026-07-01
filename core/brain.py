@@ -166,6 +166,7 @@ WRITE_TOOLS = {
     "guardar_memoria", "actualizar_perfil", "abrir_inferencia", "registrar_compromiso",
     "fin_registrar_gasto", "fin_aportar_meta", "fin_compra_detallada",
     "sal_marcar_habito", "sal_registrar_animo", "sal_registrar_sueno",
+    "sal_set_hora", "sal_peso", "sal_evento_contextual",
     "rec_agregar",
     "proy_crear", "proy_actualizar", "proy_cerrar", "tarea_crear", "tarea_completar",
     "tiempo_registrar", "metas_actualizar",
