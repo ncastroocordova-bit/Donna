@@ -113,11 +113,12 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 ---
 
 ## Tablero (una línea por módulo)
-**Actualizado 2026-06-30 por auditoría de código** (qué existe y está enganchado en `brain`/`scheduler`/`flows`,
+**Actualizado 2026-07-02 por auditoría de código** (qué existe y está enganchado en `brain`/`scheduler`/`flows`,
 no telemetría de producción — el repo no dice si algo lleva sus 7 días estables en Railway).
 
 Estados: ⬜ pendiente · 🔨 construido (scope de la ficha completo) · 🔶 parcial (falta scope de la ficha) ·
-🧪 prueba sem X/7 · ✅ promovido · ⚠️ riesgo (viola un invariante duro de `CLAUDE.md`)
+🧪 prueba sem X/7 · ✅ promovido · ⚠️ riesgo (viola un invariante duro de `CLAUDE.md`, o el código
+escribe/lee mal contra el schema real de la planilla — más grave que "falta scope")
 
 **Nota importante:** la regla madre de este documento ("un módulo a la vez, 7 días estable antes del
 siguiente") ya no se está siguiendo — el código de casi todos los módulos existe en paralelo. Este tablero
@@ -128,24 +129,44 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    verificable desde el repo).
 2. **Salud** `sal_` — 🔨 completo (base + v2/E8: nutrición, ventanas, peso, score, eventos). El correlador
    ya está **encendido** (`core/correlador.py`, cruza sueño↔ánimo↔gasto en el cierre) y ahora respeta la
-   guardia de eventos contextuales (un día con evento_externo no ensucia el patrón). 20 evals unitarios
-   verdes (`tests/test_salud.py`) + `Semanal` se genera por primera vez (job domingo 22:30). Semana de 7
-   días estable: **sin confirmar**. Bug de paso encontrado y corregido de camino: `setup_sheets.py` leía
-   la fila 1 (el banner) en vez de la fila 2 (headers reales) de cada tab — se habría corrompido la
-   planilla real en la primera corrida; ver commit correspondiente.
+   guardia de eventos contextuales (un día con evento_externo no ensucia el patrón). MITs rediseñados:
+   ya no son texto libre en `Diario` — un MIT no resuelto se crea como fila en `Tareas` (`Tipo=MIT`) y
+   queda pendiente sin límite hasta marcarlo hecho; el cierre los muestra todos (hoy + acumulados) y el
+   brief de las 8:00 los separa en "de hoy" vs "acumulados" (solo lectura). **Riesgo cruzado con
+   Productividad:** esos MITs viven en la misma hoja `Tareas` que usa `modules/proyectos.py` — si Nico
+   interactúa con un MIT a través de `tarea_listar`/`tarea_completar` (no del panel del cierre), pisa el
+   bug de columnas de Productividad (ver ítem 6 abajo) y puede no encontrarlo o mostrarlo mal. 35 evals
+   unitarios verdes (`tests/test_salud.py`) + `Semanal` se genera por primera vez (job domingo 22:30).
+   Semana de 7 días estable: **sin confirmar**.
 3. **Compras** `cmp_` — ⬜ pendiente. Sin `modules/compras.py`; ni Fase 1 (lista manual) tiene código.
-4. **Recordatorios/Calendario** `rec_` — 🔶 parcial. `modules/recordatorios.py` construido y enganchado
-   (avisa próximos a 3 días, tool de agregar), pero no encontré la escalera completa que pide la ficha
-   (domingo + T-2 + T-0 con ✅Hecho), el posponer-exige-fecha, ni el "nombra el patrón" tras 3 posposiciones.
+4. **Recordatorios/Calendario** `rec_` — ⚠️ **riesgo, más que parcial**. `modules/recordatorios.py` lee
+   `Dia_Fecha`/`Monto_Aprox`/`Ultimo_Aviso` — ninguna existe en la planilla real (`Día / Fecha`, `Monto
+   aprox`, `Última acción`). Efecto real: **`rec_proximos` siempre devuelve "no hay recordatorios"**, sin
+   importar lo que tengas cargado — el brief nunca te avisa un pago. Y `rec_agregar` escribe **7 valores
+   en una hoja de 8 columnas con nombres distintos**: `aviso_dias` termina en la columna `Estado` y `"Sí"`
+   en `Posposiciones` — cada recordatorio nuevo que crees por chat queda con esas dos columnas corrompidas.
+   **No uses `rec_agregar` hasta que esto se arregle.** Tampoco está la escalera (domingo + T-2 + T-0 con
+   ✅Hecho), el posponer-exige-fecha, ni el "nombra el patrón" tras 3 posposiciones — pero el bug de
+   columnas es más urgente que el scope faltante: hoy el módulo no hace lo que ya dice que hace.
 5. **Correo** `cor_` — 🔶 parcial. `modules/spam.py` + `core/correo.py` construidos y enganchados
    (digest de spam, archivar/conservar por toque — Gmail etiqueta `Donna/Archivado` + quita `INBOX`,
    Outlook mueve a la carpeta `Donna Archivado`; ninguno de los dos borra). El bucket "importante→resumen
    brief" todavía no es visible en el código; el bucket financiero ya lo cubre Finanzas
    (`ingerir_gastos_email`, Gmail-only, Outlook OFF por canon).
-6. **Productividad** `prod_`/`apr_` — 🔶 parcial. Tareas + Proyectos simple (`modules/proyectos.py`)
-   construido y enganchado. La reconciliación nocturna, el tiempo-por-frente en `Semanal` y el factor de
-   optimismo (pieza central del canon) **no están construidos**; `modules/tiempo.py` sigue dormido como
-   manda el canon, pero eso implica que la reconciliación tampoco existe todavía.
+6. **Productividad** `prod_`/`apr_` — ⚠️ **riesgo, más que parcial**. `modules/proyectos.py` tiene el mismo
+   patrón de bug que Recordatorios: `Proyectos` real no tiene columna `ID` (`_buscar_proyecto`/`_avance`
+   quedan comparando contra `""` siempre → **todos los proyectos activos muestran el mismo avance,
+   contando TODAS las tareas de la hoja**, no las suyas — el número que ves está mal, no solo incompleto).
+   `tarea_listar` lee `Descripcion`/`Prioridad` (sin tilde / columna que no existe) → **muestra "None" en
+   vez de la descripción real de la tarea**. `tarea_crear` escribe **11 valores en una hoja de 8
+   columnas** → cada tarea nueva por chat queda con las columnas corridas (mezcla ID/prioridad en celdas
+   equivocadas). `tarea_completar` busca la columna `Descripcion` (sin tilde) con `headers.index(...)` →
+   no la encuentra, tira excepción, siempre falla con "no pude completar la tarea". **No uses
+   `tarea_crear`/`tarea_completar`/`proy_listar` hasta que esto se arregle** — y ojo: los MITs de Salud
+   (`Tipo=MIT`) viven en esta misma hoja `Tareas`; si los tocas con estas tools rotas en vez del panel del
+   cierre, te vas a topar con el mismo problema. La reconciliación nocturna, el tiempo-por-frente en
+   `Semanal` y el factor de optimismo **tampoco están construidos**; `modules/tiempo.py` sigue dormido
+   como manda el canon.
 7. **Proactividad** `pro_` — 🔨 completo el scope base. `modules/proactividad.py` prioriza compromiso
    vencido > proyecto en riesgo > meta atrasada; el tope de 1/día está enforced en `core/scheduler.py`
    (`job_ya_corrio("proactividad")`). El scope ampliado (alerta de presupuesto al 90%, nudge de familia,
@@ -157,43 +178,55 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
 decay, guardia anti-patrones-falsos) y el correlador ya corre con 2 dominios vivos (Finanzas + Salud), antes
 de lo que sugiere la secuencia del roadmap.
 
-## Auditoría contra la planilla real (2026-07-01)
+## Auditoría contra la planilla real (2026-07-01, actualizada 2026-07-02)
 
-Se descargó y comparó el workbook "Donna" real de Google Drive (no la plantilla `Donna_Canonico.xlsx`)
-contra el código. Lo que calza y lo que no:
+Se descargó y comparó el workbook "Donna" real de Google Drive contra el código. Estado actual:
 
-**Calza (verificado con datos reales, no solo la plantilla):**
-- El faro de deuda da exacto lo que dice el canon en la planilla real: $2.028.091 / $48.236 (celdas ya
-  calculadas, no solo la fórmula).
-- Las fechas de `Diario`/`Transacciones` están formateadas `yyyy-mm-dd` — calzan con lo que el código
-  construye y busca (descarté un riesgo real de duplicados por formato de fecha regional).
-- La Intención del gasto (Finanzas v2) sí se está escribiendo en las transacciones recientes.
+**Ya resuelto desde la primera auditoría** (no repetir el trabajo):
+- Tab `Metas` — creado (`setup_sheets.py` corrido contra la planilla real).
+- Tab `Ideas` — creado (idem).
+- `⚙️ Config` — `setup_sheets.py` ya referencia el nombre real (con el emoji); no hay riesgo de tab
+  duplicado. Sigue siendo decorativo (ningún módulo lo lee), pero eso es una decisión de diseño, no un bug.
+- Correo — `trash`/`delete` reemplazados por etiquetar/mover (ver ficha de Correo). Invariante cumplido.
 
-**No calza — brechas reales, no solo documentales:**
-- **No existe el tab `Metas`** en la planilla real (sí está en la plantilla/canon). `fin_metas`/
-  `fin_aportar_meta` degradan bien (no truenan) pero hoy SIEMPRE van a decir "no tienes metas cargadas" —
-  la función está muerta en producción hasta correr `setup_sheets.py`.
-- **`⚙️ Config` existe y tiene más filas que el `CONFIG_SEED` del código** (incluye hasta una fila que
-  describe el triage de correo de 3 buckets y "jamás borra — solo etiqueta"), pero **ningún módulo lee
-  ese tab** — es 100% decorativo. Y `setup_sheets.py` sigue referenciando `"Config"` sin el emoji: si
-  corriera tal cual, crearía una pestaña `Config` duplicada y vacía en vez de reconocer la real.
-- **Colisión de nombres:** `modules/metas.py` (legacy, "MetasSemanales", semana `Sem 03`) sigue con sus
-  tools (`metas_get_semana`, `metas_actualizar`) registradas en `core/brain.py` junto a las nuevas
-  `fin_metas`/`fin_aportar_meta` de Finanzas v2 — descripciones casi idénticas ("cómo van mis metas"),
-  mismo riesgo de que el LLM llame la equivocada. Y el tab `MetasSemanales` que usa el legacy tampoco
-  existe en la planilla real. Viola la regla del contrato "sin solapamiento de tools".
-- **`Categorias` real tiene 14 categorías** (incluye GGCC, Hijo, Tecnología, Ropa, Educación, Entretenimiento,
-  Tarjeta Crédito) pero el mapeador de categorías por palabra clave del código (`_CATEGORIAS_KW` en
-  `finanzas.py`) solo cubre 6 y cae a `"Otros"` — categoría que ni siquiera existe como fila en la
-  `Categorias` real (ahí el cajón default se llama `"Otro Gasto"`). La mayoría de tus categorías reales
-  nunca se auto-asignan; todo lo demás depende de que corrijas a mano en el digest.
+**Calza (verificado con datos reales):**
+- El faro de deuda da exacto $2.028.091 / $48.236 en las celdas ya calculadas.
+- Las fechas de `Diario`/`Transacciones` están en `yyyy-mm-dd` — calzan con lo que el código busca.
+- La Intención del gasto (Finanzas v2) se está escribiendo en las transacciones recientes.
+
+**⚠️ Nuevo, el más grave de todos — Recordatorios y Productividad escriben sobre el schema real
+equivocado, y no es "falta scope", es corrupción de datos activa:**
+- `modules/recordatorios.py` lee `Dia_Fecha`/`Monto_Aprox`/`Ultimo_Aviso`; la planilla real tiene
+  `Día / Fecha`/`Monto aprox`/`Última acción`. Resultado: **`rec_proximos` siempre da "no hay
+  recordatorios"** — el aviso de un pago nunca sale, aunque esté cargado. Y `rec_agregar` escribe 7
+  valores en una hoja de 8 columnas reales → **cada recordatorio nuevo por chat corrompe `Estado` y
+  `Posposiciones`** (les mete `aviso_dias` y `"Sí"` en vez de lo que corresponde).
+- `modules/proyectos.py` (Proyectos + Tareas): `Proyectos` real no tiene columna `ID` → `_avance()`
+  siempre compara contra `""`, así que **todos los proyectos activos muestran el mismo conteo, sumando
+  TODAS las tareas de la hoja** (no las suyas — el número está mal, no solo ausente). `tarea_listar` lee
+  `Descripcion`/`Prioridad` (sin tilde / no existen) → **muestra "None" en vez del texto real de la
+  tarea**. `tarea_crear` escribe 11 valores en una hoja de 8 columnas → **cada tarea nueva por chat
+  corrompe las columnas** (ID y prioridad terminan en celdas equivocadas). `tarea_completar` busca
+  `headers.index("Descripcion")` (sin tilde) → no la encuentra, tira excepción, siempre falla.
+- **Consecuencia directa para Salud:** los MITs (`Tipo=MIT`) ahora viven en esta misma hoja `Tareas`. Los
+  que crea/marca el panel del cierre usan las columnas correctas (por eso funcionan), pero si tocas un
+  MIT vía `tarea_listar`/`tarea_completar` en vez del panel, te vas a topar con este mismo bug.
+- **Mientras no se arregle:** evita `rec_agregar`, `tarea_crear`, `tarea_completar` y no confíes en el
+  avance que muestra `proy_listar` — todo lo demás de esos dos módulos (lectura de `Estado`/`Completada`
+  para filtrar pendientes, por ejemplo) sí usa columnas reales y funciona bien.
+
+**Gaps más chicos, siguen abiertos:**
+- **Colisión de nombres:** `modules/metas.py` (legacy, tab `MetasSemanales` que tampoco existe en la
+  planilla real) sigue con `metas_get_semana`/`metas_actualizar` registradas junto a `fin_metas`/
+  `fin_aportar_meta` — descripciones casi idénticas, riesgo de que el LLM llame la equivocada.
+- **`Categorias` real tiene 14 categorías** (incluye GGCC, Hijo, Tecnología, Ropa, Educación,
+  Entretenimiento, Tarjeta Crédito) pero el mapeador por palabra clave de `finanzas.py` solo cubre 6 y
+  cae a `"Otros"` — categoría que ni existe como fila real (ahí el cajón default es `"Otro Gasto"`).
 - `Recordatorios` real todavía tiene la fila placeholder `"(verifica tu 9° recordatorio de Vida_v6)"` sin
-  limpiar, y `⚙️ Config` tiene `Telegram Chat ID = "(llenar)"` sin llenar (inofensivo, el código no lo lee).
-- La hoja `Ideas` que define `setup_sheets.py` no existe ni en la planilla real ni en la plantilla canon —
-  definición huérfana, nada la usa.
+  limpiar, y `⚙️ Config` tiene `Telegram Chat ID = "(llenar)"` sin llenar (inofensivo, nada lo lee).
 
 ---
 
-*Antes de seguir construyendo, dos cosas para decidir con Nico: (1) si el gate "un módulo a la vez" se
-abandona formalmente o se retoma, y (2) qué hacer con el uso de `trash` en Correo, que hoy no cumple el
-invariante "jamás borra".*
+*El gate "un módulo a la vez" ya lo decidiste (lo llevas junto con arreglos puntuales a lo construido,
+no en secuencia estricta). Lo único pendiente de decidir: cuándo entra Productividad/Recordatorios a
+arreglarse — hoy tienen bugs de escritura activos, no solo scope incompleto.*
