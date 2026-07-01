@@ -21,15 +21,17 @@ CHIPS_COMIDA = ["19:00", "20:00", "21:00", "22:00"]
 
 # ───────────────────────── Panel del cierre ─────────────────────────
 
-def teclado_cierre(estado: dict | None = None) -> InlineKeyboardMarkup:
+def teclado_cierre(estado: dict | None = None, mits: list[str] | None = None) -> InlineKeyboardMarkup:
     """Panel del cierre. `estado` marca con ✅ lo ya elegido (se reconstruye en cada toque,
-    sin cerrar el panel) — así Nico puede anotar varios hábitos, no solo uno."""
+    sin cerrar el panel) — así Nico puede anotar varios hábitos, no solo uno. `mits` son TODOS
+    los MITs pendientes (de hoy + acumulados de antes, sin tope) — cada uno es su propio toque
+    marcable. Lo que no se marca hoy sigue apareciendo mañana (no desaparece solo)."""
     e = estado or {}
 
     def mk(label: str, on: bool) -> str:
         return ("✅ " + label) if on else label
 
-    return InlineKeyboardMarkup([
+    filas = [
         [InlineKeyboardButton(mk("🏃 Hice ejercicio", e.get("ejercicio") == "si"), callback_data="hab:ejercicio:si"),
          InlineKeyboardButton(mk("🏃 Hoy no", e.get("ejercicio") == "no"), callback_data="hab:ejercicio:no")],
         [InlineKeyboardButton(mk("🧘 Medité", e.get("meditacion") == "si"), callback_data="hab:meditacion:si"),
@@ -41,9 +43,12 @@ def teclado_cierre(estado: dict | None = None) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[:2]],
         [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[2:]],
         [InlineKeyboardButton(mk(f"Ánimo {n}", e.get("animo") == n), callback_data=f"animo:{n}") for n in ("1", "2", "3", "4")],
-        [InlineKeyboardButton(mk("Avancé un MIT", e.get("mit") == "si"), callback_data="mit:si"),
-         InlineKeyboardButton(mk("Hoy no", e.get("mit") == "no"), callback_data="mit:no")],
-    ])
+    ]
+    for i, texto in enumerate(mits or []):
+        etiqueta = (texto[:32] + "…") if len(texto) > 32 else texto
+        marca = "✅ " if e.get(f"mit_{i}") == "si" else "☐ "
+        filas.append([InlineKeyboardButton(marca + etiqueta, callback_data=f"mit:{i}")])
+    return InlineKeyboardMarkup(filas)
 
 
 def teclado_brief_sueno() -> InlineKeyboardMarkup:
@@ -54,7 +59,11 @@ def teclado_brief_sueno() -> InlineKeyboardMarkup:
 
 
 async def enviar_panel_cierre(bot, chat_id: int, intro: str) -> None:
-    await bot.send_message(chat_id, intro, reply_markup=teclado_cierre())
+    # Fetch directo (sin user_data): este envío puede venir de un job del scheduler, que no
+    # tiene un user_id asociado y por lo tanto no tiene context.user_data (ver on_callback,
+    # que sí puede cachear ahí porque corre siempre en respuesta a un toque real de Nico).
+    mits = await salud.mits_pendientes()
+    await bot.send_message(chat_id, intro, reply_markup=teclado_cierre(mits=mits))
 
 
 # ───────────────────────── Digest financiero ─────────────────────────
@@ -245,12 +254,27 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             elif tipo == "animo":
                 estado["animo"] = partes[1]
                 await salud.registrar_animo(partes[1])
-            elif tipo == "mit":
-                estado["mit"] = partes[1]
+            # Los MITs se cachean por message_id (igual que cierre_estados) la primera vez que
+            # se necesitan: on_callback siempre corre en respuesta a un toque real de Nico, así
+            # que a diferencia del job del scheduler, acá context.user_data sí existe — pero un
+            # cache plano (sin message_id) mostraría los de otro panel si se toca uno distinto
+            # en la misma sesión. La lista es TODOS los pendientes (hoy + acumulados).
+            mits_cache = context.user_data.setdefault("cierre_mits_cache", {})
+            if q.message.message_id not in mits_cache:
+                mits_cache[q.message.message_id] = await salud.mits_pendientes()
+            mits = mits_cache[q.message.message_id]
+            if tipo == "mit":  # mit:<idx> → toggle (tocar de nuevo lo desmarca)
+                campo = f"mit_{partes[1]}"
+                idx_mit = int(partes[1])
+                hecho = estado.get(campo) != "si"
+                estado[campo] = "si" if hecho else "no"
+                if 0 <= idx_mit < len(mits):
+                    await salud.marcar_mit(mits[idx_mit], hecho)
         except Exception:
             logger.exception("cierre: no pude anotar %s", data)
         try:
-            await q.edit_message_reply_markup(reply_markup=teclado_cierre(estado))
+            mits = context.user_data.get("cierre_mits_cache", {}).get(q.message.message_id, [])
+            await q.edit_message_reply_markup(reply_markup=teclado_cierre(estado, mits))
         except Exception:
             pass  # "message is not modified" si se re-toca lo mismo
         return

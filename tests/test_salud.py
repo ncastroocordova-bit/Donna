@@ -218,3 +218,153 @@ def test_marcar_habito_agua_default_si(monkeypatch):
     r = asyncio.run(salud.marcar_habito("agua"))  # sin valor explícito -> default "Sí" (BINARIOS)
     assert llamadas[0]["valor"] == "Sí"
     assert "Racha" in r
+
+
+# ───────────────────────── MITs: lista real, marcables, sin arrastre ─────────────────────────
+
+def test_parsear_mits_por_coma_y_conjuncion_final():
+    texto = "llamar al banco, terminar el informe, y comprar el regalo"
+    assert salud._parsear_mits(texto) == ["llamar al banco", "terminar el informe", "comprar el regalo"]
+
+
+def test_parsear_mits_por_punto_y_coma_o_salto_de_linea():
+    assert salud._parsear_mits("A; B; C") == ["A", "B", "C"]
+    assert salud._parsear_mits("A\nB\nC") == ["A", "B", "C"]
+
+
+def test_parsear_mits_tope_de_tres():
+    assert salud._parsear_mits("A, B, C, D") == ["A", "B", "C"]
+
+
+def test_parsear_mits_un_solo_item_sin_separadores():
+    assert salud._parsear_mits("terminar el informe") == ["terminar el informe"]
+
+
+def test_parsear_mits_vacio_no_inventa():
+    assert salud._parsear_mits("") == []
+    assert salud._parsear_mits("   ") == []
+
+
+def _mock_get_dicts(monkeypatch, filas):
+    async def _fake(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        return filas
+
+    monkeypatch.setattr(salud.sheets, "get_dicts", _fake)
+
+
+def _mock_append_row(monkeypatch):
+    llamadas = []
+
+    async def _fake(hoja, valores, sheet_id=None):
+        llamadas.append({"hoja": hoja, "valores": valores})
+
+    monkeypatch.setattr(salud.sheets, "append_row", _fake)
+    return llamadas
+
+
+TAREAS_HEADERS = ["Creada", "Descripción", "Proyecto", "Tipo", "Fecha objetivo", "Estado", "Completada", "Notas"]
+
+
+def _mock_tareas_rows(monkeypatch, filas_datos):
+    async def _fake_get_rows(hoja, rango="A:Z", sheet_id=None, value_render="FORMATTED_VALUE"):
+        return [["banner"], TAREAS_HEADERS, *filas_datos]
+
+    llamadas = []
+
+    async def _fake_set_cell(hoja, fila, col_idx0, valor, sheet_id=None):
+        llamadas.append({"fila": fila, "col_idx0": col_idx0, "valor": valor})
+
+    monkeypatch.setattr(salud.sheets, "get_rows", _fake_get_rows)
+    monkeypatch.setattr(salud.sheets, "set_cell", _fake_set_cell)
+    return llamadas
+
+
+def test_registrar_mits_crea_filas_en_tareas(monkeypatch):
+    llamadas = _mock_append_row(monkeypatch)
+    r = asyncio.run(salud.registrar_mits("llamar al banco, terminar el informe"))
+    assert "2 MIT" in r
+    assert len(llamadas) == 2
+    manana = salud._manana()
+    fila1 = llamadas[0]["valores"]
+    assert fila1[1] == "llamar al banco"   # Descripción
+    assert fila1[3] == "MIT"               # Tipo
+    assert fila1[4] == manana              # Fecha objetivo — para MAÑANA, no para hoy
+
+
+def test_registrar_mits_vacio_no_crea_nada(monkeypatch):
+    llamadas = _mock_append_row(monkeypatch)
+    r = asyncio.run(salud.registrar_mits(""))
+    assert llamadas == []
+    assert "No te pillé" in r
+
+
+def test_mits_pendientes_solo_tipo_mit_sin_completar(monkeypatch):
+    _mock_get_dicts(monkeypatch, [
+        {"Creada": "2026-06-28", "Descripción": "llamar al banco", "Tipo": "MIT",
+         "Fecha objetivo": "2026-06-29", "Completada": ""},
+        {"Creada": "2026-06-28", "Descripción": "ya resuelto", "Tipo": "MIT",
+         "Fecha objetivo": "2026-06-29", "Completada": "Sí"},
+        {"Creada": "2026-06-28", "Descripción": "tarea normal", "Tipo": "Tarea",
+         "Fecha objetivo": "", "Completada": ""},
+    ])
+    assert asyncio.run(salud.mits_pendientes()) == ["llamar al banco"]
+
+
+def test_mits_pendientes_no_se_arrastra_por_dias_es_al_reves_ahora(monkeypatch):
+    # A diferencia del diseño anterior (que solo miraba el día anterior), ahora un MIT viejo
+    # SIGUE apareciendo aunque hayan pasado varios días — es la funcionalidad pedida.
+    _mock_get_dicts(monkeypatch, [
+        {"Creada": "2026-06-20", "Descripción": "viejo sin resolver", "Tipo": "MIT",
+         "Fecha objetivo": "2026-06-21", "Completada": ""},
+    ])
+    assert asyncio.run(salud.mits_pendientes()) == ["viejo sin resolver"]
+
+
+def test_mits_pendientes_ordena_mas_viejo_primero(monkeypatch):
+    _mock_get_dicts(monkeypatch, [
+        {"Creada": "2026-06-30", "Descripción": "nuevo", "Tipo": "MIT", "Fecha objetivo": "2026-07-01", "Completada": ""},
+        {"Creada": "2026-06-25", "Descripción": "viejo", "Tipo": "MIT", "Fecha objetivo": "2026-06-26", "Completada": ""},
+    ])
+    assert asyncio.run(salud.mits_pendientes()) == ["viejo", "nuevo"]
+
+
+def test_senal_mits_brief_separa_hoy_de_acumulados(monkeypatch):
+    hoy = salud._hoy()
+    _mock_get_dicts(monkeypatch, [
+        {"Creada": "2026-06-20", "Descripción": "terminar el informe", "Tipo": "MIT", "Fecha objetivo": hoy, "Completada": ""},
+        {"Creada": "2026-06-18", "Descripción": "llamar al banco", "Tipo": "MIT", "Fecha objetivo": "2026-06-19", "Completada": ""},
+    ])
+    s = asyncio.run(salud.senal_mits_brief())
+    assert "terminar el informe" in s and "MITs de hoy" in s
+    assert "llamar al banco" in s and "acumulados" in s.lower()
+
+
+def test_senal_mits_brief_silencio_sin_pendientes(monkeypatch):
+    _mock_get_dicts(monkeypatch, [])
+    assert asyncio.run(salud.senal_mits_brief()) == ""
+
+
+def test_marcar_mit_hecho_encuentra_y_marca(monkeypatch):
+    llamadas = _mock_tareas_rows(monkeypatch, [
+        ["2026-06-28", "llamar al banco", "—", "MIT", "2026-06-29", "Pendiente", "", ""],
+    ])
+    ok = asyncio.run(salud.marcar_mit("llamar al banco", hecho=True))
+    assert ok is True
+    assert llamadas[0]["valor"] == "Sí"
+    assert llamadas[0]["col_idx0"] == TAREAS_HEADERS.index("Completada")
+
+
+def test_marcar_mit_no_encontrado_devuelve_false(monkeypatch):
+    llamadas = _mock_tareas_rows(monkeypatch, [])
+    ok = asyncio.run(salud.marcar_mit("no existe", hecho=True))
+    assert ok is False
+    assert llamadas == []
+
+
+def test_desmarcar_mit_lo_vuelve_a_pendiente(monkeypatch):
+    llamadas = _mock_tareas_rows(monkeypatch, [
+        ["2026-06-28", "llamar al banco", "—", "MIT", "2026-06-29", "Pendiente", "Sí", ""],
+    ])
+    ok = asyncio.run(salud.marcar_mit("llamar al banco", hecho=False))
+    assert ok is True
+    assert llamadas[0]["valor"] == ""

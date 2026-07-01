@@ -18,7 +18,10 @@ TABS = {
     # --- Vida ---
     # Headers EXACTOS del canon (con tildes/símbolos — calzan con Donna_Canonico.xlsx fila 2 y
     # con modules/salud.py COLS, verificado contra la planilla real 2026-07-01). Salud v2 (E8)
-    # agrega las últimas 5 al final (merge aditivo).
+    # agrega las últimas 5 al final (merge aditivo). "MITs de mañana" queda como columna legado
+    # sin uso (el backlog de MITs ahora vive en Tareas, Tipo=MIT) — no se borra de la planilla,
+    # solo ya no la escribe el código. "MITs cumplidos" (agregada y luego retirada en la misma
+    # semana) puede seguir existiendo vacía en la planilla real; este script no la vuelve a pedir.
     "Diario": ["Fecha", "Ejercicio", "Meditación", "Última comida", "Sueño 7h+", "Ánimo (1-4)",
                "Hora dormí", "MITs de mañana", "Brief ✓", "Cierre ✓", "Excepción", "Notas",
                "Primera comida", "Hora desperté", "Agua", "Proteína", "Peso (kg)"],

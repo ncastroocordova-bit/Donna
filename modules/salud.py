@@ -11,9 +11,18 @@ El score/ventanas/peso de la semana se escriben en `Semanal` (lectura; el doming
 
 Columnas (Donna_Canonico.xlsx, Diario fila 2): Fecha · Ejercicio · Meditación ·
 Última comida · Sueño 7h+ · Ánimo (1-4) · Hora dormí · MITs de mañana · Brief ✓ ·
-Cierre ✓ · Excepción · Notas · Primera comida · Hora desperté · Agua · Proteína · Peso (kg).
+Cierre ✓ · Excepción · Notas · Primera comida · Hora desperté · Agua · Proteína · Peso (kg) ·
+MITs cumplidos. Las columnas `MITs de mañana`/`MITs cumplidos` quedan como legado sin uso: el
+backlog de MITs ahora vive en `Tareas` (Tipo=MIT), no en el texto libre de Diario — ver la
+sección "MITs" más abajo.
+
+MITs: un MIT no resuelto NO desaparece — queda pendiente en `Tareas` hasta que lo marcas hecho,
+sin importar cuántos días pasen (a propósito, sin tope). El cierre los muestra TODOS (de hoy +
+acumulados) para marcarlos uno a uno; el brief de las 8:00 los separa en "de hoy" vs "acumulados"
+(solo informa, no pide nada).
 """
 import logging
+import re
 import statistics
 from datetime import datetime, timedelta
 
@@ -33,7 +42,6 @@ COLS = {
     "sueno_7h": "Sueño 7h+",
     "animo": "Ánimo (1-4)",
     "hora_dormi": "Hora dormí",
-    "mits": "MITs de mañana",
     "brief": "Brief ✓",
     "cierre": "Cierre ✓",
     "excepcion": "Excepción",
@@ -116,8 +124,127 @@ async def registrar_sueno(horas_7plus, hora_dormi: str = "") -> str:
 
 
 async def registrar_mits(texto: str) -> str:
-    await _set("mits", texto)
-    return "MITs de mañana anotados."
+    """Anoche dictaste tus MITs de mañana → se crean como filas en `Tareas` (Tipo=MIT,
+    Fecha objetivo=mañana). No se arrastran por texto en Diario: viven en Tareas hasta que
+    los marques hechos, sin importar cuántos días pase."""
+    items = _parsear_mits(texto)
+    if not items:
+        return "No te pillé ningún MIT ahí. Dímelos de nuevo, uno por uno."
+    manana = _manana()
+    for item in items:
+        await sheets.append_row(HOJA_TAREAS, [_hoy(), item, "—", TIPO_MIT, manana, "Pendiente", "", ""])
+    return f"{len(items)} MIT(s) para mañana anotados."
+
+
+# ───────────────────────── MITs: backlog real en Tareas, sin arrastre invisible ─────────────
+# Un MIT no resuelto NO desaparece solo — queda pendiente en Tareas (Tipo=MIT) hasta que lo
+# marques hecho, sin importar cuántos días pasen (sin límite, a propósito). El cierre los
+# muestra TODOS (de hoy + acumulados) para marcarlos uno a uno; el brief de las 8:00 los separa
+# en "de hoy" (Fecha objetivo = hoy) vs "acumulados" (de antes), solo para informar.
+
+HOJA_TAREAS = "Tareas"
+TIPO_MIT = "MIT"
+COLS_TAREAS = {
+    "creada": "Creada", "descripcion": "Descripción", "proyecto": "Proyecto", "tipo": "Tipo",
+    "fecha_objetivo": "Fecha objetivo", "estado": "Estado", "completada": "Completada", "notas": "Notas",
+}
+
+
+def _manana() -> str:
+    return (datetime.now(settings.tz).date() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def _parsear_mits(texto: str) -> list[str]:
+    """Hasta 3 MITs desde el texto libre dictado. Separa por coma/punto y coma/salto de línea
+    y limpia un 'y' colgante al final de un ítem (ej. '..., y comprar pan' -> 'comprar pan').
+    No inventa: si no logra separar nada, devuelve [] (no un ítem vacío)."""
+    if not texto or not str(texto).strip():
+        return []
+    partes = re.split(r"[;\n,]", str(texto).strip())
+    limpio = []
+    for p in partes:
+        p = p.strip(" .")
+        p = re.sub(r"^y\s+", "", p, flags=re.I)
+        if p:
+            limpio.append(p)
+    return limpio[:3]
+
+
+async def _mits_pendientes_raw() -> list[dict]:
+    """Filas de Tareas Tipo=MIT sin completar, con su fecha objetivo. Ordenadas de más vieja
+    a más nueva (lo más atrasado aparece primero)."""
+    filas = await sheets.get_dicts(HOJA_TAREAS)
+    pend = [
+        f for f in filas
+        if str(f.get(COLS_TAREAS["tipo"], "")).strip() == TIPO_MIT
+        and not str(f.get(COLS_TAREAS["completada"], "")).strip()
+        and str(f.get(COLS_TAREAS["descripcion"], "")).strip()
+    ]
+    pend.sort(key=lambda f: str(f.get(COLS_TAREAS["creada"], "")))
+    return [
+        {"descripcion": str(f.get(COLS_TAREAS["descripcion"], "")).strip(),
+         "fecha_objetivo": str(f.get(COLS_TAREAS["fecha_objetivo"], "")).strip()}
+        for f in pend
+    ]
+
+
+async def mits_pendientes() -> list[str]:
+    """Todos los MITs sin resolver (de hoy + acumulados), para el panel del cierre — cada uno
+    se marca por separado; si no lo marcas, sigue apareciendo mañana."""
+    return [m["descripcion"] for m in await _mits_pendientes_raw()]
+
+
+async def _fila_mit(texto: str, buscar_completada: bool):
+    """Ubica la fila de Tareas para ese MIT exacto (Tipo=MIT, completada/no según se pida).
+    Devuelve (nº de fila 1-based, índices de columna) o None."""
+    filas = await sheets.get_rows(HOJA_TAREAS)
+    h_idx, headers = sheets._fila_headers(filas)
+    if h_idx < 0:
+        return None
+    idx = {c: headers.index(v) for c, v in COLS_TAREAS.items() if v in headers}
+    if not all(k in idx for k in ("descripcion", "tipo", "completada")):
+        return None
+
+    def _get(fila, col):
+        i = idx[col]
+        return str(fila[i]).strip() if len(fila) > i else ""
+
+    for n, fila in enumerate(filas[h_idx + 1:], start=h_idx + 2):
+        if _get(fila, "descripcion") == texto.strip() and _get(fila, "tipo") == TIPO_MIT:
+            if bool(_get(fila, "completada")) == buscar_completada:
+                return n, idx
+    return None
+
+
+async def marcar_mit(texto: str, hecho: bool) -> bool:
+    """Marca (o desmarca) un MIT como hecho en Tareas. Devuelve si encontró la fila."""
+    encontrada = await _fila_mit(texto, buscar_completada=not hecho)
+    if not encontrada:
+        return False
+    n, idx = encontrada
+    await sheets.set_cell(HOJA_TAREAS, n, idx["completada"], "Sí" if hecho else "")
+    return True
+
+
+async def senal_mits_brief() -> str:
+    """Para el brief de las 8:00 (solo lectura): separa los MITs de HOY (Fecha objetivo = hoy)
+    de los acumulados de antes. Silencio si no hay ninguno pendiente."""
+    try:
+        hoy = _hoy()
+        todos = await _mits_pendientes_raw()
+        if not todos:
+            return ""
+        de_hoy = [m["descripcion"] for m in todos if m["fecha_objetivo"] == hoy]
+        acumulados = [m["descripcion"] for m in todos if m["fecha_objetivo"] != hoy]
+        partes = []
+        if de_hoy:
+            partes.append(f"MITs de hoy: {', '.join(de_hoy)}")
+        if acumulados:
+            partes.append(f"MITs acumulados sin resolver ({len(acumulados)}): {', '.join(acumulados)}")
+        return ". ".join(partes) + "." if partes else ""
+    except Exception:
+        logger.exception("senal_mits_brief falló")
+        return ""
 
 
 # ───────────────────────── v2 (E8): horas, peso, eventos ─────────────────────────

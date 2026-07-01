@@ -33,6 +33,7 @@ async def _texto_brief() -> str:
         aviso_correo,
         await finanzas.senal_finanzas(),
         await salud.senal_salud(),
+        await salud.senal_mits_brief(),
         await recordatorios.texto_proximos(7),
         await proyectos.senal_proyectos(),
     ] if s)
