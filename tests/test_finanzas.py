@@ -1,13 +1,17 @@
-"""Evals no-destructivos del Módulo 1 (Finanzas). Puros: sin red, sin Supabase, sin
-Sheets — corren en milisegundos y no tocan datos de producción.
+"""Evals no-destructivos del Módulo 1 (Finanzas). Puros: sin red real, sin Supabase, sin
+Sheets — corren en milisegundos y no tocan datos de producción. Donde el flujo real llama
+a Claude Vision o a Supabase (p.ej. `procesar_foto`), se monkeypatchea esa llamada con una
+respuesta fija: se prueba la lógica determinista de Donna, no el modelo de Anthropic.
 
 Cubren los criterios del roadmap (ficha Finanzas):
   · faro da $2.028.091 y $48.236  → formato chileno + lectura del faro.
   · "aceptar todo" escribe sin duplicar → planificador anti-duplicado del digest.
+  · foto→categoría correcta → procesar_foto con Vision mockeada.
 
-El caso foto→categoría y el freno-antes-de-cuota viven en los evals conversacionales
-(tests/casos.yaml) y en la semana de prueba real.
+El freno-antes-de-cuota vive en los evals conversacionales (tests/casos.yaml, caso
+tool_freno_cuotas) y en la semana de prueba real.
 """
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -219,6 +223,73 @@ def test_filas_detalle_shape():
               "intencion": "Necesario", "predecible": True}]
     assert finanzas._filas_detalle(p, items)[0] == [
         "2026-06-20", "Súper", "arroz", 1, 1290, "Arroz", "Necesario", "sí", "ID1", "foto"]
+
+
+# ───────────────────────── Foto → categoría (procesar_foto, Vision mockeada) ─────────────────────────
+
+class _ContenidoFalso:
+    def __init__(self, text):
+        self.text = text
+
+
+class _RespuestaFalsa:
+    def __init__(self, text):
+        self.content = [_ContenidoFalso(text)]
+
+
+def _mock_vision(monkeypatch, texto_json: str):
+    """Reemplaza la llamada real a Claude Vision por una respuesta fija, y el buffer de
+    Supabase por uno en memoria (sin reglas de comercio, sin red)."""
+    async def _create_falso(**kwargs):
+        return _RespuestaFalsa(texto_json)
+
+    guardado = {}
+
+    async def _buffer_agregar_falso(tx):
+        guardado.update(tx)
+        return True
+
+    async def _get_comercios_falso():
+        return []
+
+    monkeypatch.setattr(finanzas._anthropic.messages, "create", _create_falso)
+    monkeypatch.setattr(finanzas.memory, "buffer_agregar", _buffer_agregar_falso)
+    monkeypatch.setattr(finanzas.memory, "get_comercios", _get_comercios_falso)
+    return guardado
+
+
+def test_procesar_foto_deriva_categoria_del_primer_item(monkeypatch):
+    # Boleta de Jumbo: Vision devuelve dos ítems con categorías distintas (arroz/bebida) →
+    # la categoría de la transacción es la del primer ítem (Alimentación), no "Otros".
+    texto = """{"tipo": "Gasto", "comercio": "JUMBO MAIPU", "fecha": "2026-06-20", "total": 2790,
+    "items": [{"item": "arroz", "cantidad": 1, "precio": 1290, "categoria": "Alimentación"},
+              {"item": "coca cola", "cantidad": 1, "precio": 1500, "categoria": "Bebidas"}]}"""
+    guardado = _mock_vision(monkeypatch, texto)
+    tx = asyncio.run(finanzas.procesar_foto(b"fake-bytes"))
+    assert tx["categoria"] == "Alimentación"
+    assert tx["comercio"] == "JUMBO MAIPU" and tx["monto"] == 2790
+    assert [i["item"] for i in tx["items"]] == ["arroz", "coca cola"]
+    assert guardado["categoria"] == "Alimentación"       # lo que de verdad se bufferizó
+
+
+def test_procesar_foto_sin_items_usa_la_categoria_del_total(monkeypatch):
+    # Boleta sin productos legibles (solo el monto) → Vision no manda items, cae a la
+    # categoría del total tal como la haya estimado el modelo.
+    texto = '{"tipo": "Gasto", "comercio": "COPEC", "fecha": "2026-06-20", "total": 15000, "categoria": "Transporte", "items": []}'
+    _mock_vision(monkeypatch, texto)
+    tx = asyncio.run(finanzas.procesar_foto(b"fake-bytes"))
+    assert tx["categoria"] == "Transporte"
+    assert tx["items"] is None
+
+
+def test_procesar_foto_item_sin_categoria_la_infiere_por_nombre(monkeypatch):
+    # Si Vision manda un ítem sin categoría, _linea_detalle la infiere por el nombre
+    # (mismo mapa de palabras clave que usan los correos), no queda en blanco.
+    texto = """{"tipo": "Gasto", "comercio": "ALMACEN LOCAL", "fecha": "2026-06-20", "total": 1500,
+    "items": [{"item": "pizza uber eats", "precio": 1500}]}"""
+    guardado = _mock_vision(monkeypatch, texto)
+    tx = asyncio.run(finanzas.procesar_foto(b"fake-bytes"))
+    assert tx["categoria"] == "Chanchería"
 
 
 # ───────────────────────── Utilidades base ─────────────────────────
