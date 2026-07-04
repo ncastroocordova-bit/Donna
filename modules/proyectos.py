@@ -1,7 +1,12 @@
 """Módulo Proyectos + Tareas. Tools `proy_*` y `tarea_*`.
 
-Rediseñado sobre la planilla real de Nico (hojas Proyectos y Tareas en Sheets).
-El %Avance se computa desde Tareas (completadas/total). Degradación elegante.
+Opera por NOMBRE sobre el schema real de la planilla (sin IDs fantasma). Schemas reales:
+
+    Proyectos: Proyecto · Estado · Foco actual · Próxima acción · % Avance · Última act. · Notas
+    Tareas:    Creada · Descripción · Proyecto · Tipo · Fecha objetivo · Estado · Completada · Notas
+
+El % de avance se computa desde Tareas (hechas/total de ESE proyecto, por nombre), excluyendo
+los MITs de Salud (Tipo=MIT) que viven en la misma hoja. Degradación elegante.
 """
 import logging
 from datetime import datetime
@@ -11,8 +16,23 @@ from core import sheets
 
 logger = logging.getLogger(__name__)
 
+HOJA_PROY = "Proyectos"
+HOJA_TAREAS = "Tareas"
+TIPO_MIT = "MIT"  # los MITs de Salud viven en Tareas; se excluyen del avance de proyectos
+
 ACTIVOS = ("en curso", "planificación", "planificacion", "activo", "en progreso")
 HECHO = ("completada", "completado", "hecha", "hecho", "sí", "si", "x", "true")
+
+COLS_PROY = {
+    "proyecto": "Proyecto", "estado": "Estado", "foco": "Foco actual",
+    "proxima": "Próxima acción", "avance": "% Avance", "ultima": "Última act.", "notas": "Notas",
+}
+# = salud.COLS_TAREAS, mismo canon. Se duplica el literal a propósito (contrato de módulo:
+# sin acoplar Proyectos con Salud); ambos escritores de `Tareas` usan estos nombres exactos.
+COLS_TAREAS = {
+    "creada": "Creada", "descripcion": "Descripción", "proyecto": "Proyecto", "tipo": "Tipo",
+    "fecha_objetivo": "Fecha objetivo", "estado": "Estado", "completada": "Completada", "notas": "Notas",
+}
 
 
 def _hoy() -> str:
@@ -23,22 +43,31 @@ def _coincide(query: str, nombre: str) -> bool:
     return query.lower().strip() in str(nombre).lower()
 
 
+def _completada(t: dict) -> bool:
+    return (str(t.get(COLS_TAREAS["estado"], "")).strip().lower() in HECHO
+            or str(t.get(COLS_TAREAS["completada"], "")).strip().lower() in HECHO)
+
+
 async def _buscar_proyecto(query: str) -> dict | None:
-    proys = await sheets.get_dicts("Proyectos")
-    # match por ID exacto o por nombre (substring)
-    for p in proys:
-        if str(p.get("ID", "")).lower() == query.lower().strip():
-            return p
-    for p in proys:
-        if _coincide(query, p.get("Proyecto", "")):
+    if not query:
+        return None
+    for p in await sheets.get_dicts(HOJA_PROY):
+        if _coincide(query, p.get(COLS_PROY["proyecto"], "")):
             return p
     return None
 
 
-async def _avance(id_proy: str) -> tuple[int, int]:
-    tareas = await sheets.get_dicts("Tareas")
-    de_proy = [t for t in tareas if str(t.get("ID_Proy", "")) == str(id_proy)]
-    hechas = sum(1 for t in de_proy if str(t.get("Estado", "")).lower() in HECHO or str(t.get("Completada", "")).strip().lower() in HECHO)
+async def _avance(nombre_proy: str) -> tuple[int, int]:
+    """Tareas hechas / total de un proyecto, por NOMBRE (case-insensitive). Excluye los MITs
+    de Salud (Tipo=MIT) para no contaminar el conteo con tareas de otro dominio."""
+    tareas = await sheets.get_dicts(HOJA_TAREAS)
+    nombre = str(nombre_proy).strip().lower()
+    de_proy = [
+        t for t in tareas
+        if str(t.get(COLS_TAREAS["proyecto"], "")).strip().lower() == nombre
+        and str(t.get(COLS_TAREAS["tipo"], "")).strip() != TIPO_MIT
+    ]
+    hechas = sum(1 for t in de_proy if _completada(t))
     return hechas, len(de_proy)
 
 
@@ -46,15 +75,18 @@ async def _avance(id_proy: str) -> tuple[int, int]:
 
 async def _proy_listar(inp: dict) -> str:
     try:
-        proys = await sheets.get_dicts("Proyectos")
-        activos = [p for p in proys if str(p.get("Estado", "")).lower() in ACTIVOS]
+        proys = await sheets.get_dicts(HOJA_PROY)
+        activos = [p for p in proys if str(p.get(COLS_PROY["estado"], "")).lower() in ACTIVOS]
         if not activos:
             return "No hay proyectos activos."
         lineas = []
         for p in activos:
-            h, tot = await _avance(p.get("ID", ""))
-            pct = f"{h}/{tot} tareas ({h*100//tot}%)" if tot else "sin tareas"
-            lineas.append(f"[{p.get('Estado')}] {p.get('Proyecto')} — {pct} · prioridad {p.get('Prioridad', '?')}")
+            nombre = p.get(COLS_PROY["proyecto"], "")
+            h, tot = await _avance(nombre)
+            pct = f"{h}/{tot} tareas ({h * 100 // tot}%)" if tot else "sin tareas"
+            foco = str(p.get(COLS_PROY["foco"], "")).strip()
+            cola = f" · foco: {foco}" if foco else ""
+            lineas.append(f"[{p.get(COLS_PROY['estado'])}] {nombre} — {pct}{cola}")
         return "\n".join(lineas)
     except Exception:
         logger.exception("proy_listar falló")
@@ -66,14 +98,13 @@ async def _proy_crear(inp: dict) -> str:
     if not nombre:
         return "Necesito un nombre para el proyecto."
     try:
-        proys = await sheets.get_dicts("Proyectos")
-        nums = [int(str(p.get("ID", "P0"))[1:]) for p in proys if str(p.get("ID", "")).startswith("P") and str(p.get("ID"))[1:].isdigit()]
-        nuevo_id = f"P{(max(nums) + 1) if nums else 1:03d}"
-        await sheets.append_row("Proyectos", [
-            nuevo_id, nombre, inp.get("descripcion", ""), "Planificación",
-            _hoy(), inp.get("sem_estimadas", ""), inp.get("prioridad", "Media"), "",
+        # Orden real: Proyecto · Estado · Foco actual · Próxima acción · % Avance · Última act. · Notas
+        await sheets.append_row(HOJA_PROY, [
+            nombre, "Activo", inp.get("descripcion", ""),
+            inp.get("proxima_accion", "(define tu próxima acción)"),
+            "0%", _hoy(), inp.get("notas", ""),
         ])
-        return f"Proyecto '{nombre}' creado ({nuevo_id})."
+        return f"Proyecto '{nombre}' creado."
     except Exception:
         logger.exception("proy_crear falló")
         return "No pude crear el proyecto ahora."
@@ -84,11 +115,18 @@ async def _proy_actualizar(inp: dict) -> str:
     p = await _buscar_proyecto(query)
     if not p:
         return f"No encontré un proyecto que coincida con '{query}'."
+    nombre = p[COLS_PROY["proyecto"]]
     try:
-        for campo, col in (("estado", "Estado"), ("prioridad", "Prioridad"), ("notas", "Notas")):
+        campos = (("estado", COLS_PROY["estado"]), ("foco", COLS_PROY["foco"]),
+                  ("proxima_accion", COLS_PROY["proxima"]), ("notas", COLS_PROY["notas"]))
+        cambios = 0
+        for campo, col in campos:
             if inp.get(campo):
-                await sheets.upsert_por_clave("Proyectos", "ID", p["ID"], col, inp[campo])
-        return f"Proyecto '{p.get('Proyecto')}' actualizado."
+                await sheets.upsert_por_clave(HOJA_PROY, COLS_PROY["proyecto"], nombre, col, inp[campo])
+                cambios += 1
+        if cambios:
+            await sheets.upsert_por_clave(HOJA_PROY, COLS_PROY["proyecto"], nombre, COLS_PROY["ultima"], _hoy())
+        return f"Proyecto '{nombre}' actualizado."
     except Exception:
         logger.exception("proy_actualizar falló")
         return "No pude actualizar el proyecto ahora."
@@ -99,9 +137,11 @@ async def _proy_cerrar(inp: dict) -> str:
     p = await _buscar_proyecto(query)
     if not p:
         return f"No encontré un proyecto que coincida con '{query}'."
+    nombre = p[COLS_PROY["proyecto"]]
     try:
-        await sheets.upsert_por_clave("Proyectos", "ID", p["ID"], "Estado", "Completado")
-        return f"Proyecto '{p.get('Proyecto')}' marcado como completado."
+        await sheets.upsert_por_clave(HOJA_PROY, COLS_PROY["proyecto"], nombre, COLS_PROY["estado"], "Completado")
+        await sheets.upsert_por_clave(HOJA_PROY, COLS_PROY["proyecto"], nombre, COLS_PROY["ultima"], _hoy())
+        return f"Proyecto '{nombre}' marcado como completado."
     except Exception:
         logger.exception("proy_cerrar falló")
         return "No pude cerrar el proyecto ahora."
@@ -111,14 +151,23 @@ async def _proy_cerrar(inp: dict) -> str:
 
 async def _tarea_listar(inp: dict) -> str:
     try:
-        tareas = await sheets.get_dicts("Tareas")
+        tareas = await sheets.get_dicts(HOJA_TAREAS)
         query = str(inp.get("proyecto", "")).strip()
         if query:
-            tareas = [t for t in tareas if _coincide(query, t.get("Proyecto", "")) or str(t.get("ID_Proy", "")).lower() == query.lower()]
-        pendientes = [t for t in tareas if str(t.get("Estado", "")).lower() not in HECHO and str(t.get("Completada", "")).strip().lower() not in HECHO]
+            tareas = [t for t in tareas if _coincide(query, t.get(COLS_TAREAS["proyecto"], ""))]
+        pendientes = [t for t in tareas
+                      if not _completada(t) and str(t.get(COLS_TAREAS["descripcion"], "")).strip()]
         if not pendientes:
             return "No hay tareas pendientes." + ("" if query else " (especifica un proyecto si buscas alguno puntual)")
-        lineas = [f"[{t.get('Estado', '?')}] {t.get('Proyecto')} · {t.get('Descripcion')} (prioridad {t.get('Prioridad', '?')})" for t in pendientes[:12]]
+        lineas = []
+        for t in pendientes[:12]:
+            proy = str(t.get(COLS_TAREAS["proyecto"], "")).strip()
+            desc = str(t.get(COLS_TAREAS["descripcion"], "")).strip()
+            fobj = str(t.get(COLS_TAREAS["fecha_objetivo"], "")).strip()
+            es_mit = str(t.get(COLS_TAREAS["tipo"], "")).strip() == TIPO_MIT
+            etiqueta = "[MIT]" if es_mit else f"[{str(t.get(COLS_TAREAS['estado'], '')).strip() or 'Pendiente'}]"
+            cola = f" (para {fobj})" if fobj else ""
+            lineas.append(f"{etiqueta} {proy} · {desc}{cola}")
         return "\n".join(lineas)
     except Exception:
         logger.exception("tarea_listar falló")
@@ -131,15 +180,13 @@ async def _tarea_crear(inp: dict) -> str:
     if not desc:
         return "Necesito la descripción de la tarea."
     p = await _buscar_proyecto(query) if query else None
+    nombre_proy = p[COLS_PROY["proyecto"]] if p else (query or "—")
     try:
-        tareas = await sheets.get_dicts("Tareas")
-        id_proy = p["ID"] if p else (inp.get("id_proy", ""))
-        nombre_proy = p["Proyecto"] if p else query
-        num = sum(1 for t in tareas if str(t.get("ID_Proy", "")) == str(id_proy)) + 1
-        await sheets.append_row("Tareas", [
-            id_proy, nombre_proy, inp.get("fase", ""), num, desc,
-            inp.get("sem_inicio", ""), inp.get("sem_fin", ""), "Pendiente",
-            inp.get("prioridad", "Media"), "", "",
+        # Orden real (idéntico a como salud.py crea un MIT): Creada · Descripción · Proyecto ·
+        # Tipo · Fecha objetivo · Estado · Completada · Notas.
+        await sheets.append_row(HOJA_TAREAS, [
+            _hoy(), desc, nombre_proy, inp.get("tipo", "Tarea"),
+            inp.get("fecha_objetivo", ""), "Pendiente", "", inp.get("notas", ""),
         ])
         return f"Tarea agregada a '{nombre_proy}': {desc}."
     except Exception:
@@ -150,15 +197,29 @@ async def _tarea_crear(inp: dict) -> str:
 async def _tarea_completar(inp: dict) -> str:
     query = str(inp.get("proyecto", "")).strip()
     desc = str(inp.get("descripcion", "")).strip()
+    if not desc:
+        return "¿Qué tarea terminaste?"
     try:
-        filas = await sheets.get_rows("Tareas")
-        headers = filas[0]
-        ci_estado, ci_desc, ci_proy = headers.index("Estado"), headers.index("Descripcion"), headers.index("Proyecto")
-        for n, f in enumerate(filas[1:], start=2):
-            if len(f) > ci_desc and _coincide(desc, f[ci_desc]) and (not query or _coincide(query, f[ci_proy] if len(f) > ci_proy else "")):
-                await sheets.set_cell("Tareas", n, ci_estado, "Completada")
-                await sheets.set_cell("Tareas", n, headers.index("Completada"), "Sí")
-                return f"Tarea completada: {f[ci_desc]}."
+        filas = await sheets.get_rows(HOJA_TAREAS)
+        h_idx, headers = sheets._fila_headers(filas)
+        if h_idx < 0:
+            return "No pude leer las tareas ahora."
+        idx = {c: headers.index(v) for c, v in COLS_TAREAS.items() if v in headers}
+        if not all(k in idx for k in ("descripcion", "estado", "completada")):
+            return "No pude leer las tareas ahora."
+
+        def _get(fila, col):
+            i = idx[col]
+            return str(fila[i]).strip() if len(fila) > i else ""
+
+        for n, fila in enumerate(filas[h_idx + 1:], start=h_idx + 2):
+            if not _coincide(desc, _get(fila, "descripcion")):
+                continue
+            if query and "proyecto" in idx and not _coincide(query, _get(fila, "proyecto")):
+                continue
+            await sheets.set_cell(HOJA_TAREAS, n, idx["estado"], "Completada")
+            await sheets.set_cell(HOJA_TAREAS, n, idx["completada"], "Sí")
+            return f"Tarea completada: {_get(fila, 'descripcion')}."
         return f"No encontré una tarea que coincida con '{desc}'."
     except Exception:
         logger.exception("tarea_completar falló")
@@ -168,15 +229,16 @@ async def _tarea_completar(inp: dict) -> str:
 # ───────────────────────── Señal destilada ─────────────────────────
 
 async def senal_proyectos() -> str:
-    """Proyectos activos sin avance (0 tareas hechas) para el brief."""
+    """Proyectos activos con tareas pero sin ninguna hecha (0 avance) para el brief."""
     try:
-        proys = await sheets.get_dicts("Proyectos")
-        activos = [p for p in proys if str(p.get("Estado", "")).lower() in ACTIVOS]
+        proys = await sheets.get_dicts(HOJA_PROY)
+        activos = [p for p in proys if str(p.get(COLS_PROY["estado"], "")).lower() in ACTIVOS]
         alertas = []
         for p in activos:
-            h, tot = await _avance(p.get("ID", ""))
-            if tot > 0 and h == 0 and str(p.get("Prioridad", "")).lower() == "alta":
-                alertas.append(f"'{p.get('Proyecto')}' sin tareas hechas")
+            nombre = p.get(COLS_PROY["proyecto"], "")
+            h, tot = await _avance(nombre)
+            if tot > 0 and h == 0:
+                alertas.append(f"'{nombre}' sin tareas hechas")
         return "Proyectos: " + "; ".join(alertas) + "." if alertas else ""
     except Exception:
         logger.exception("senal_proyectos falló")
@@ -193,32 +255,34 @@ TOOLS = [
     },
     {
         "name": "proy_crear",
-        "description": "OBLIGATORIO cuando Nico menciona un proyecto nuevo. Lo crea con un ID. Sin esta llamada no existe.",
+        "description": "OBLIGATORIO cuando Nico menciona un proyecto nuevo. Lo crea (la clave es el nombre). Sin esta llamada no existe.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "nombre": {"type": "string"}, "descripcion": {"type": "string"},
-                "prioridad": {"type": "string", "enum": ["Alta", "Media", "Baja"]},
-                "sem_estimadas": {"type": "number"},
+                "nombre": {"type": "string"},
+                "descripcion": {"type": "string", "description": "Foco actual del proyecto (opcional)"},
+                "proxima_accion": {"type": "string", "description": "La próxima acción concreta (opcional)"},
+                "notas": {"type": "string"},
             },
             "required": ["nombre"],
         },
     },
     {
         "name": "proy_actualizar",
-        "description": "Actualiza estado, prioridad o notas de un proyecto existente (por nombre o ID).",
+        "description": "Actualiza estado, foco, próxima acción o notas de un proyecto existente (por nombre).",
         "input_schema": {
             "type": "object",
             "properties": {
-                "nombre": {"type": "string", "description": "Nombre o ID del proyecto"},
-                "estado": {"type": "string"}, "prioridad": {"type": "string"}, "notas": {"type": "string"},
+                "nombre": {"type": "string", "description": "Nombre del proyecto"},
+                "estado": {"type": "string"}, "foco": {"type": "string"},
+                "proxima_accion": {"type": "string"}, "notas": {"type": "string"},
             },
             "required": ["nombre"],
         },
     },
     {
         "name": "proy_cerrar",
-        "description": "Marca un proyecto como completado (por nombre o ID). Úsala cuando Nico dice que lo terminó.",
+        "description": "Marca un proyecto como completado (por nombre). Úsala cuando Nico dice que lo terminó.",
         "input_schema": {"type": "object", "properties": {"nombre": {"type": "string"}}, "required": ["nombre"]},
     },
     {
@@ -232,11 +296,11 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "proyecto": {"type": "string", "description": "Nombre o ID del proyecto"},
-                "descripcion": {"type": "string"}, "fase": {"type": "string"},
-                "prioridad": {"type": "string", "enum": ["Alta", "Media", "Baja"]},
+                "proyecto": {"type": "string", "description": "Nombre del proyecto (opcional)"},
+                "descripcion": {"type": "string"},
+                "fecha_objetivo": {"type": "string", "description": "Fecha objetivo YYYY-MM-DD (opcional)"},
             },
-            "required": ["proyecto", "descripcion"],
+            "required": ["descripcion"],
         },
     },
     {
