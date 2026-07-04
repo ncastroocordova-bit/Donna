@@ -1,4 +1,13 @@
-"""Módulo Tiempo. Tools `tiempo_*`. Registro de horas de trabajo por proyecto.
+"""DORMIDO por canon — Tiempo log OFF. NO registrar en brain sin crear la hoja.
+
+La hoja `Tiempo` no existe en el workbook Donna y el canon fija el log de tiempo
+diario como OFF: el tiempo por frente vigente se captura en la reconciliación
+nocturna del cierre (Módulo 6), no acá. Este módulo se desregistró del brain
+(fix/tools-legacy) porque `tiempo_registrar` era un tool "OBLIGATORIO" que
+reventaba contra una hoja inexistente. Despertar = re-agregar 3 referencias en
+brain.py + crear la hoja.
+
+Tools `tiempo_*`. Registro de horas de trabajo por proyecto.
 Hoja Tiempo: Fecha, Proyecto, Actividad, Descripcion, Inicio, Fin, Horas, Categoria, Foco, Semana, Notas.
 """
 import logging

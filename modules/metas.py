@@ -1,4 +1,13 @@
-"""Módulo Metas Semanales. Tools `metas_*`. Metas vs avance real por semana.
+"""LEGACY — dormido. NO registrar en brain sin migrarlo primero.
+
+La hoja `MetasSemanales` no existe en el workbook Donna; las metas vigentes son
+financieras y viven en `fin_metas` (modules/finanzas.py, hoja `Metas`). Este
+módulo se desregistró del brain (fix/tools-legacy) porque colisionaba con
+`fin_metas` (descripciones casi idénticas → el LLM llamaba la equivocada, y
+`metas_actualizar` reventaba contra una hoja inexistente). Se conserva como
+referencia; su reemplazo real es `Semanal` + `fin_metas`.
+
+Tools `metas_*`. Metas vs avance real por semana.
 Hoja MetasSemanales: Semana, Fechas, Dias_Tesis, Meta_Tesis, Dias_Delivery, Meta_Delivery,
 Horas_Proy, Meta_HProy, Tareas_Noomi, Meta_Tareas, Notas.
 """

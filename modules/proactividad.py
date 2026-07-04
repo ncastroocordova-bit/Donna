@@ -12,7 +12,7 @@ from datetime import datetime
 
 from config import settings
 from core.memory import get_compromisos_abiertos
-from modules import metas, proyectos
+from modules import proyectos
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +35,15 @@ async def _senal_compromiso_vencido() -> str:
 async def detectar_senal() -> str:
     """Devuelve la señal más urgente, o '' si no hay nada que justifique interrumpir.
 
-    Prioridad: compromisos vencidos > proyectos en riesgo > metas atrasadas.
+    Prioridad: compromisos vencidos > proyectos en riesgo.
     Si no hay señal concreta, silencio — Donna no inventa razones para escribir.
+
+    Nota: la señal de meta atrasada usaba `metas.senal_metas` (legacy, hoja
+    MetasSemanales inexistente); se retiró al desregistrar ese módulo. Su
+    reemplazo —alerta de presupuesto/meta financiera al 90% desde `fin_metas`—
+    es scope de Proactividad ampliado (Módulo 7), aún no construido.
     """
-    for fn in (_senal_compromiso_vencido, proyectos.senal_proyectos, metas.senal_metas):
+    for fn in (_senal_compromiso_vencido, proyectos.senal_proyectos):
         senal = await fn()
         if senal:
             return senal

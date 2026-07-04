@@ -12,7 +12,7 @@ from anthropic import AsyncAnthropic
 
 from config import settings
 from core import agenda, memory
-from modules import aprendizaje, finanzas, metas, proyectos, recordatorios, salud, spam, tiempo
+from modules import aprendizaje, finanzas, proyectos, recordatorios, salud, spam
 
 logger = logging.getLogger(__name__)
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -169,17 +169,16 @@ WRITE_TOOLS = {
     "sal_set_hora", "sal_peso", "sal_evento_contextual",
     "rec_agregar",
     "proy_crear", "proy_actualizar", "proy_cerrar", "tarea_crear", "tarea_completar",
-    "tiempo_registrar", "metas_actualizar",
 }
 
 # Tools del núcleo + módulos (con prefijo, sin solapamiento).
 ALL_TOOLS = (
     CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + recordatorios.TOOLS
-    + proyectos.TOOLS + tiempo.TOOLS + metas.TOOLS + spam.TOOLS
+    + proyectos.TOOLS + spam.TOOLS
 )
 _HANDLERS = {
     **_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **recordatorios.HANDLERS,
-    **proyectos.HANDLERS, **tiempo.HANDLERS, **metas.HANDLERS, **spam.HANDLERS,
+    **proyectos.HANDLERS, **spam.HANDLERS,
 }
 
 
@@ -230,10 +229,8 @@ def _hint_tool(mensaje: str) -> str:
         return O + "llama tarea_listar para las tareas reales. No inventes."
     if any(p in msg for p in ["terminé la tarea", "completé", "complete", "hice la tarea", "marqué", "listo la tarea"]):
         return O + "llama tarea_completar para marcar la tarea hecha."
-    if any(p in msg for p in ["trabajé", "trabaje", "le metí", "le dediqué", "horas en", "estuve trabajando"]):
-        return O + "llama tiempo_registrar para anotar las horas. Sin esta llamada no queda."
-    if any(p in msg for p in ["mis metas", "metas de la semana", "cómo voy con las metas", "cómo voy esta semana"]):
-        return O + "llama metas_get_semana para las metas reales de la semana. No inventes."
+    if any(p in msg for p in ["mis metas", "meta de ahorro", "cómo voy con las metas", "cómo va mi meta"]):
+        return O + "llama fin_metas para las metas financieras reales y su avance. No inventes."
     if any(p in msg for p in ["spam", "correo basura", "junk", "tengo correos basura", "tengo basura en el correo"]):
         return O + "llama spam_resumen para mirar el spam real. No inventes cuántos hay."
     return ""
