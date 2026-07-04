@@ -2,7 +2,7 @@
 
 **Para:** Nico
 **Qué es:** la re-secuencia de la entrega. Un módulo a la vez, completo, probado 1 semana, antes del siguiente. La memoria de Donna (la espina) crece con cada módulo.
-**Acompaña a:** `CLAUDE.md` (contrato + invariantes), `Plan_Construccion_v7.md` (pasos de build por brecha), `Spec_Herramientas_Nuevas.md` (detalle de tools), `Donna_Canonico.xlsx` (esquema de datos).
+**Acompaña a:** `CLAUDE.md` (contrato + invariantes), `Plan_Construccion_v7.md` (pasos de build por brecha), `Spec_Herramientas_Nuevas.md` (detalle de tools), `Donna_Canonico.xlsx` (esquema de datos). **Después de los 8 módulos:** la expansión a negocios/contenido está en `Vision_Donna_Ampliada.md` (fases N1–N5, escalera de autonomía).
 
 ---
 
@@ -139,34 +139,28 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    unitarios verdes (`tests/test_salud.py`) + `Semanal` se genera por primera vez (job domingo 22:30).
    Semana de 7 días estable: **sin confirmar**.
 3. **Compras** `cmp_` — ⬜ pendiente. Sin `modules/compras.py`; ni Fase 1 (lista manual) tiene código.
-4. **Recordatorios/Calendario** `rec_` — ⚠️ **riesgo, más que parcial**. `modules/recordatorios.py` lee
-   `Dia_Fecha`/`Monto_Aprox`/`Ultimo_Aviso` — ninguna existe en la planilla real (`Día / Fecha`, `Monto
-   aprox`, `Última acción`). Efecto real: **`rec_proximos` siempre devuelve "no hay recordatorios"**, sin
-   importar lo que tengas cargado — el brief nunca te avisa un pago. Y `rec_agregar` escribe **7 valores
-   en una hoja de 8 columnas con nombres distintos**: `aviso_dias` termina en la columna `Estado` y `"Sí"`
-   en `Posposiciones` — cada recordatorio nuevo que crees por chat queda con esas dos columnas corrompidas.
-   **No uses `rec_agregar` hasta que esto se arregle.** Tampoco está la escalera (domingo + T-2 + T-0 con
-   ✅Hecho), el posponer-exige-fecha, ni el "nombra el patrón" tras 3 posposiciones — pero el bug de
-   columnas es más urgente que el scope faltante: hoy el módulo no hace lo que ya dice que hace.
+4. **Recordatorios/Calendario** `rec_` — 🔶 parcial (el bug de schema quedó **cerrado**, falta scope).
+   **Fase 0 · A1 hecho** (commit `fix(recordatorios): schema real`): `modules/recordatorios.py` ahora lee/
+   escribe las columnas reales (`Día / Fecha`, `Monto aprox`, `Estado`, `Posposiciones`, `Última acción`,
+   `Activo`), soporta tipo `única` (fechas que no se repiten, quedan negativas si vencen), incluye los
+   vencidos en `rec_proximos` y appendea 8 valores en el orden correcto. `rec_agregar` ya no corrompe
+   columnas; el brief vuelve a avisar pagos. 9 tests de regresión (`tests/test_recordatorios.py`).
+   **Sigue pendiente el scope de la ficha:** la escalera (domingo + T-2 + T-0 con ✅Hecho), el
+   posponer-exige-fecha y el "nombra el patrón" tras 3 posposiciones — el schema real ya lo soporta.
 5. **Correo** `cor_` — 🔶 parcial. `modules/spam.py` + `core/correo.py` construidos y enganchados
    (digest de spam, archivar/conservar por toque — Gmail etiqueta `Donna/Archivado` + quita `INBOX`,
    Outlook mueve a la carpeta `Donna Archivado`; ninguno de los dos borra). El bucket "importante→resumen
    brief" todavía no es visible en el código; el bucket financiero ya lo cubre Finanzas
    (`ingerir_gastos_email`, Gmail-only, Outlook OFF por canon).
-6. **Productividad** `prod_`/`apr_` — ⚠️ **riesgo, más que parcial**. `modules/proyectos.py` tiene el mismo
-   patrón de bug que Recordatorios: `Proyectos` real no tiene columna `ID` (`_buscar_proyecto`/`_avance`
-   quedan comparando contra `""` siempre → **todos los proyectos activos muestran el mismo avance,
-   contando TODAS las tareas de la hoja**, no las suyas — el número que ves está mal, no solo incompleto).
-   `tarea_listar` lee `Descripcion`/`Prioridad` (sin tilde / columna que no existe) → **muestra "None" en
-   vez de la descripción real de la tarea**. `tarea_crear` escribe **11 valores en una hoja de 8
-   columnas** → cada tarea nueva por chat queda con las columnas corridas (mezcla ID/prioridad en celdas
-   equivocadas). `tarea_completar` busca la columna `Descripcion` (sin tilde) con `headers.index(...)` →
-   no la encuentra, tira excepción, siempre falla con "no pude completar la tarea". **No uses
-   `tarea_crear`/`tarea_completar`/`proy_listar` hasta que esto se arregle** — y ojo: los MITs de Salud
-   (`Tipo=MIT`) viven en esta misma hoja `Tareas`; si los tocas con estas tools rotas en vez del panel del
-   cierre, te vas a topar con el mismo problema. La reconciliación nocturna, el tiempo-por-frente en
-   `Semanal` y el factor de optimismo **tampoco están construidos**; `modules/tiempo.py` sigue dormido
-   como manda el canon.
+6. **Productividad** `prod_`/`apr_` — 🔶 parcial (el bug de schema quedó **cerrado**, falta scope).
+   **Fase 0 · A2 hecho** (commit `fix(proyectos): opera por nombre`): `modules/proyectos.py` opera por
+   NOMBRE sobre el schema real, sin IDs fantasma. `_avance` cuenta solo las tareas del proyecto pedido
+   (antes contaba TODAS) y excluye los MITs de Salud; `tarea_listar` muestra la `Descripción` real (no
+   "None"); `tarea_crear` appendea 8 valores en el orden real (idéntico a como Salud crea un MIT);
+   `tarea_completar` usa el patrón robusto de `salud._fila_mit` y por fin funciona. 7 tests de regresión
+   (`tests/test_proyectos.py`). **Fase 0 · B1/B2 hecho:** `metas`/`tiempo` desregistrados del brain
+   (hojas inexistentes; `tiempo.py` sigue dormido por canon). **Sigue pendiente el scope de la ficha:**
+   reconciliación nocturna, tiempo-por-frente en `Semanal` y factor de optimismo **no están construidos**.
 7. **Proactividad** `pro_` — 🔨 completo el scope base. `modules/proactividad.py` prioriza compromiso
    vencido > proyecto en riesgo > meta atrasada; el tope de 1/día está enforced en `core/scheduler.py`
    (`job_ya_corrio("proactividad")`). El scope ampliado (alerta de presupuesto al 90%, nudge de familia,
@@ -227,6 +221,29 @@ equivocado, y no es "falta scope", es corrupción de datos activa:**
 
 ---
 
+## Fase 0 — Reparación de bugs activos (comprometida 2026-07-03, ANTES de Compras)
+
+Decidido: los bugs activos se cierran **antes** de construir el módulo siguiente y antes del harness.
+El detalle técnico completo (2 opciones por ítem, con output esperado, para ejecutar por IA) vive en
+`Plan_Reparacion_Bugs_y_Datos.md`. Orden: A1 Recordatorios → A2 Proyectos/Tareas → B1/B2 (desregistrar
+`metas`/`tiempo` del brain) → C2 Mes activo → C1 categorías → C3 captura de sueño/ventanas → C4-C6.
+Gate de salida: `pytest tests/` verde con los tests nuevos + smoke manual por Telegram + tablero de este
+documento actualizado (ítems 4 y 6 dejan de estar en ⚠️).
+
+**Avance (2026-07-04):** ✅ **A1** (recordatorios: schema real) · ✅ **A2** (proyectos/tareas: por nombre,
+sin IDs) · ✅ **B1/B2** (desregistrar `metas`/`tiempo` del brain) — todo en `main`, 111 tests verdes,
+ítems 4 y 6 ya fuera de ⚠️. **Pendientes:** ⬜ **C2** Mes activo · ⬜ **C1** categorías (código + limpieza
+con OK de Nico) · ⬜ **C3** captura de sueño/ventanas · ⬜ **C4** vencido-insiste · ⬜ **C5** higiene (manual,
+Nico) · ⬜ **C6** ancla de fecha del panel de cierre. Falta el smoke manual por Telegram de A1/A2.
+
+Después de la Fase 0 viene el **harness propio** (`core/harness.py`: registro declarativo de tools,
+gate de confirmación por toque para toda escritura, subagentes formales, structured outputs, traza),
+luego **autodiagnóstico + variedad de textos** (ver `Ficha_Autodiagnostico_y_Variedad.md` — Donna
+SOLO diagnostica y avisa en su voz; los arreglos son siempre vía Claude Code con OK de Nico, decisión
+2026-07-03), y recién entonces **Compras Fase 1**.
+
+---
+
 *El gate "un módulo a la vez" ya lo decidiste (lo llevas junto con arreglos puntuales a lo construido,
-no en secuencia estricta). Lo único pendiente de decidir: cuándo entra Productividad/Recordatorios a
-arreglarse — hoy tienen bugs de escritura activos, no solo scope incompleto.*
+no en secuencia estricta). La decisión que faltaba —cuándo entran Productividad/Recordatorios a
+arreglarse— quedó tomada: Fase 0, inmediata (ver arriba).*
