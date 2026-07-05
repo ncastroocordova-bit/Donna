@@ -12,7 +12,7 @@ from anthropic import AsyncAnthropic
 
 from config import settings
 from core import agenda, diagnostico, memory
-from modules import aprendizaje, estados_cuenta, finanzas, proyectos, recordatorios, salud, spam
+from modules import aprendizaje, compras, estados_cuenta, finanzas, proyectos, recordatorios, salud, spam
 
 logger = logging.getLogger(__name__)
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -174,11 +174,12 @@ WRITE_TOOLS = {
 # Tools del núcleo + módulos (con prefijo, sin solapamiento).
 ALL_TOOLS = (
     CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + recordatorios.TOOLS
-    + proyectos.TOOLS + spam.TOOLS + estados_cuenta.TOOLS + diagnostico.TOOLS
+    + proyectos.TOOLS + spam.TOOLS + estados_cuenta.TOOLS + diagnostico.TOOLS + compras.TOOLS
 )
 _HANDLERS = {
     **_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **recordatorios.HANDLERS,
     **proyectos.HANDLERS, **spam.HANDLERS, **estados_cuenta.HANDLERS, **diagnostico.HANDLERS,
+    **compras.HANDLERS,
 }
 
 
@@ -240,6 +241,10 @@ def _hint_tool(mensaje: str) -> str:
         return O + "llama tarea_completar para marcar la tarea hecha."
     if any(p in msg for p in ["mis metas", "meta de ahorro", "cómo voy con las metas", "cómo va mi meta"]):
         return O + "llama fin_metas para las metas financieras reales y su avance. No inventes."
+    if any(p in msg for p in ["lista del súper", "lista del super", "qué comprar", "que comprar", "qué tengo que comprar", "que tengo que comprar", "qué hay que comprar"]):
+        return O + "llama cmp_lista para la lista real del súper. No inventes."
+    if any(p in msg for p in ["falta ", "faltan ", "se acabó", "se acabo", "queda poco", "para el súper", "para el super", "a la lista del súper", "anota para", "anótame"]):
+        return O + "llama cmp_agregar para sumar el producto a la lista del súper."
     if any(p in msg for p in ["spam", "correo basura", "junk", "tengo correos basura", "tengo basura en el correo"]):
         return O + "llama spam_resumen para mirar el spam real. No inventes cuántos hay."
     return ""

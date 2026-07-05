@@ -147,7 +147,13 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    bug de columnas de Productividad (ver ítem 6 abajo) y puede no encontrarlo o mostrarlo mal. 35 evals
    unitarios verdes (`tests/test_salud.py`) + `Semanal` se genera por primera vez (job domingo 22:30).
    Semana de 7 días estable: **sin confirmar**.
-3. **Compras** `cmp_` — ⬜ pendiente. Sin `modules/compras.py`; ni Fase 1 (lista manual) tiene código.
+3. **Compras** `cmp_` — 🔨 **Fase 1 construida (2026-07-05).** `modules/compras.py`: lista manual del
+   súper. `cmp_agregar` ("falta arroz", "queda poco atún, anótalo" → parser determinista, sin LLM, dedup
+   por nombre), `cmp_lista` (devuelve lo pendiente), `cmp_comprado` ("ya lo compré / tacha el X"). Hoja
+   nueva `Compras` (Item · Estado · Fecha_Agregado · Fecha_Comprado · Categoria). **Toque:** comando
+   `/lista` manda la lista tocable (un ✅ por producto → lo saca y registra la fecha). Validado
+   end-to-end contra la planilla real; 7 tests (`tests/test_compras.py`). **Fase 2 (predictor de
+   reposición) sigue DIFERIDA** por canon — no se construyó.
 4. **Recordatorios/Calendario** `rec_` — 🔶 parcial (el bug de schema quedó **cerrado**, falta scope).
    **Fase 0 · A1 hecho** (commit `fix(recordatorios): schema real`): `modules/recordatorios.py` ahora lee/
    escribe las columnas reales (`Día / Fecha`, `Monto aprox`, `Estado`, `Posposiciones`, `Última acción`,

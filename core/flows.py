@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 
 from config import settings
 from core import memory, sheets
-from modules import aprendizaje, finanzas, recordatorios, salud
+from modules import aprendizaje, compras, finanzas, recordatorios, salud
 from modules import spam as spam_mod
 
 logger = logging.getLogger(__name__)
@@ -275,6 +275,28 @@ async def enviar_digest_spam(bot, chat_id: int) -> None:
     await bot.send_message(chat_id, _texto_spam(d["correos"]), reply_markup=_teclado_spam(d["correos"]))
 
 
+# ───────────────────────── Lista del súper (Compras, tocable) ─────────────────────────
+
+def teclado_compras(items: list[str]) -> InlineKeyboardMarkup:
+    """Un botón ✅ por producto pendiente — tocarlo lo marca comprado. Salta los nombres tan
+    largos que no caben en el tope de 64 bytes de callback_data (igual salen en el texto)."""
+    filas = []
+    for it in items[:14]:
+        cb = f"cmp:ok:{it}"
+        if len(cb.encode("utf-8")) <= 64:
+            filas.append([InlineKeyboardButton(f"✅ {it[:40]}", callback_data=cb)])
+    return InlineKeyboardMarkup(filas)
+
+
+async def enviar_lista_compras(bot, chat_id: int) -> None:
+    pend = await compras.pendientes()
+    if not pend:
+        await bot.send_message(chat_id, "Tu lista del súper está vacía. Dime «falta X» y la armo.")
+        return
+    await bot.send_message(chat_id, f"Lista del súper ({len(pend)}) — toca lo que ya compraste:",
+                           reply_markup=teclado_compras(pend))
+
+
 # ───────────────────────── Inferencias ─────────────────────────
 
 async def preguntar_inferencia_pendiente(bot, chat_id: int) -> None:
@@ -410,6 +432,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         nombre = data.split(":", 2)[2]
         await recordatorios.marcar_hecho(nombre)
         await q.edit_message_text(f"Listo, marqué «{nombre}» como hecho. Ya no te insisto.")
+        return
+
+    if data.startswith("cmp:ok:"):  # Compras: marcar un producto como comprado por toque
+        item = data.split(":", 2)[2]
+        await compras.marcar_comprado(item)
+        pend = await compras.pendientes()
+        if pend:
+            await _edit_ok(q, f"Lista del súper ({len(pend)}) — toca lo que ya compraste:",
+                           reply_markup=teclado_compras(pend))
+        else:
+            await _edit_ok(q, "Listo, compraste todo. Lista limpia. 🛒")
         return
 
     if data == "digest:aceptar":

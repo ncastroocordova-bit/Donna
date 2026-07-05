@@ -127,6 +127,13 @@ async def cmd_correos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+async def cmd_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """La lista del súper con toques para marcar comprado (módulo Compras)."""
+    if not _es_nico(update):
+        return
+    await flows.enviar_lista_compras(context.bot, update.effective_chat.id)
+
+
 # ───────────────────────── Mensajes ─────────────────────────
 
 async def manejar_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -253,6 +260,7 @@ def main() -> None:
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CommandHandler("spam", cmd_spam))
     app.add_handler(CommandHandler("correos", cmd_correos))
+    app.add_handler(CommandHandler("lista", cmd_lista))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))
     app.add_handler(MessageHandler(filters.VOICE, manejar_voz))
     app.add_handler(MessageHandler(filters.PHOTO, manejar_foto))

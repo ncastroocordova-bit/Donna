@@ -55,6 +55,9 @@ TABS = {
     "Proyectos": ["Proyecto", "Estado", "Foco actual", "Próxima acción", "% Avance",
                   "Última act.", "Notas"],
     "Ideas": ["Fecha", "Idea", "Estado"],
+    # Lista del súper (módulo Compras, Fase 1). Estado = pendiente|comprado; lo escribe
+    # modules/compras.py. La predicción de reposición (Fase 2) es diferida y no usa este tab aún.
+    "Compras": ["Item", "Estado", "Fecha_Agregado", "Fecha_Comprado", "Categoria"],
     # --- Finanzas (tabs de ENTRADA; las de fórmulas no se tocan) ---
     # Headers EXACTOS de la planilla real. Intención (v2): se infiere y se confirma en el digest.
     "Transacciones": ["Fecha", "Tipo", "Categoría", "Subcategoría", "Comercio", "Monto",
