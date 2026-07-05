@@ -11,7 +11,7 @@ from pathlib import Path
 from anthropic import AsyncAnthropic
 
 from config import settings
-from core import agenda, memory
+from core import agenda, diagnostico, memory
 from modules import aprendizaje, estados_cuenta, finanzas, proyectos, recordatorios, salud, spam
 
 logger = logging.getLogger(__name__)
@@ -174,11 +174,11 @@ WRITE_TOOLS = {
 # Tools del núcleo + módulos (con prefijo, sin solapamiento).
 ALL_TOOLS = (
     CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + recordatorios.TOOLS
-    + proyectos.TOOLS + spam.TOOLS + estados_cuenta.TOOLS
+    + proyectos.TOOLS + spam.TOOLS + estados_cuenta.TOOLS + diagnostico.TOOLS
 )
 _HANDLERS = {
     **_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **recordatorios.HANDLERS,
-    **proyectos.HANDLERS, **spam.HANDLERS, **estados_cuenta.HANDLERS,
+    **proyectos.HANDLERS, **spam.HANDLERS, **estados_cuenta.HANDLERS, **diagnostico.HANDLERS,
 }
 
 
@@ -188,9 +188,16 @@ async def _ejecutar_tool(name: str, inp: dict) -> str:
         return f"(herramienta desconocida: {name})"
     try:
         return await handler(inp)
-    except Exception:
+    except Exception as e:
         logger.exception("Tool %s falló", name)
-        return f"(la herramienta {name} falló; sigo sin ella)"
+        # Autodiagnóstico: registra el incidente (dedup) y responde en carácter, sin stacktrace.
+        try:
+            inc = await diagnostico.registrar(name, "tool_excepcion",
+                                              f"La tool {name} tiró una excepción",
+                                              input_json=inp, error_texto=repr(e))
+            return diagnostico.texto_para_nico(inc)
+        except Exception:
+            return f"(la herramienta {name} falló; sigo sin ella)"
 
 
 # ───────────────────────── Presupuesto de contexto ─────────────────────────

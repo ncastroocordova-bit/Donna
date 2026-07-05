@@ -96,10 +96,12 @@ def test_futuro_fuera_de_ventana_no_aparece(monkeypatch):
 def test_agregar_appendea_8_valores_schema_real(monkeypatch):
     capturado = {}
 
-    async def _fake_append(hoja, valores, sheet_id=None):
+    # rec_agregar usa la escritura VERIFICADA (autodiagnóstico); se mockea esa, no append_row.
+    async def _fake_append_v(hoja, valores, verificar_cols, *, tool="-", sheet_id=None):
         capturado["valores"] = valores
+        return True
 
-    monkeypatch.setattr(recordatorios.sheets, "append_row", _fake_append)
+    monkeypatch.setattr(recordatorios.sheets, "append_row_verificado", _fake_append_v)
 
     async def _fake_create(**kwargs):
         payload = '{"recordatorio": "Pago patente", "tipo": "anual", "dia_fecha": "01-03", "monto_aprox": 80000}'

@@ -262,19 +262,27 @@ mismo deseo/categoría (Telegram tira "message is not modified" sin capturar) �
 **Decisión de alcance (2026-07-04):** con el negocio fuera del horizonte cercano, el **harness propio
 completo se descarta por ahora** (su valor real es la escalera de autonomía hacia terceros de
 `Vision_Donna_Ampliada.md`, que no aplica a un asistente solo-personal). Se optó por una versión **lean**
-del autodiagnóstico (guardián de schema al boot + verificación de escritura + tabla `incidentes` +
-aviso en carácter, sin el diagnóstico con Haiku ni el CLI puente) — **pero esa pieza AÚN NO SE CONSTRUYÓ**;
-solo se resolvieron los 3 síntomas puntuales de arriba de forma directa. La red de seguridad genérica
-(el guardián de headers que habría atrapado los bugs de A1/A2 el día uno) sigue pendiente.
+del autodiagnóstico.
+
+**Autodiagnóstico lean — CONSTRUIDO (2026-07-05).** `core/diagnostico.py` + tabla `incidentes`
+(migración `014`, aplicada a Supabase). Detección determinista (sin Haiku), tres tipos:
+`tool_excepcion` (wrapper en `brain._ejecutar_tool` → registra + responde en carácter sin stacktrace),
+`schema_sheets` (guardián al boot `sheets.verificar_headers` sobre las hojas críticas → **habría atrapado
+los bugs de A1/A2 el día uno**; corrido contra la planilla real da "ninguno ✓"), `verificacion_escritura`
+(`sheets.append_row_verificado` relee y confirma; conectado en `rec_agregar`, el que corrompía columnas).
+Dedup por firma con normalización de números validada contra Supabase real (dos errores "fila 5"/"fila 99"
+→ un incidente, frecuencia 2). Tool `diag_estado` ("¿qué se ha roto?"). 10 tests. **Queda afuera** (por
+ser lean, se puede sumar después): el diagnóstico con Haiku, el CLI puente `scripts/incidentes.py`, el
+watchdog de jobs, el detector `correccion_nico`, y extender `append_row_verificado` al resto de escritores.
 
 **Único pendiente para cerrar el gate formal de Fase 0:** el **smoke manual por Telegram** completo
 (crear recordatorio/tarea, tocar el panel del cierre) — sin confirmar explícitamente por Nico, aunque el
 uso real del bot en 07-04/05 ya ejerció brief/cierre/desglose y esos caminos están probados en la práctica.
 
-Después de la Fase 0 viene el **autodiagnóstico lean** (pendiente, ver arriba) y recién
-entonces **Compras Fase 1** (Módulo 3) — aunque Finanzas siguió creciendo fuera de secuencia con v4
-porque era la prioridad real de Nico, y eso está bien: la regla madre ya no se sigue estricta (ver nota
-arriba del tablero).
+Con el **autodiagnóstico lean ya construido** (ver arriba), el siguiente en la secuencia es
+**Compras Fase 1** (Módulo 3) — aunque Finanzas siguió creciendo fuera de secuencia con v4 porque era la
+prioridad real de Nico, y eso está bien: la regla madre ya no se sigue estricta (ver nota arriba del
+tablero).
 
 ---
 

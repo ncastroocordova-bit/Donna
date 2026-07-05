@@ -15,7 +15,7 @@ from datetime import datetime, time, timedelta
 from telegram.ext import Application, ContextTypes
 
 from config import settings
-from core import agenda, brain, correlador, correo, flows, frases, memory, sheets
+from core import agenda, brain, correlador, correo, diagnostico, flows, frases, memory, sheets
 from modules import aprendizaje, estados_cuenta, finanzas, proactividad, proyectos, recordatorios, salud
 
 logger = logging.getLogger(__name__)
@@ -262,6 +262,33 @@ async def job_estados_cuenta(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("job_estados_cuenta falló")
 
 
+# ───────────────────────── Autodiagnóstico: guardián de schema al boot ─────────────────────────
+
+# Hojas cuyas columnas el código lee/escribe posicionalmente — un mismatch corrompe datos.
+HOJAS_CRITICAS = ("Diario", "Tareas", "Proyectos", "Recordatorios", "Reconciliacion", "Semanal",
+                  "Transacciones", "Categorias", "Metas", "Compras_Detalle", "Deuda_Mensual")
+
+
+async def job_verificar_schema(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Al boot: chequea que las hojas críticas tengan las columnas que el código espera. Cada
+    mismatch → incidente `schema_sheets` (habría atrapado los bugs de Recordatorios/Proyectos el
+    día uno, en vez de descubrirlos corrompiendo datos)."""
+    try:
+        from setup_sheets import TABS
+        esperados = {h: TABS[h] for h in HOJAS_CRITICAS if h in TABS}
+        problemas = await sheets.verificar_headers(esperados)
+    except Exception:
+        logger.exception("job_verificar_schema falló")
+        return
+    for p in problemas:
+        hoja = p.split(":", 1)[0]
+        await diagnostico.registrar(f"sheet:{hoja}", "schema_sheets", p, error_texto=p)
+    if problemas:
+        logger.warning("Schema: %d hoja(s) con columnas faltantes: %s", len(problemas), problemas)
+    else:
+        logger.info("Schema OK: las hojas críticas tienen sus columnas.")
+
+
 # ───────────────────────── Resiliencia ─────────────────────────
 
 async def check_pendientes(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -296,8 +323,9 @@ def setup_scheduler(app: Application) -> None:
         logger.info("Correo activo (%s): sync de gastos cada 3h + pregunta-compras cada 5h + digest de spam %d:00 + estados de cuenta 9:30.",
                     ", ".join(correo.proveedores_activos()), settings.spam_hora)
     jq.run_once(check_pendientes, when=10)  # recupera el toque perdido tras un reinicio
+    jq.run_once(job_verificar_schema, when=15)  # guardián de schema (autodiagnóstico)
     logger.info(
         "Scheduler listo (%s): brief 8:00, proactividad 12:00, cierre 22:00 (+digest), "
-        "resumen semanal domingo 22:30, decay semanal, + resiliencia.",
+        "resumen semanal domingo 22:30, decay semanal, guardián de schema + resiliencia.",
         settings.timezone,
     )

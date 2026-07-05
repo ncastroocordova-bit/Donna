@@ -177,3 +177,50 @@ async def upsert_por_clave(
     nueva[si] = valor
     await append_row(hoja, nueva, sheet_id=sheet_id)
     return "creado"
+
+
+# ───────────────────────── Autodiagnóstico: schema + verificación de escritura ─────────────────────────
+
+async def verificar_headers(esperados: dict[str, list[str]], sheet_id: str | None = None) -> list[str]:
+    """Compara los headers reales de cada hoja contra los esperados. Devuelve la lista de
+    problemas ('Hoja: faltan columnas [...]'). Se corre al boot; el caller registra cada mismatch
+    como incidente `schema_sheets`. Habría atrapado los bugs de Recordatorios/Proyectos el día 1.
+    Degrada: una hoja ilegible se salta (no bloquea el arranque)."""
+    problemas = []
+    for hoja, cols in esperados.items():
+        try:
+            _, headers = _fila_headers(await get_rows(hoja, sheet_id=sheet_id))
+        except Exception:
+            logger.exception("verificar_headers: no pude leer %s", hoja)
+            continue
+        faltan = [c for c in cols if c not in headers]
+        if faltan:
+            problemas.append(f"{hoja}: faltan columnas {faltan}")
+    return problemas
+
+
+async def append_row_verificado(hoja: str, valores: list, verificar_cols: list[int], *,
+                                tool: str = "-", sheet_id: str | None = None) -> bool:
+    """append_row + relee la última fila y compara las posiciones `verificar_cols`. Si algo no
+    calza, registra un incidente `verificacion_escritura` (NO revierte — revertir sería
+    auto-arreglo; solo reporta). Devuelve True si cuadró. Usar en escrituras posicionales críticas
+    (las que ya corrompieron columnas antes)."""
+    await append_row(hoja, valores, sheet_id=sheet_id)
+    try:
+        filas = await get_rows(hoja, sheet_id=sheet_id)
+        ultima = filas[-1] if filas else []
+    except Exception:
+        return True  # no pude releer → no afirmo que falló
+    disc = []
+    for c in verificar_cols:
+        esperado = str(valores[c]) if c < len(valores) else ""
+        real = str(ultima[c]) if c < len(ultima) else ""
+        if esperado != real:
+            disc.append(f"col{c}: escribí '{esperado}' pero quedó '{real}'")
+    if disc:
+        from core import diagnostico  # import local: evita ciclo al cargar sheets
+        await diagnostico.registrar(tool, "verificacion_escritura",
+                                    f"Escritura en {hoja} no cuadró al releerla",
+                                    error_texto="; ".join(disc))
+        return False
+    return True

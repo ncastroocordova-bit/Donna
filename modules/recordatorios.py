@@ -209,11 +209,12 @@ async def _t_agregar(inp: dict) -> str:
         )
         d = json.loads(r.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip())
         # Orden REAL de la hoja: Recordatorio · Tipo · Día / Fecha · Monto aprox · Estado ·
-        # Posposiciones · Última acción · Activo (8 columnas).
-        await sheets.append_row(HOJA, [
+        # Posposiciones · Última acción · Activo (8 columnas). Escritura VERIFICADA (autodiagnóstico):
+        # relee y confirma que Recordatorio/Estado/Activo quedaron donde deben (las que se corrompían).
+        await sheets.append_row_verificado(HOJA, [
             d.get("recordatorio", texto), d.get("tipo", "mensual"), str(d.get("dia_fecha", "")),
             d.get("monto_aprox", 0) or "", "Pendiente", 0, "", "Sí",
-        ])
+        ], verificar_cols=[0, 4, 7], tool="rec_agregar")
         return f"Anotado: te recuerdo '{d.get('recordatorio', texto)}'. Yo me encargo."
     except Exception:
         logger.exception("rec_agregar falló")
