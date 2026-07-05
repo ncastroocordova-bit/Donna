@@ -231,10 +231,13 @@ Gate de salida: `pytest tests/` verde con los tests nuevos + smoke manual por Te
 documento actualizado (ítems 4 y 6 dejan de estar en ⚠️).
 
 **Avance (2026-07-04):** ✅ **A1** (recordatorios: schema real) · ✅ **A2** (proyectos/tareas: por nombre,
-sin IDs) · ✅ **B1/B2** (desregistrar `metas`/`tiempo` del brain) — todo en `main`, 111 tests verdes,
-ítems 4 y 6 ya fuera de ⚠️. **Pendientes:** ⬜ **C2** Mes activo · ⬜ **C1** categorías (código + limpieza
-con OK de Nico) · ⬜ **C3** captura de sueño/ventanas · ⬜ **C4** vencido-insiste · ⬜ **C5** higiene (manual,
-Nico) · ⬜ **C6** ancla de fecha del panel de cierre. Falta el smoke manual por Telegram de A1/A2.
+sin IDs) · ✅ **B1/B2** (desregistrar `metas`/`tiempo` del brain) · ✅ **C2** (Mes activo: toque del día 1) ·
+✅ **C3** (captura de sueño/ventanas por chips) · ✅ **C4** (vencido-insiste con botón ✅ Hecho) ·
+✅ **C6** (ancla de fecha del panel de cierre) — todo en `main`, 126 tests verdes, ítems 4 y 6 fuera de ⚠️.
+**Pendientes:** ⬜ **C1** categorías (código listo para hacer + limpieza de datos con dry-run; decisión de
+Nico ya tomada 2026-07-04: validar contra `Categorias`, fallback `Otro Gasto`, transferencias→`Transferencias`,
+Negocio/San Vale→`Alimentación` o `Chanchería` si dudoso) · ⬜ **C5** higiene de planilla (manual, Nico).
+Falta el **smoke manual por Telegram** de todo el lote (A1/A2 + C2/C3/C4/C6).
 
 Después de la Fase 0 viene el **harness propio** (`core/harness.py`: registro declarativo de tools,
 gate de confirmación por toque para toda escritura, subagentes formales, structured outputs, traza),
