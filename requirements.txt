@@ -19,6 +19,9 @@ google-api-python-client>=2.140.0
 google-auth>=2.30.0
 google-auth-oauthlib>=1.2.0
 
+# Estados de cuenta: leer PDF con clave (Finanzas v4)
+pypdf>=5.0.0
+
 # Correo: Outlook personal vía Microsoft Graph
 msal>=1.28.0
 requests>=2.31.0

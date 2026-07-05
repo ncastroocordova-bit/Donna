@@ -12,7 +12,7 @@ from anthropic import AsyncAnthropic
 
 from config import settings
 from core import agenda, memory
-from modules import aprendizaje, finanzas, proyectos, recordatorios, salud, spam
+from modules import aprendizaje, estados_cuenta, finanzas, proyectos, recordatorios, salud, spam
 
 logger = logging.getLogger(__name__)
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -174,11 +174,11 @@ WRITE_TOOLS = {
 # Tools del núcleo + módulos (con prefijo, sin solapamiento).
 ALL_TOOLS = (
     CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + recordatorios.TOOLS
-    + proyectos.TOOLS + spam.TOOLS
+    + proyectos.TOOLS + spam.TOOLS + estados_cuenta.TOOLS
 )
 _HANDLERS = {
     **_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **recordatorios.HANDLERS,
-    **proyectos.HANDLERS, **spam.HANDLERS,
+    **proyectos.HANDLERS, **spam.HANDLERS, **estados_cuenta.HANDLERS,
 }
 
 
@@ -209,6 +209,8 @@ def _hint_tool(mensaje: str) -> str:
         return O + "llama fin_saldo_mes para el saldo real del mes. No inventes cifras."
     if any(p in msg for p in ["presupuesto", "me estoy pasando", "cuánto llevo en", "cuánto gasté en"]):
         return O + "llama fin_presupuesto para comparar gasto vs presupuesto. No inventes."
+    if any(p in msg for p in ["cómo va mi deuda", "progreso de la deuda", "ha bajado la deuda", "cuánto he bajado", "deuda mes a mes"]):
+        return O + "llama fin_progreso_deuda para el historial mes a mes real. No inventes."
     if any(p in msg for p in ["tarjeta", "deuda", "cupo", "cuánto debo"]):
         return O + "llama fin_estado_deuda para la deuda/cupo real. No inventes montos."
     if any(p in msg for p in ["fui al gym", "hice ejercicio", "medité", "medite", "ayuné", "ayune", "comí a las", "última comida"]):

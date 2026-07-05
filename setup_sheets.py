@@ -68,6 +68,10 @@ TABS = {
     # acá (ID_Tx = ID_Único del padre). Headers EXACTOS de la planilla real.
     "Compras_Detalle": ["Fecha", "Comercio", "Item", "Cantidad", "Precio", "Categoría",
                         "Intención", "Predecible", "ID_Tx", "Fuente"],
+    # Historial mes a mes de deuda (Finanzas v4). Una fila por (Mes, Banco, Producto); lo escribe
+    # modules/estados_cuenta.py al leer los estados de cuenta del banco. Registro visible.
+    "Deuda_Mensual": ["Mes", "Banco", "Producto", "Deuda", "Cupo", "Interés mes", "Pago mínimo",
+                      "Fecha estado", "Actualizado"],
 }
 
 # Filas seed de Config (solo se escriben si el tab queda SIN filas de datos). Estado

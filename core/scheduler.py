@@ -16,7 +16,7 @@ from telegram.ext import Application, ContextTypes
 
 from config import settings
 from core import agenda, brain, correlador, correo, flows, frases, memory, sheets
-from modules import aprendizaje, finanzas, proactividad, proyectos, recordatorios, salud
+from modules import aprendizaje, estados_cuenta, finanzas, proactividad, proyectos, recordatorios, salud
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +250,18 @@ async def job_spam(context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Digest de spam enviado.")
 
 
+async def job_estados_cuenta(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Diario: si llegaron estados de cuenta nuevos, actualiza la deuda del faro + historial,
+    reconcilia contra la planilla y avisa a Nico. La dedup interna hace que solo actúe cuando hay
+    un estado nuevo (≈ mensual), así que correrlo a diario es barato y no repite."""
+    if not correo.disponible():
+        return
+    try:
+        await estados_cuenta.procesar_y_reportar(context.bot, settings.nico_telegram_id)
+    except Exception:
+        logger.exception("job_estados_cuenta falló")
+
+
 # ───────────────────────── Resiliencia ─────────────────────────
 
 async def check_pendientes(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -280,7 +292,8 @@ def setup_scheduler(app: Application) -> None:
         jq.run_repeating(job_sync_correos, interval=timedelta(hours=3), first=timedelta(minutes=2))
         jq.run_repeating(job_preguntar_compras, interval=POLL_COMPRAS, first=timedelta(minutes=15))
         jq.run_daily(job_spam, time=time(settings.spam_hora, 0, tzinfo=tz))
-        logger.info("Correo activo (%s): sync de gastos cada 3h + pregunta-compras cada 5h + digest de spam %d:00.",
+        jq.run_daily(job_estados_cuenta, time=time(9, 30, tzinfo=tz))  # deuda mes a mes desde los estados
+        logger.info("Correo activo (%s): sync de gastos cada 3h + pregunta-compras cada 5h + digest de spam %d:00 + estados de cuenta 9:30.",
                     ", ".join(correo.proveedores_activos()), settings.spam_hora)
     jq.run_once(check_pendientes, when=10)  # recupera el toque perdido tras un reinicio
     logger.info(

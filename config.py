@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     spam_hora: int = 9             # hora del digest de spam diario
     spam_max: int = 25             # tope de correos de spam a listar por digest
 
+    # --- Estados de cuenta: PDF con clave (Finanzas v4) ---
+    # La clave abre el DOCUMENTO (no es la del banco). Nunca al repo/Sheet/chat; solo en .env/Railway.
+    banco_pdf_password_bch: str = ""    # clave del PDF de estado de cuenta de Banco de Chile
+    banco_pdf_password_mach: str = ""   # clave del PDF de estado de cuenta de Mach
+
     # --- Google (Sheets + Calendar) ---
     # Canon v7.2: UN solo workbook "Donna" (vida + finanzas en la misma planilla).
     # GOOGLE_SHEET_ID es el id único. Los dos de abajo quedan como legacy: solo se
