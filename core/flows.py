@@ -29,6 +29,17 @@ def _hoy() -> str:
     return datetime.now(settings.tz).strftime("%Y-%m-%d")
 
 
+async def _edit_ok(q, texto, reply_markup=None) -> None:
+    """edit_message_text que traga el 'message is not modified' de Telegram (que salta al
+    re-tocar el mismo valor). Sin esto, el editor de ítems se trababa al re-seleccionar el
+    mismo deseo/categoría: la excepción no capturada dejaba el toque sin efecto."""
+    try:
+        await q.edit_message_text(texto, reply_markup=reply_markup)
+    except Exception as e:
+        if "not modified" not in str(e).lower():
+            logger.exception("edit_message_text falló")
+
+
 # ───────────────────────── Panel del cierre ─────────────────────────
 
 def teclado_cierre(estado: dict | None = None, mits: list[str] | None = None, fecha: str = "") -> InlineKeyboardMarkup:
@@ -354,7 +365,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                                        reply_markup=teclado_hora_dormi())
         return
 
-    if data.startswith("sh:"):  # C3: horas de sueño por chips (d = dormí, w = desperté)
+    if data.startswith("sh:"):  # sueño por chips de hora (d = dormí, w = desperté)
         partes = data.split(":", 2)  # ["sh", "d"|"w", "HH:MM"]
         cual, hora = partes[1], partes[2]
         if cual == "d":
@@ -362,9 +373,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await q.edit_message_text(f"Te dormiste {hora}, anotado.")
             await context.bot.send_message(q.message.chat_id, "¿Y a qué hora despertaste?",
                                            reply_markup=teclado_hora_despertar())
-        else:  # w = desperté
+        else:  # w = desperté → deriva el '7h+' de la ventana (sin preguntar el binario inútil)
             await salud.registrar_hora("hora_despertar", hora)
-            await q.edit_message_text(f"Despertaste {hora}. Ventana de sueño anotada. 😴")
+            val = await salud.derivar_sueno_de_ventana()
+            if val == "Sí":
+                cola = "Dormiste tus 7+, bien ahí."
+            elif val == "No":
+                cola = "Menos de 7. Hoy a la cama a las 23:00, te conozco."
+            else:
+                cola = ""
+            await q.edit_message_text(f"Despertaste {hora}. Ventana de sueño anotada. {cola}".strip())
         return
 
     if data.startswith("cfg:"):  # C2: actualizar el Mes activo del Dashboard (toque del día 1)
@@ -430,16 +448,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if accion == "ok":
             context.user_data.pop("items_buffer", None)
             context.user_data.pop("item_idx", None)
-            await q.edit_message_text(f"Listo, {len(items)} ítem(s) guardados. Quedan en el digest para aceptar.")
+            await _edit_ok(q, f"Listo, {len(items)} ítem(s) guardados. Quedan en el digest para aceptar.")
             return
         if accion == "back":
-            await q.edit_message_text(_texto_panel_items(b.get("comercio", ""), items),
-                                      reply_markup=_teclado_panel_items(items))
+            await _edit_ok(q, _texto_panel_items(b.get("comercio", ""), items), reply_markup=_teclado_panel_items(items))
             return
         if accion == "p":  # elegir ítem → abre su editor
             idx = int(partes[2])
             context.user_data["item_idx"] = idx
-            await q.edit_message_text(_texto_item(items[idx]), reply_markup=_teclado_item_editor(items[idx]))
+            await _edit_ok(q, _texto_item(items[idx]), reply_markup=_teclado_item_editor(items[idx]))
             return
         idx = context.user_data.get("item_idx")
         if idx is None or idx >= len(items):
@@ -447,14 +464,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
         if accion == "cat":
             context.user_data["corrigiendo_item_cat"] = True
-            await q.edit_message_text(f"¿Qué categoría para «{items[idx].get('item', '')}»? Escríbela.")
+            await _edit_ok(q, f"¿Qué categoría para «{items[idx].get('item', '')}»? Escríbela.")
             return
         if accion == "d":
             items[idx]["intencion"] = partes[2]
         elif accion == "pr":
             items[idx]["predecible"] = (partes[2] == "1")
         await memory.buffer_actualizar(buffer_id, {"items": items})
-        await q.edit_message_text(_texto_item(items[idx]), reply_markup=_teclado_item_editor(items[idx]))
+        await _edit_ok(q, _texto_item(items[idx]), reply_markup=_teclado_item_editor(items[idx]))
         return
 
     if data.startswith("compra:"):

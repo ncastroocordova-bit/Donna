@@ -269,6 +269,28 @@ async def registrar_hora_dormi(hora: str, fecha: str | None = None) -> str:
     return f"Anotado: te dormiste {hora}."
 
 
+async def derivar_sueno_de_ventana(fecha: str | None = None) -> str | None:
+    """Calcula la ventana de sueño (dormí→desperté) de la fila del día y setea 'Sueño 7h+'
+    (Sí/No) SOLO — reemplaza la pregunta binaria inútil por el dato real. Devuelve 'Sí'/'No',
+    o None si falta alguna de las dos horas. Degrada elegante si no puede leer el Diario."""
+    fecha = fecha or _hoy()
+    try:
+        filas = await sheets.get_dicts(HOJA)
+    except Exception:
+        logger.exception("derivar_sueno_de_ventana: no pude leer Diario")
+        return None
+    fila = next((f for f in filas if str(f.get("Fecha", "")).strip() == fecha), None)
+    if not fila:
+        return None
+    mins = _ventana_minutos(str(fila.get(COLS["hora_dormi"], "")).strip(),
+                            str(fila.get(COLS["hora_despertar"], "")).strip())
+    if mins is None:
+        return None
+    val = "Sí" if mins >= 7 * 60 else "No"
+    await _set("sueno_7h", val, fecha)
+    return val
+
+
 _EVENTO_NULO = {"no", "nada", "no pasó nada", "no paso nada", "ninguna", "ninguno", "todo normal", "nada raro"}
 
 

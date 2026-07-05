@@ -15,7 +15,7 @@ from datetime import datetime, time, timedelta
 from telegram.ext import Application, ContextTypes
 
 from config import settings
-from core import agenda, brain, correlador, correo, flows, memory, sheets
+from core import agenda, brain, correlador, correo, flows, frases, memory, sheets
 from modules import aprendizaje, finanzas, proactividad, proyectos, recordatorios, salud
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,8 @@ async def _texto_brief() -> str:
     prompt = (
         f"Es el brief de las 8:00 de Nico (solo lectura, breve). Agenda de hoy: {ag}. {señales} "
         "Dale su día en pocas líneas con tu voz. Si tienes un patrón o aviso real, dilo. Si no, no rellenes. "
-        "No le pidas datos: el sueño se lo pregunto aparte con un botón."
+        "No le pidas datos: el sueño se lo pregunto aparte con un botón. "
+        "Varía tu apertura, el ángulo y el remate respecto a otros días: no repitas la misma fórmula."
     )
     return await brain.generar(prompt)
 
@@ -66,8 +67,10 @@ async def _texto_brief() -> str:
 async def job_brief(context: ContextTypes.DEFAULT_TYPE) -> None:
     texto = await _texto_brief()
     await context.bot.send_message(settings.nico_telegram_id, texto)
+    # Sueño: se pide la HORA directa (chips), no el binario +7h/-7h — el '7h+' se deriva de la
+    # ventana dormí→desperté (ver flows sh:*). El texto de la pregunta varía día a día.
     await context.bot.send_message(
-        settings.nico_telegram_id, "¿Cuánto dormiste?", reply_markup=flows.teclado_brief_sueno()
+        settings.nico_telegram_id, frases.frase("sueno_dormi"), reply_markup=flows.teclado_hora_dormi()
     )
     # C2: el día 1, si el Dashboard sigue mirando el mes pasado, ofrece actualizarlo con un toque.
     ahora = datetime.now(settings.tz)
@@ -107,7 +110,8 @@ async def _texto_cierre() -> str:
     prompt = (
         f"Es el cierre de las 22:00 de Nico. {señales} Cierra el día en una o dos líneas con tu voz. "
         f"Si el sueño viene flojo, deja caer la línea madre (a la cama a las {settings.meta_hora_dormir}, "
-        "te conozco). Los toques de hábitos, ánimo y MIT salen aparte en un panel."
+        "te conozco). Los toques de hábitos, ánimo y MIT salen aparte en un panel. "
+        "Varía el arranque y el remate respecto a otros cierres: no repitas la misma fórmula."
     )
     return await brain.generar(prompt)
 
@@ -121,15 +125,13 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
     await flows.enviar_panel_cierre(context.bot, chat, intro)
     # 2) MITs de mañana por voz (la próxima nota de voz se interpreta como MITs).
     context.bot_data["esperando_mits"] = datetime.now(settings.tz).strftime("%Y-%m-%d")
-    await context.bot.send_message(chat, "Y por voz: dime tus 1 a 3 prioridades de mañana. 🎙️")
+    await context.bot.send_message(chat, frases.frase("mits_voz"))
     # 2.5) Evento contextual (E8): lo que Nico no controló hoy, para que el correlador no lo
     # confunda con un patrón. Conversacional — no bloquea el panel ni cuenta contra Proactividad.
-    await context.bot.send_message(
-        chat, "¿Hubo algo hoy fuera de tu control que te bajó el ánimo o no te dejó hacer lo planeado?"
-    )
+    await context.bot.send_message(chat, frases.frase("evento_contextual"))
     # 2.6) Peso (E8): se pide solo los domingos, no diario.
     if datetime.now(settings.tz).weekday() == 6:
-        await context.bot.send_message(chat, "Y como es domingo: ¿cuánto pesaste esta semana?")
+        await context.bot.send_message(chat, frases.frase("peso_domingo"))
     # 3) Digest financiero del día.
     await flows.enviar_digest(context.bot, chat)
     # 3.5) La espina aprende de la plata (perfil + inferencia de deuda con su dato).
