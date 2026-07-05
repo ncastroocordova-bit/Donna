@@ -124,9 +124,18 @@ escribe/lee mal contra el schema real de la planilla — más grave que "falta s
 siguiente") ya no se está siguiendo — el código de casi todos los módulos existe en paralelo. Este tablero
 registra ese hecho en vez de fingir que la secuencia se respetó.
 
-1. **Finanzas** `fin_` — 🔨 completo (v1 + v2 intención/metas + v3 detalle ítem-a-ítem/correlación). 39/39
-   evals unitarios verdes (`tests/test_finanzas.py`). Semana de 7 días estable: **sin confirmar** (no es
-   verificable desde el repo).
+1. **Finanzas** `fin_` — 🔨 completo (v1 + v2 intención/metas + v3 detalle ítem-a-ítem/correlación) **+ v4
+   NUEVO (2026-07-05): estados de cuenta automáticos.** `modules/estados_cuenta.py` baja del correo los
+   PDF de Banco de Chile y Mach, los descifra (Mach con RUT, BCh con clave propia en `.env`), extrae con
+   Haiku las cifras de deuda por producto, actualiza las celdas-input del faro (`Tarjetas y Deuda`, las
+   fórmulas se recalculan solas), lleva el historial mes a mes en la hoja nueva `Deuda_Mensual`, reconcilia
+   las compras del estado contra `Transacciones` (marca las que faltan, sin auto-escribir) y avisa a Nico
+   cuando llegan estados nuevos con el detalle y el delta vs. el mes anterior. Tool `fin_progreso_deuda`.
+   Job diario 9:30 (dedup interno → solo actúa ~mensual). Validado end-to-end contra los PDFs reales de
+   Nico: corrigió el faro de $2.028.091 (desactualizado) a **$2.297.966** (real) y encontró 11 compras de
+   junio sin registrar (ya agregadas con categoría, con nueva categoría `Regalo` creada de paso).
+   46/46 evals unitarios verdes (`test_finanzas.py` + `test_estados_cuenta.py`). Semana de 7 días estable:
+   **sin confirmar**.
 2. **Salud** `sal_` — 🔨 completo (base + v2/E8: nutrición, ventanas, peso, score, eventos). El correlador
    ya está **encendido** (`core/correlador.py`, cruza sueño↔ánimo↔gasto en el cierre) y ahora respeta la
    guardia de eventos contextuales (un día con evento_externo no ensucia el patrón). MITs rediseñados:
@@ -144,9 +153,11 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    escribe las columnas reales (`Día / Fecha`, `Monto aprox`, `Estado`, `Posposiciones`, `Última acción`,
    `Activo`), soporta tipo `única` (fechas que no se repiten, quedan negativas si vencen), incluye los
    vencidos en `rec_proximos` y appendea 8 valores en el orden correcto. `rec_agregar` ya no corrompe
-   columnas; el brief vuelve a avisar pagos. 9 tests de regresión (`tests/test_recordatorios.py`).
-   **Sigue pendiente el scope de la ficha:** la escalera (domingo + T-2 + T-0 con ✅Hecho), el
-   posponer-exige-fecha y el "nombra el patrón" tras 3 posposiciones — el schema real ya lo soporta.
+   columnas; el brief vuelve a avisar pagos. **Fase 0 · C4 hecho:** `recordatorios.vencidos()` +
+   `marcar_hecho()` — el brief empuja los vencidos a diario con botón ✅ Hecho hasta que se marcan.
+   9 tests de regresión (`tests/test_recordatorios.py`). **Sigue pendiente el scope de la ficha:** la
+   escalera completa (domingo + T-2 + T-0), el posponer-exige-fecha y el "nombra el patrón" tras 3
+   posposiciones — el schema real ya lo soporta.
 5. **Correo** `cor_` — 🔶 parcial. `modules/spam.py` + `core/correo.py` construidos y enganchados
    (digest de spam, archivar/conservar por toque — Gmail etiqueta `Donna/Archivado` + quita `INBOX`,
    Outlook mueve a la carpeta `Donna Archivado`; ninguno de los dos borra). El bucket "importante→resumen
@@ -236,16 +247,34 @@ documento actualizado (ítems 4 y 6 dejan de estar en ⚠️).
 `Transferencias` creada, cero huérfanas) · ✅ **C2** (Mes activo: toque del día 1) ·
 ✅ **C3** (captura de sueño/ventanas por chips) · ✅ **C4** (vencido-insiste con botón ✅ Hecho) ·
 ✅ **C5** (higiene: fila placeholder borrada + `% Avance` normalizado a `N%`) ·
-✅ **C6** (ancla de fecha del panel de cierre) — todo en `main`, **133 tests verdes**, ítems 4 y 6 fuera de ⚠️.
-**Único pendiente para cerrar el gate:** el **smoke manual por Telegram** de todo el lote (crear
-recordatorio/tarea, tocar el panel del cierre, ver que el sueño pide las horas). Tras el smoke → sigue el
-**harness propio**, luego **autodiagnóstico + variedad**, y recién ahí **Compras Fase 1**.
+✅ **C6** (ancla de fecha del panel de cierre). **Deployado a Railway el 2026-07-04** (push a
+`origin/main`; hasta entonces los 11 commits de Fase 0 llevaban días solo en local, sin efecto en
+producción — lección: verificar push, no solo commit, antes de dar un fix por "hecho").
 
-Después de la Fase 0 viene el **harness propio** (`core/harness.py`: registro declarativo de tools,
-gate de confirmación por toque para toda escritura, subagentes formales, structured outputs, traza),
-luego **autodiagnóstico + variedad de textos** (ver `Ficha_Autodiagnostico_y_Variedad.md` — Donna
-SOLO diagnostica y avisa en su voz; los arreglos son siempre vía Claude Code con OK de Nico, decisión
-2026-07-03), y recién entonces **Compras Fase 1**.
+**2026-07-04/05 — bugs reales encontrados usando el bot en producción** (fuera del alcance original de
+Fase 0, pero mismo espíritu de reparación): el brief seguía preguntando el binario "¿dormiste 7h+?" en
+vez de la hora real → **arreglado**, ahora deriva el 7h+ de la ventana dormí↔despertar
+(`salud.derivar_sueno_de_ventana`); el editor de ítems del desglose de compras se trababa al re-tocar el
+mismo deseo/categoría (Telegram tira "message is not modified" sin capturar) → **arreglado** con
+`flows._edit_ok`; los textos fijos del brief/cierre salían idénticos todos los días → **arreglado** con
+`core/frases.py` (pools de variantes, sin DB, versión lean). **147 tests verdes.**
+
+**Decisión de alcance (2026-07-04):** con el negocio fuera del horizonte cercano, el **harness propio
+completo se descarta por ahora** (su valor real es la escalera de autonomía hacia terceros de
+`Vision_Donna_Ampliada.md`, que no aplica a un asistente solo-personal). Se optó por una versión **lean**
+del autodiagnóstico (guardián de schema al boot + verificación de escritura + tabla `incidentes` +
+aviso en carácter, sin el diagnóstico con Haiku ni el CLI puente) — **pero esa pieza AÚN NO SE CONSTRUYÓ**;
+solo se resolvieron los 3 síntomas puntuales de arriba de forma directa. La red de seguridad genérica
+(el guardián de headers que habría atrapado los bugs de A1/A2 el día uno) sigue pendiente.
+
+**Único pendiente para cerrar el gate formal de Fase 0:** el **smoke manual por Telegram** completo
+(crear recordatorio/tarea, tocar el panel del cierre) — sin confirmar explícitamente por Nico, aunque el
+uso real del bot en 07-04/05 ya ejerció brief/cierre/desglose y esos caminos están probados en la práctica.
+
+Después de la Fase 0 viene el **autodiagnóstico lean** (pendiente, ver arriba) y recién
+entonces **Compras Fase 1** (Módulo 3) — aunque Finanzas siguió creciendo fuera de secuencia con v4
+porque era la prioridad real de Nico, y eso está bien: la regla madre ya no se sigue estricta (ver nota
+arriba del tablero).
 
 ---
 
