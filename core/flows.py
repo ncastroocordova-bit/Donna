@@ -18,8 +18,11 @@ from modules import spam as spam_mod
 
 logger = logging.getLogger(__name__)
 
-CHIPS_COMIDA = ["19:00", "20:00", "21:00", "22:00"]
-CHIPS_PRIMERA_COMIDA = ["08:00", "09:00", "10:00", "12:00"]
+# Chips del cierre. Para las horas: (etiqueta, valor); el valor "HH:00" alimenta las ventanas.
+CHIPS_PRIMERA_COMIDA = [("9", "09:00"), ("10", "10:00"), ("11", "11:00"), ("12", "12:00")]   # primera comida
+CHIPS_COMIDA = [("18", "18:00"), ("19", "19:00"), ("20", "20:00"), ("21+", "21:00")]          # última comida
+CHIPS_AGUA = ["1", "2", "3"]           # litros de agua
+CHIPS_PROTEINA = ["80", "90", "100"]   # gramos de proteína
 CHIPS_HORA_DORMI = ["22:30", "23:00", "00:00", "01:00", "02:00"]
 CHIPS_HORA_DESPERTAR = ["06:30", "07:00", "07:30", "08:00", "09:00"]
 HOJA_CONFIG = "⚙️ Config"
@@ -62,14 +65,12 @@ def teclado_cierre(estado: dict | None = None, mits: list[str] | None = None, fe
          InlineKeyboardButton(mk("🏃 Hoy no", e.get("ejercicio") == "no"), callback_data=f"hab:ejercicio:no{suf}")],
         [InlineKeyboardButton(mk("🧘 Medité", e.get("meditacion") == "si"), callback_data=f"hab:meditacion:si{suf}"),
          InlineKeyboardButton(mk("🧘 Hoy no", e.get("meditacion") == "no"), callback_data=f"hab:meditacion:no{suf}")],
-        [InlineKeyboardButton(mk("💧 Tomé agua", e.get("agua") == "si"), callback_data=f"hab:agua:si{suf}"),
-         InlineKeyboardButton(mk("💧 Hoy no", e.get("agua") == "no"), callback_data=f"hab:agua:no{suf}")],
-        [InlineKeyboardButton(mk("🥩 Comí proteína", e.get("proteina") == "si"), callback_data=f"hab:proteina:si{suf}"),
-         InlineKeyboardButton(mk("🥩 Hoy no", e.get("proteina") == "no"), callback_data=f"hab:proteina:no{suf}")],
-        # 🍳 primera comida (ventanas E8, C3) vs 🍽️ última comida — el emoji las distingue.
-        [InlineKeyboardButton(mk(f"🍳 {h}", e.get("primera_comida") == h), callback_data=f"pcom:{h}{suf}") for h in CHIPS_PRIMERA_COMIDA],
-        [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}{suf}") for h in CHIPS_COMIDA[:2]],
-        [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}{suf}") for h in CHIPS_COMIDA[2:]],
+        # 💧 agua por litros (1/2/3 L) y 🥩 proteína por gramos (80/90/100 g) — cuánto, no sí/no.
+        [InlineKeyboardButton(mk(f"💧 {litros}L", e.get("agua") == litros), callback_data=f"agua:{litros}{suf}") for litros in CHIPS_AGUA],
+        [InlineKeyboardButton(mk(f"🥩 {gr}g", e.get("proteina") == gr), callback_data=f"prot:{gr}{suf}") for gr in CHIPS_PROTEINA],
+        # 🍳 primera comida (9–12) y 🍽️ última comida (18–21+), cada una en UNA fila horizontal.
+        [InlineKeyboardButton(mk(f"🍳 {lbl}", e.get("primera_comida") == val), callback_data=f"pcom:{val}{suf}") for lbl, val in CHIPS_PRIMERA_COMIDA],
+        [InlineKeyboardButton(mk(f"🍽️ {lbl}", e.get("comida") == val), callback_data=f"comida:{val}{suf}") for lbl, val in CHIPS_COMIDA],
         [InlineKeyboardButton(mk(f"Ánimo {n}", e.get("animo") == n), callback_data=f"animo:{n}{suf}") for n in ("1", "2", "3", "4")],
     ]
     for i, texto in enumerate(mits or []):
@@ -304,7 +305,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await q.answer()
     data = q.data
 
-    if data.split(":", 1)[0] in ("hab", "comida", "pcom", "animo", "mit"):
+    if data.split(":", 1)[0] in ("hab", "comida", "pcom", "agua", "prot", "animo", "mit"):
         # Panel del cierre: cada toque actualiza SOLO el teclado (marca ✅), sin cerrar el panel,
         # para poder anotar varios hábitos. El estado vive por message_id (no se arrastra entre días).
         # La fecha va anclada al final del callback (|YYYY-MM-DD, fix C6): así el toque cae en la
@@ -327,6 +328,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 hora = base.split(":", 1)[1]
                 estado["primera_comida"] = hora
                 await salud.registrar_hora("primera_comida", hora, fecha=fecha)
+            elif tipo == "agua":  # litros de agua (1/2/3)
+                estado["agua"] = partes[1]
+                await salud.marcar_habito("agua", partes[1], fecha=fecha)
+            elif tipo == "prot":  # gramos de proteína (80/90/100)
+                estado["proteina"] = partes[1]
+                await salud.marcar_habito("proteina", partes[1], fecha=fecha)
             elif tipo == "animo":
                 estado["animo"] = partes[1]
                 await salud.registrar_animo(partes[1], fecha=fecha)

@@ -87,8 +87,16 @@ _AFIRMATIVO = {"sí", "si", "✓", "x", "true", "1", "hecho", "hice"}
 
 def _afirmativo(v) -> bool:
     """¿La celda marca el hábito como HECHO? 'No' (o vacío) cuenta como no hecho — así el
-    'Hoy no' explícito queda registrado pero no rompe ni alimenta la racha."""
-    return str(v).strip().lower() in _AFIRMATIVO
+    'Hoy no' explícito queda registrado pero no rompe ni alimenta la racha. Agua (litros) y
+    proteína (gramos) se anotan como CANTIDAD: cualquier número > 0 cuenta como consumido ese
+    día (para la racha y el score semanal)."""
+    s = str(v).strip().lower()
+    if s in _AFIRMATIVO:
+        return True
+    try:
+        return float(s) > 0
+    except ValueError:
+        return False
 
 
 async def _set(campo: str, valor, fecha: str | None = None) -> str:

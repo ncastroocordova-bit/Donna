@@ -127,6 +127,21 @@ def test_calcular_score_sin_filas_no_falla():
     assert salud._calcular_score([]) == {"score": None, "cumplidos": 0, "total": 0}
 
 
+def test_afirmativo_cuenta_cantidades():
+    # Agua (litros) y proteína (gramos) se anotan como número: cualquier cantidad > 0 = consumido.
+    assert salud._afirmativo("2") and salud._afirmativo("90") and salud._afirmativo("100")
+    assert salud._afirmativo("Sí") and salud._afirmativo("si")   # sigue valiendo el binario
+    assert not salud._afirmativo("0")
+    assert not salud._afirmativo("No") and not salud._afirmativo("")
+
+
+def test_score_cuenta_agua_y_proteina_numericas():
+    # Un día con agua=2L y proteína=90g debe contar esos dos hábitos como cumplidos.
+    filas = [_fila_habitos("2026-06-15", ejercicio="Sí", agua="2", proteina="90")]
+    s = salud._calcular_score(filas)
+    assert s == {"score": 60, "cumplidos": 3, "total": 5}   # ejercicio + agua + proteína
+
+
 # ───────────────────────── Evento contextual: no guarda "no pasó nada" ─────────────────────────
 
 def _mock_memoria(monkeypatch):

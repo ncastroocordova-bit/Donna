@@ -64,6 +64,22 @@ def test_teclado_cierre_tiene_fila_de_primera_comida():
     assert any(c.startswith("pcom:") for c in cbs)
 
 
+def test_teclado_cierre_agua_y_proteina_por_cantidad():
+    cbs = _cbs(flows.teclado_cierre(fecha="2026-07-01"))
+    assert any(c.startswith("agua:") for c in cbs)     # agua por litros (1/2/3)
+    assert any(c.startswith("prot:") for c in cbs)     # proteína por gramos (80/90/100)
+    # ya no es el binario sí/no
+    assert not any(c.startswith("hab:agua") or c.startswith("hab:proteina") for c in cbs)
+
+
+def test_teclado_cierre_ultima_comida_en_una_sola_fila():
+    kb = flows.teclado_cierre(fecha="2026-07-01").inline_keyboard
+    filas_comida = [row for row in kb if any("🍽" in b.text for b in row)]
+    assert len(filas_comida) == 1 and len(filas_comida[0]) == 4   # línea horizontal de 4
+    textos = [b.text for b in filas_comida[0]]
+    assert any("21+" in t for t in textos)                        # última opción es 21+
+
+
 def test_chips_de_hora_dormi_y_despertar():
     assert all(c.startswith("sh:d:") for c in _cbs(flows.teclado_hora_dormi()))
     assert all(c.startswith("sh:w:") for c in _cbs(flows.teclado_hora_despertar()))
