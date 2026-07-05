@@ -1,3 +1,5 @@
+> ⚠️ **ARCHIVADO (histórico) — 2026-07-04.** Su auditoría de brechas ya se cumplió; el estado real vigente vive en [`../Roadmap_Modular.md`](../Roadmap_Modular.md) (tablero) y el canon en `CLAUDE.md`. Describe el estado *previo* a los fixes (menciona Outlook y spam→papelera como si fueran actuales — ya no lo son). No usar como referencia de estado.
+
 # Alineación Donna — Sheet · Bot · Plan
 
 > Documento único de verdad tras la sesión de consolidación.

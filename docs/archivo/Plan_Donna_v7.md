@@ -1,3 +1,5 @@
+> ⚠️ **ARCHIVADO (histórico) — 2026-07-04.** El "por qué" narrativo de v7/7.1/7.2. Superado operativamente por [`../Roadmap_Modular.md`](../Roadmap_Modular.md). Ojo: su modelo de datos es **stale** — habla de dos planillas (`Vida_v6` + `Finanzas_vigente`), pero hoy es **un solo workbook "Donna"** (ver `CLAUDE.md` y `Donna_Canonico.xlsx`).
+
 # Donna — Plan v7 (final antes del código)
 
 **Para:** Nico

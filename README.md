@@ -17,9 +17,11 @@ El delta de v7 sobre v6 es **el digest financiero nocturno** + el faro de deuda 
   pre-categorizado ("✅ Aceptar todo" o tap por línea) → recién ahí escribe a `Transacciones`.
 - **Freno de deuda**: antes de cualquier compra en cuotas, Donna muestra el costo real (intereses
   muertos del mes) leído de la planilla.
-- **Correo (Gmail + Outlook personal)**: lee avisos de gasto de **Banco de Chile, Mach, Copec Pay
-  y MercadoPago** → al digest nocturno; y un **digest de spam diario** que borras con un toque (a
-  papelera). Gmail vía API OAuth, Outlook vía Microsoft Graph. Degrada solo si no hay credenciales.
+- **Correo (Gmail)**: lee avisos de gasto de **Banco de Chile, Mach, Copec Pay y MercadoPago** → al
+  digest nocturno; y un **triage de spam diario** que archivas con un toque — etiqueta
+  `Donna/Archivado` + quita `INBOX`, **jamás borra** (recuperable de un clic; invariante duro).
+  Gmail vía API OAuth. Outlook **OFF** por canon (`email_outlook.py` queda en el repo, desconectado).
+  Degrada solo si no hay credenciales.
 
 ## Arquitectura (Fase 1)
 
@@ -34,7 +36,7 @@ Telegram (texto · voz · foto)
         │                        presupuesto de contexto, compactación, registro de tools
         │           ├─ core/memory.py   Supabase + contextual retrieval (Voyage) + buffer + jobs_log
         │           ├─ core/agenda.py   agenda del día (Calendar)
-        │           ├─ core/sheets.py   dos planillas: Vida_v6 + Finanzas_vigente
+        │           ├─ core/sheets.py   workbook único "Donna" (hojas de vida + finanzas)
         │           ├─ core/voice.py    Whisper (MITs por voz)
         │           ├─ core/correo.py   Gmail (API) + Outlook (Graph): gastos por mail + spam
         │           ├─ core/flows.py    paneles de toque + digest financiero + digest de spam

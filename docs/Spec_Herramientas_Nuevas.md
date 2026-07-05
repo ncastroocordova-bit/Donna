@@ -8,7 +8,7 @@ Detalle de implementación de las herramientas que el canon agrega o cambia. Aco
 
 **Propósito:** avisar en escalera calmada (domingo + T-2 + T-0) y escalar solo el vencido, sin ruido nuevo.
 
-**Esquema `Recordatorios`:** `Recordatorio · Tipo(mensual|anual|unica) · Dia_Fecha · Monto_Aprox · Estado(pendiente|hecho|pospuesto) · Posposiciones(int) · Ultima_Accion(fecha) · Activo`.
+**Esquema `Recordatorios` (real, verificado contra la planilla — no el fantasma que arregló el fix A1):** `Recordatorio · Tipo(mensual|anual|única) · Día / Fecha · Monto aprox · Estado(pendiente|hecho|pospuesto) · Posposiciones(int) · Última acción(fecha) · Activo`. Los nombres van **con tildes y espacios exactos** (así los lee `modules/recordatorios.py`).
 
 **Firmas:**
 - `rec_semana() -> list` — todos los activos cuya próxima ocurrencia cae en ≤7 días. Para el preview del domingo.

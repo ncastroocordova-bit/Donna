@@ -5,7 +5,7 @@
 - **Donna lo carga como su mapa de sí misma** — sabe exactamente qué preguntar, dónde guardar cada dato y cómo calcula cada métrica.
 - **Tú lo usas para interrogarla** — "¿qué datos recibes?", "¿cómo calculas la tasa de ahorro?", "¿de dónde sacas mi deuda real?". La Parte D trae el banco de preguntas con la respuesta que Donna debe dar.
 
-**Fuentes de verdad:** `Vida_v6.xlsx` (hábitos, ánimo, MITs, proyectos, recordatorios, semanal) y `Finanzas_vigente.xlsx` (transacciones, categorías, dashboard, comparativo, tarjetas + línea). Donna lee y escribe ahí; tú casi no las tocas.
+**Fuente de verdad:** un solo workbook **"Donna"** (esquema en `Donna_Canonico.xlsx`). Dos grupos de hojas: las de **vida** (Diario, Tareas, Proyectos, Recordatorios, Reconciliacion, Semanal, Ideas, Config) y las de **finanzas** (Transacciones, Categorias, Tarjetas y Deuda, Dashboard, Comparativo, Metas, Compras_Detalle). Donna lee y escribe ahí; tú casi no las tocas.
 
 **Principio que gobierna todo:** Donna **no afirma nada sin el dato que lo respalda** (inferencia validada). Si la pregunta no se puede contestar con las planillas, la respuesta honesta es "no lo mido".
 
@@ -54,17 +54,17 @@ Tres momentos: **Brief 8:00** (casi todo lectura), **Cierre 22:00** (acá entra 
 
 ## PARTE B — Qué datos recibe Donna (diccionario)
 
-### De `Vida_v6`
+### Hojas de vida (workbook Donna)
 - **Diario** (1 fila/día): Fecha · Ejercicio (sí/no) · Meditación (sí/no) · Última comida (hora) · Sueño 7h+ (sí/no) · Ánimo (1-4) · Hora dormí · MITs · Brief ✓ · Cierre ✓ · Excepción · Notas.
 - **Tareas:** Creada · Descripción · Proyecto · Tipo · Fecha objetivo · Estado · Completada.
 - **Proyectos** (lo editas tú): Estado · Foco · Próxima acción · % Avance · Última act.
-- **Recordatorios:** Recordatorio · Tipo (mensual/anual/**única**) · Día/Fecha · Monto aprox · Lead extra (días, opcional) · **Estado** (pendiente/hecho/pospuesto) · **Posposiciones** · **Última acción** · Activo.
+- **Recordatorios:** Recordatorio · Tipo (mensual/anual/**única**) · Día / Fecha · Monto aprox · **Estado** (pendiente/hecho/pospuesto) · **Posposiciones** · **Última acción** · Activo. *(8 columnas, sin "Lead extra" — ese era del schema fantasma que arregló el fix A1.)*
 - **Reconciliacion** (v7.2, la escribe Donna en el cierre): Fecha · Bloque · Frente (Tesis/Noomi/Delivery/Hijo/Personal) · Min planeados · ¿Hecho? · Delta (Menos/Igual/Más) · Min reales · Notas.
 - **Ideas:** Fecha · Idea · Estado.
 - **Semanal** (lo genera Donna el domingo): rachas /7, ánimo prom, gasto semana, **tiempo por frente** (h Tesis/Noomi/Delivery/Hijo), **factor de optimismo**, meta, tiempo hijo.
 - **Config:** horas brief/cierre, hábitos, meta hora dormir (23:00).
 
-### De `Finanzas_vigente`
+### Hojas de finanzas (workbook Donna)
 - **Transacciones** (base): Fecha · Tipo · Categoría · Subcategoría · Comercio · Monto · Medio · Fuente · ID_Único.
 - **Categorias:** Categoría · Tipo · Presupuesto Mensual · Notas.
 - **Tarjetas de Crédito + Línea:** cupos, deuda rotativa, tasa mensual, mantención, cuotas (valor/totales/restantes), línea (utilizado, interés).
@@ -134,7 +134,7 @@ Señales que usa (de la más barata a la más cara): header `List-Unsubscribe` y
 > "Tres vías. Toques: tus hábitos, tu ánimo, si avanzaste un MIT. Voz: tus MITs de mañana, tareas e ideas sueltas. Y automático: tus gastos, que leo de tus correos del banco y de las fotos de boletas que me mandas, más todo tu inbox, que reviso una vez al día para separarte el spam de lo importante. Nada más — lo que no me das o no está en tus planillas, no lo sé."
 
 **"¿De dónde sacas todo?"**
-> "De tus dos planillas. La vida, de `Vida_v6`. La plata, de `Finanzas_vigente`. Yo solo leo, calculo y escribo ahí. No invento."
+> "De tu planilla Donna. Las hojas de vida para tus hábitos y tu orden, las de finanzas para tu plata. Yo solo leo, calculo y escribo ahí. No invento."
 
 **"¿Cómo calculas la tasa de ahorro?"**
 > "Balance dividido por ingresos. Pero te aviso cuando el número miente: este mes te da 81% porque tuviste un solo ingreso y el mes va a la mitad. No te lo creas todavía."

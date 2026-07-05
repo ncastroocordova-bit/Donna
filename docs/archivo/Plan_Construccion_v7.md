@@ -1,3 +1,5 @@
+> ⚠️ **ARCHIVADO (histórico) — 2026-07-04.** Runbook E0–E7 (ya ejecutados) + E8–E12 (cuyo detalle vive ahora en [`../Spec_Herramientas_Nuevas.md`](../Spec_Herramientas_Nuevas.md) y las fichas del [`../Roadmap_Modular.md`](../Roadmap_Modular.md)). El marco "8 brechas" quedó reemplazado por la secuencia de 8 módulos + Fase 0. Consúltalo solo por los prompts de build; el estado vigente está en el Roadmap.
+
 # Plan de Construcción Donna v7.2 — Runbook de EXTENSIÓN para Claude Code
 
 **Para:** Nico

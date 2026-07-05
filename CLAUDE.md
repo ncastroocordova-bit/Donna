@@ -55,7 +55,7 @@ Donna aprende de Nico cruzando dominios; la memoria NO es un módulo, es una esp
 
 ## Reglas de trabajo
 - **Entrega modular: un módulo a la vez.** Completo + deployado + 7 días estable + evals verdes antes de empezar el siguiente. Orden y fichas en `Roadmap_Modular.md`. No construyes el módulo N+1 hasta que N pasa su semana.
-- No reconstruyas lo que ya calza (ver `Alineacion_Donna.md`). El trabajo pendiente son las brechas del `Plan_Construccion_v7.md` (las 8 originales E0–E7 + las fases añadidas: Salud-v2, Compras, Familia, Finanzas-v2).
+- No reconstruyas lo que ya calza. El trabajo pendiente y el estado real por módulo viven en el tablero de `Roadmap_Modular.md`; el detalle de tools en `Spec_Herramientas_Nuevas.md`. (El marco histórico de "8 brechas E0–E12" y la auditoría original quedaron en `docs/archivo/` — `Plan_Construccion_v7.md` y `Alineacion_Donna.md` —, superados por el Roadmap.)
 - Ningún paso está hecho hasta que **su eval pasa** y está **deployado**. Corre `pytest tests/evals.py`.
 - Commit por paso. Mensajes en español, concretos.
 - `.env` y `credentials.json` **nunca** al control de versiones.
