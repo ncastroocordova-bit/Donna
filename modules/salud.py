@@ -98,21 +98,21 @@ async def _set(campo: str, valor, fecha: str | None = None) -> str:
 
 # ───────────────────────── Funciones directas (botones del panel) ─────────────────────────
 
-async def marcar_habito(campo: str, valor=None) -> str:
+async def marcar_habito(campo: str, valor=None, fecha: str | None = None) -> str:
     campo = campo.lower()
     if campo not in COLS:
         return f"No conozco el hábito '{campo}'."
     if valor in (None, ""):
         valor = "Sí" if campo in BINARIOS else valor
-    estado = await _set(campo, valor)
+    estado = await _set(campo, valor, fecha)
     if estado not in ("actualizado", "creado"):
         return f"No pude anotar {campo}: {estado}."
     extra = f" Racha: {await calcular_racha(campo)} día(s)." if campo in BINARIOS else ""
     return f"Anotado: {campo.replace('_', ' ')} ({valor}).{extra}"
 
 
-async def registrar_animo(valor) -> str:
-    await _set("animo", valor)
+async def registrar_animo(valor, fecha: str | None = None) -> str:
+    await _set("animo", valor, fecha)
     return f"Ánimo {valor}/4 anotado."
 
 
@@ -249,15 +249,24 @@ async def senal_mits_brief() -> str:
 
 # ───────────────────────── v2 (E8): horas, peso, eventos ─────────────────────────
 
-async def registrar_hora(campo: str, hora: str) -> str:
+async def registrar_hora(campo: str, hora: str, fecha: str | None = None) -> str:
     """Primera_Comida / Ultima_Comida / Hora_Despertar por chat o voz (HH:MM)."""
     campo = campo.lower()
     if campo not in CAMPOS_HORA:
         return f"No anoto horas para '{campo}'."
     if not str(hora).strip():
         return "¿A qué hora? Dime la hora y la dejo anotada."
-    await _set(campo, hora)
+    await _set(campo, hora, fecha)
     return f"{campo.replace('_', ' ').capitalize()} a las {hora}, anotado."
+
+
+async def registrar_hora_dormi(hora: str, fecha: str | None = None) -> str:
+    """Hora en que Nico se durmió. Va con el sueño (por eso no pasa por CAMPOS_HORA, que es
+    para las horas conversacionales sueltas). Se escribe en la fila del día."""
+    if _parse_hora(str(hora)) is None:
+        return "¿A qué hora te dormiste? Dame la hora en HH:MM."
+    await _set("hora_dormi", hora, fecha)
+    return f"Anotado: te dormiste {hora}."
 
 
 _EVENTO_NULO = {"no", "nada", "no pasó nada", "no paso nada", "ninguna", "ninguno", "todo normal", "nada raro"}

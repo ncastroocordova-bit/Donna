@@ -6,48 +6,65 @@ Tres piezas:
 - Validación de inferencias: el mecanismo estrella (botones sí/no/corregir).
 """
 import logging
+from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from core import memory
-from modules import aprendizaje, finanzas, salud
+from config import settings
+from core import memory, sheets
+from modules import aprendizaje, finanzas, recordatorios, salud
 from modules import spam as spam_mod
 
 logger = logging.getLogger(__name__)
 
 CHIPS_COMIDA = ["19:00", "20:00", "21:00", "22:00"]
+CHIPS_PRIMERA_COMIDA = ["08:00", "09:00", "10:00", "12:00"]
+CHIPS_HORA_DORMI = ["22:30", "23:00", "00:00", "01:00", "02:00"]
+CHIPS_HORA_DESPERTAR = ["06:30", "07:00", "07:30", "08:00", "09:00"]
+HOJA_CONFIG = "⚙️ Config"
+
+
+def _hoy() -> str:
+    return datetime.now(settings.tz).strftime("%Y-%m-%d")
 
 
 # ───────────────────────── Panel del cierre ─────────────────────────
 
-def teclado_cierre(estado: dict | None = None, mits: list[str] | None = None) -> InlineKeyboardMarkup:
+def teclado_cierre(estado: dict | None = None, mits: list[str] | None = None, fecha: str = "") -> InlineKeyboardMarkup:
     """Panel del cierre. `estado` marca con ✅ lo ya elegido (se reconstruye en cada toque,
     sin cerrar el panel) — así Nico puede anotar varios hábitos, no solo uno. `mits` son TODOS
     los MITs pendientes (de hoy + acumulados de antes, sin tope) — cada uno es su propio toque
-    marcable. Lo que no se marca hoy sigue apareciendo mañana (no desaparece solo)."""
+    marcable. Lo que no se marca hoy sigue apareciendo mañana (no desaparece solo).
+
+    `fecha` (la del ENVÍO del panel) se ancla en cada callback_data con sufijo `|YYYY-MM-DD`:
+    si Nico responde el panel pasada la medianoche, el toque igual cae en la fila del día
+    correcto y no en la del día siguiente (fix C6). Sin fecha → los toques usan el día del tap."""
     e = estado or {}
+    suf = f"|{fecha}" if fecha else ""
 
     def mk(label: str, on: bool) -> str:
         return ("✅ " + label) if on else label
 
     filas = [
-        [InlineKeyboardButton(mk("🏃 Hice ejercicio", e.get("ejercicio") == "si"), callback_data="hab:ejercicio:si"),
-         InlineKeyboardButton(mk("🏃 Hoy no", e.get("ejercicio") == "no"), callback_data="hab:ejercicio:no")],
-        [InlineKeyboardButton(mk("🧘 Medité", e.get("meditacion") == "si"), callback_data="hab:meditacion:si"),
-         InlineKeyboardButton(mk("🧘 Hoy no", e.get("meditacion") == "no"), callback_data="hab:meditacion:no")],
-        [InlineKeyboardButton(mk("💧 Tomé agua", e.get("agua") == "si"), callback_data="hab:agua:si"),
-         InlineKeyboardButton(mk("💧 Hoy no", e.get("agua") == "no"), callback_data="hab:agua:no")],
-        [InlineKeyboardButton(mk("🥩 Comí proteína", e.get("proteina") == "si"), callback_data="hab:proteina:si"),
-         InlineKeyboardButton(mk("🥩 Hoy no", e.get("proteina") == "no"), callback_data="hab:proteina:no")],
-        [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[:2]],
-        [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}") for h in CHIPS_COMIDA[2:]],
-        [InlineKeyboardButton(mk(f"Ánimo {n}", e.get("animo") == n), callback_data=f"animo:{n}") for n in ("1", "2", "3", "4")],
+        [InlineKeyboardButton(mk("🏃 Hice ejercicio", e.get("ejercicio") == "si"), callback_data=f"hab:ejercicio:si{suf}"),
+         InlineKeyboardButton(mk("🏃 Hoy no", e.get("ejercicio") == "no"), callback_data=f"hab:ejercicio:no{suf}")],
+        [InlineKeyboardButton(mk("🧘 Medité", e.get("meditacion") == "si"), callback_data=f"hab:meditacion:si{suf}"),
+         InlineKeyboardButton(mk("🧘 Hoy no", e.get("meditacion") == "no"), callback_data=f"hab:meditacion:no{suf}")],
+        [InlineKeyboardButton(mk("💧 Tomé agua", e.get("agua") == "si"), callback_data=f"hab:agua:si{suf}"),
+         InlineKeyboardButton(mk("💧 Hoy no", e.get("agua") == "no"), callback_data=f"hab:agua:no{suf}")],
+        [InlineKeyboardButton(mk("🥩 Comí proteína", e.get("proteina") == "si"), callback_data=f"hab:proteina:si{suf}"),
+         InlineKeyboardButton(mk("🥩 Hoy no", e.get("proteina") == "no"), callback_data=f"hab:proteina:no{suf}")],
+        # 🍳 primera comida (ventanas E8, C3) vs 🍽️ última comida — el emoji las distingue.
+        [InlineKeyboardButton(mk(f"🍳 {h}", e.get("primera_comida") == h), callback_data=f"pcom:{h}{suf}") for h in CHIPS_PRIMERA_COMIDA],
+        [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}{suf}") for h in CHIPS_COMIDA[:2]],
+        [InlineKeyboardButton(mk(f"🍽️ {h}", e.get("comida") == h), callback_data=f"comida:{h}{suf}") for h in CHIPS_COMIDA[2:]],
+        [InlineKeyboardButton(mk(f"Ánimo {n}", e.get("animo") == n), callback_data=f"animo:{n}{suf}") for n in ("1", "2", "3", "4")],
     ]
     for i, texto in enumerate(mits or []):
         etiqueta = (texto[:32] + "…") if len(texto) > 32 else texto
         marca = "✅ " if e.get(f"mit_{i}") == "si" else "☐ "
-        filas.append([InlineKeyboardButton(marca + etiqueta, callback_data=f"mit:{i}")])
+        filas.append([InlineKeyboardButton(marca + etiqueta, callback_data=f"mit:{i}{suf}")])
     return InlineKeyboardMarkup(filas)
 
 
@@ -58,12 +75,52 @@ def teclado_brief_sueno() -> InlineKeyboardMarkup:
     ]])
 
 
+def teclado_hora_dormi() -> InlineKeyboardMarkup:
+    """Chips de hora dormí (C3), encadenados tras el botón de sueño en el brief."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton(h, callback_data=f"sh:d:{h}") for h in CHIPS_HORA_DORMI]])
+
+
+def teclado_hora_despertar() -> InlineKeyboardMarkup:
+    """Chips de hora desperté (C3), encadenados tras elegir la hora dormí."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton(h, callback_data=f"sh:w:{h}") for h in CHIPS_HORA_DESPERTAR]])
+
+
+def teclado_mes_activo(mes: int) -> InlineKeyboardMarkup:
+    """Toque del día 1 para actualizar el Mes activo del Dashboard (C2)."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Sí, actualiza", callback_data=f"cfg:mes:{mes}"),
+        InlineKeyboardButton("Después", callback_data="cfg:no"),
+    ]])
+
+
+def teclado_vencidos(vencidos: list[dict]) -> InlineKeyboardMarkup:
+    """Un botón ✅ Hecho por recordatorio vencido (C4). Salta los nombres tan largos que no
+    caben en el tope de 64 bytes de callback_data de Telegram (igual salen en el texto)."""
+    filas = []
+    for v in vencidos[:8]:
+        nombre = v.get("nombre", "")
+        cb = f"rec:hecho:{nombre}"
+        if len(cb.encode("utf-8")) <= 64:
+            filas.append([InlineKeyboardButton(f"✅ Hecho: {nombre[:30]}", callback_data=cb)])
+    return InlineKeyboardMarkup(filas)
+
+
+def texto_vencidos(vencidos: list[dict]) -> str:
+    lineas = []
+    for v in vencidos:
+        n = abs(v.get("falta", 0))
+        lineas.append(f"• {v.get('nombre', '')} — venció hace {n} día{'s' if n != 1 else ''}")
+    return "Tienes recordatorios vencidos. Márcalos cuando los hagas:\n\n" + "\n".join(lineas)
+
+
 async def enviar_panel_cierre(bot, chat_id: int, intro: str) -> None:
     # Fetch directo (sin user_data): este envío puede venir de un job del scheduler, que no
     # tiene un user_id asociado y por lo tanto no tiene context.user_data (ver on_callback,
     # que sí puede cachear ahí porque corre siempre en respuesta a un toque real de Nico).
+    # La fecha del envío se ancla en los callbacks (C6): un toque post-medianoche cae en el día
+    # correcto, no en el siguiente.
     mits = await salud.mits_pendientes()
-    await bot.send_message(chat_id, intro, reply_markup=teclado_cierre(mits=mits))
+    await bot.send_message(chat_id, intro, reply_markup=teclado_cierre(mits=mits, fecha=_hoy()))
 
 
 # ───────────────────────── Digest financiero ─────────────────────────
@@ -236,24 +293,32 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await q.answer()
     data = q.data
 
-    if data.split(":", 1)[0] in ("hab", "comida", "animo", "mit"):
+    if data.split(":", 1)[0] in ("hab", "comida", "pcom", "animo", "mit"):
         # Panel del cierre: cada toque actualiza SOLO el teclado (marca ✅), sin cerrar el panel,
         # para poder anotar varios hábitos. El estado vive por message_id (no se arrastra entre días).
-        partes = data.split(":")
+        # La fecha va anclada al final del callback (|YYYY-MM-DD, fix C6): así el toque cae en la
+        # fila del día del ENVÍO del panel aunque Nico responda pasada la medianoche.
+        base, _, fecha = data.partition("|")
+        fecha = fecha or None
+        partes = base.split(":")
         tipo = partes[0]
         estado = context.user_data.setdefault("cierre_estados", {}).setdefault(q.message.message_id, {})
         try:
             if tipo == "hab":  # hab:ejercicio:si | hab:meditacion:no → anota "Sí"/"No" explícito
                 campo, signo = partes[1], partes[2]
                 estado[campo] = signo
-                await salud.marcar_habito(campo, "Sí" if signo == "si" else "No")
+                await salud.marcar_habito(campo, "Sí" if signo == "si" else "No", fecha=fecha)
             elif tipo == "comida":
-                hora = data.split(":", 1)[1]  # "20:00" lleva ':' → tomo todo lo que sigue al primer ':'
+                hora = base.split(":", 1)[1]  # "20:00" lleva ':' → tomo todo lo que sigue al primer ':'
                 estado["comida"] = hora
-                await salud.marcar_habito("ultima_comida", hora)
+                await salud.marcar_habito("ultima_comida", hora, fecha=fecha)
+            elif tipo == "pcom":  # primera comida (ventanas E8, C3)
+                hora = base.split(":", 1)[1]
+                estado["primera_comida"] = hora
+                await salud.registrar_hora("primera_comida", hora, fecha=fecha)
             elif tipo == "animo":
                 estado["animo"] = partes[1]
-                await salud.registrar_animo(partes[1])
+                await salud.registrar_animo(partes[1], fecha=fecha)
             # Los MITs se cachean por message_id (igual que cierre_estados) la primera vez que
             # se necesitan: on_callback siempre corre en respuesta a un toque real de Nico, así
             # que a diferencia del job del scheduler, acá context.user_data sí existe — pero un
@@ -274,7 +339,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             logger.exception("cierre: no pude anotar %s", data)
         try:
             mits = context.user_data.get("cierre_mits_cache", {}).get(q.message.message_id, [])
-            await q.edit_message_reply_markup(reply_markup=teclado_cierre(estado, mits))
+            await q.edit_message_reply_markup(reply_markup=teclado_cierre(estado, mits, fecha=fecha or ""))
         except Exception:
             pass  # "message is not modified" si se re-toca lo mismo
         return
@@ -284,8 +349,43 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await salud.registrar_sueno(valor)
         cierre = "Bien ahí." if valor == "Sí" else "Lo veo. Hoy a las 23:00 a la cama, te conozco."
         await q.edit_message_text(f"Sueño anotado. {cierre}")
+        # C3: encadena la hora exacta (chips) para llenar la ventana de sueño (el eje #1).
+        await context.bot.send_message(q.message.chat_id, "¿A qué hora te dormiste?",
+                                       reply_markup=teclado_hora_dormi())
         return
 
+    if data.startswith("sh:"):  # C3: horas de sueño por chips (d = dormí, w = desperté)
+        partes = data.split(":", 2)  # ["sh", "d"|"w", "HH:MM"]
+        cual, hora = partes[1], partes[2]
+        if cual == "d":
+            await salud.registrar_hora_dormi(hora)
+            await q.edit_message_text(f"Te dormiste {hora}, anotado.")
+            await context.bot.send_message(q.message.chat_id, "¿Y a qué hora despertaste?",
+                                           reply_markup=teclado_hora_despertar())
+        else:  # w = desperté
+            await salud.registrar_hora("hora_despertar", hora)
+            await q.edit_message_text(f"Despertaste {hora}. Ventana de sueño anotada. 😴")
+        return
+
+    if data.startswith("cfg:"):  # C2: actualizar el Mes activo del Dashboard (toque del día 1)
+        partes = data.split(":")
+        if partes[1] == "mes":
+            mes = partes[2]
+            try:
+                await sheets.upsert_por_clave(HOJA_CONFIG, "Parámetro", "Mes activo", "Valor", int(mes))
+                await q.edit_message_text(f"Dashboard apuntando al mes {mes}. Ya lo resolví.")
+            except Exception:
+                logger.exception("cfg:mes falló")
+                await q.edit_message_text("No pude actualizar el Mes activo ahora. Reintenta luego.")
+        else:  # cfg:no
+            await q.edit_message_text("Ok, lo dejamos. Avísame cuando quieras.")
+        return
+
+    if data.startswith("rec:hecho:"):  # C4: marcar un recordatorio vencido como hecho
+        nombre = data.split(":", 2)[2]
+        await recordatorios.marcar_hecho(nombre)
+        await q.edit_message_text(f"Listo, marqué «{nombre}» como hecho. Ya no te insisto.")
+        return
 
     if data == "digest:aceptar":
         res = await finanzas.confirmar_digest({})

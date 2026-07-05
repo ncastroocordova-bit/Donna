@@ -15,10 +15,28 @@ from datetime import datetime, time, timedelta
 from telegram.ext import Application, ContextTypes
 
 from config import settings
-from core import agenda, brain, correlador, correo, flows, memory
+from core import agenda, brain, correlador, correo, flows, memory, sheets
 from modules import aprendizaje, finanzas, proactividad, proyectos, recordatorios, salud
 
 logger = logging.getLogger(__name__)
+
+HOJA_CONFIG = "⚙️ Config"
+
+
+async def _mes_config() -> int | None:
+    """Lee 'Mes activo' del ⚙️ Config (int) o None si no está / no se puede leer (C2)."""
+    try:
+        filas = await sheets.get_dicts(HOJA_CONFIG)
+    except Exception:
+        logger.exception("_mes_config: no pude leer Config")
+        return None
+    fila = next((f for f in filas if str(f.get("Parámetro", "")).strip().lower() == "mes activo"), None)
+    if fila is None:
+        return None
+    try:
+        return int(float(str(fila.get("Valor", "")).strip()))
+    except (ValueError, TypeError):
+        return None
 
 
 # ───────────────────────── Brief 8:00 (read-only) ─────────────────────────
@@ -51,6 +69,29 @@ async def job_brief(context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(
         settings.nico_telegram_id, "¿Cuánto dormiste?", reply_markup=flows.teclado_brief_sueno()
     )
+    # C2: el día 1, si el Dashboard sigue mirando el mes pasado, ofrece actualizarlo con un toque.
+    ahora = datetime.now(settings.tz)
+    if ahora.day == 1:
+        try:
+            mes_cfg = await _mes_config()
+            if mes_cfg is not None and mes_cfg != ahora.month:
+                await context.bot.send_message(
+                    settings.nico_telegram_id,
+                    f"Ojo: el Dashboard sigue en el mes {mes_cfg}. ¿Lo paso a {ahora.month}?",
+                    reply_markup=flows.teclado_mes_activo(ahora.month),
+                )
+        except Exception:
+            logger.exception("No pude chequear el Mes activo del Dashboard")
+    # C4: recordatorios vencidos → push con botón ✅ Hecho (insisten a diario hasta marcarse).
+    try:
+        vencidos = await recordatorios.vencidos()
+        if vencidos:
+            await context.bot.send_message(
+                settings.nico_telegram_id, flows.texto_vencidos(vencidos),
+                reply_markup=flows.teclado_vencidos(vencidos),
+            )
+    except Exception:
+        logger.exception("No pude enviar los recordatorios vencidos")
     try:
         await salud.marcar_brief()
     except Exception:

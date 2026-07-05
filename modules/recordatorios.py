@@ -158,6 +158,30 @@ async def texto_proximos(dias: int = 3, marcar: bool = False) -> str:
     return "Recordatorios: " + "; ".join(lineas) + "."
 
 
+async def vencidos() -> list[dict]:
+    """Solo los vencidos (falta < 0), para el push del brief con botón ✅ Hecho. Forma limpia
+    {nombre, falta} para no filtrar columnas crudas hacia el flujo de Telegram."""
+    try:
+        return [
+            {"nombre": r.get(COLS["recordatorio"], ""), "falta": r["_falta"]}
+            for r in await proximos(0) if r["_falta"] < 0
+        ]
+    except Exception:
+        logger.exception("vencidos falló")
+        return []
+
+
+async def marcar_hecho(nombre: str) -> None:
+    """Marca un recordatorio como Hecho (deja de insistir) + registra la Última acción."""
+    try:
+        await sheets.upsert_por_clave(HOJA, COLS["recordatorio"], nombre, COLS["estado"], "Hecho")
+        await sheets.upsert_por_clave(
+            HOJA, COLS["recordatorio"], nombre, COLS["ultima_accion"], f"hecho {_hoy().strftime('%Y-%m-%d')}",
+        )
+    except Exception:
+        logger.exception("No pude marcar Hecho el recordatorio %s", nombre)
+
+
 # ───────────────────────── Handlers de tools ─────────────────────────
 
 async def _t_proximos(inp: dict) -> str:
