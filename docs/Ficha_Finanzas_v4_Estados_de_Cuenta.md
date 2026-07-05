@@ -10,6 +10,20 @@
 - **Donna nunca usa las credenciales de login del banco.** El PDF ya llega al correo; ella lo lee del mail, no inicia sesión en el sitio. Un PDF cifrado no mueve plata.
 - **Los invariantes duros de `CLAUDE.md` mandan:** correo jamás borra (descargar un adjunto no borra); Sheets nunca se escribe sin OK de Nico (el faro y la reconciliación se confirman con toque, igual que el digest); del correo solo se mira lo justo (el worker destila deuda+movimientos, no vuelca el PDF entero al LLM); `.env` nunca al control de versiones.
 
+## ⭐ ACTUALIZACIÓN 2026-07-04 — decisiones cerradas + foco en el PROGRESO DE DEUDA (manda sobre lo de arriba)
+
+Nico afinó el objetivo: lo central es **ver el progreso de la deuda mes a mes, automático, desde los estados de cuenta**. Esto **reordena prioridades** (no reabre invariantes):
+
+- **Foco = deuda, no reconciliación.** El objetivo es la **curva de deuda mes a mes** (BCh crédito + Mach + línea). La reconciliación transacción-por-transacción (Parte D) pasa a **secundaria/opcional** — el núcleo es: bajar PDF → extraer las cifras de deuda → guardar la fila del mes → mostrar el progreso. Esto hace el build **más simple** que las 4 piezas originales.
+- **Alcance = SOLO deuda.** Tarjeta BCh + Mach + línea de crédito. La cuenta corriente / débito queda **fuera** por ahora.
+- **Backfill histórico COMPLETO.** "Descargar todos mis PDFs" = procesar **todos** los estados de cuenta que haya en el Gmail (no solo los nuevos) → una fila por mes → la curva aparece de inmediato, sin esperar meses.
+- **Historial en un TAB nuevo de la planilla `Deuda_Mensual`** (registro visible/editable — canon: los registros van a Sheets, no a Supabase). Columnas sugeridas: `Mes (YYYY-MM) · Banco · Deuda total · Cupo · Utilización % · Interés del mes · Pago mínimo · Fecha estado · Fuente`. Una fila por (mes, banco). Es a la vez el almacén y la superficie visible.
+- **Superficie = AMBOS:** el tab `Deuda_Mensual` visible en el Sheet **+** un tool `fin_progreso_deuda` ("¿cómo va mi deuda?") que lee ese tab y resume la tendencia **+** un **aviso mensual automático** cuando entra un estado nuevo ("tu deuda bajó $X este mes; de eso $Y fue solo interés muerto — plata que no baja la deuda").
+- **Clave del PDF = código fijo propio de Nico**, por banco, vía **variables de entorno** (`BANCO_PDF_PASSWORD_BCH`, `BANCO_PDF_PASSWORD_MACH`) que Nico configura en Railway — **nunca en el chat, nunca en el Sheet, nunca al repo**. (Pendiente menor de confirmar: si el código es el mismo para ambos bancos o distinto — ver "Decisiones que quedan".)
+- **Prerequisito de construcción:** para escribir el parser por banco hace falta **un PDF de estado de cuenta de muestra de BCh y otro de Mach** (el layout es específico por banco). Sin muestras, el parser se hace a ciegas. Nico las aporta o autoriza buscarlas en el correo.
+
+Con esto, el **faro vivo** (Parte C) sigue igual (actualiza las celdas de `Tarjetas y Deuda` del mes corriente), y se **agrega** el historial `Deuda_Mensual` + `fin_progreso_deuda` + aviso mensual como el corazón del v4.
+
 **Prerequisito:** leer `CLAUDE.md` completo. Idealmente la Fase 0 (bugs de `Plan_Reparacion_Bugs_y_Datos.md`) cerrada, pero esta ficha no depende de esos fixes (toca finanzas, no recordatorios/proyectos).
 
 **Reglas de ejecución (idénticas a las otras fichas):** rama propia `feat/finanzas-estados-cuenta`; commit por paso, en español, concreto; `python -m pytest tests/ -q` verde con los tests nuevos (patrón de mocking de `tests/test_finanzas.py` / `tests/test_salud.py`: monkeypatch sobre `core.sheets` y sobre el cliente Anthropic); invariantes intactos.
@@ -245,13 +259,21 @@ def _password_de(emisor: dict) -> str:
 
 **Gate de salida:** `pytest tests/ -q` verde · un PDF real de prueba (uno de los tuyos) descifrado → preview del faro con antes→después → toque → faro recalculado correcto · reconciliación de un mes real da faltan/sobran coherentes · smoke por Telegram.
 
-## Decisiones que quedan para Nico (no las tome la IA ejecutora)
+## Decisiones — cerradas (2026-07-04) y las que aún quedan
 
-- **Clave del PDF por banco:** ¿env var, o derivarla del RUT del perfil? (según lo que use cada banco).
-- **Débito:** ¿qué cuenta corriente reconciliar, y su emisor exacto?
+**Cerradas por Nico (2026-07-04):**
+- **Alcance:** SOLO deuda (tarjeta BCh + Mach + línea). Cuenta corriente/débito FUERA por ahora.
+- **Backfill:** COMPLETO — todos los estados de cuenta que haya en el Gmail.
+- **Superficie:** AMBOS — tab `Deuda_Mensual` en la planilla + tool `fin_progreso_deuda` + aviso mensual automático.
+- **Clave del PDF:** código fijo propio de Nico, por banco, vía env var (`BANCO_PDF_PASSWORD_BCH`/`BANCO_PDF_PASSWORD_MACH`), configurada en Railway.
+- **Historial:** en un TAB de la planilla (`Deuda_Mensual`), no en Supabase (canon: los registros van a Sheets).
+- **Reconciliación (Parte D):** degradada a secundaria/opcional — el foco es la deuda, no cuadrar transacciones.
+
+**Quedan por confirmar (menores, no bloquean el diseño):**
+- **¿El código del PDF es el mismo para BCh y Mach, o distinto?** (define 1 env var o 2). *Ojo:* en las respuestas Nico marcó "código fijo propio" + una nota en "otro" que no llegó al ejecutor — reconfirmar el mecanismo. El valor JAMÁS va al chat/Sheet/repo, solo a la env de Railway.
+- **Muestras para el parser:** falta **1 PDF de estado de cuenta de BCh + 1 de Mach** para construir el parser por banco (layout específico). Nico las aporta o autoriza buscarlas en el correo. **Sin muestras, el parser va a ciegas.**
 - **Dependencia PDF:** confirmar `pypdf`+`pdfplumber` (y si se acepta PyMuPDF/AGPL para el fallback de escaneados).
-- **Trigger:** oportunista en el sweep vs. job mensual fijo.
-- **Historial de deuda** (`estados_cuenta` en Supabase): ¿ahora o v4.1?
+- **Trigger:** oportunista en el sweep de correo (recomendado) vs. job mensual fijo.
 
 ## Fuera de alcance (por diseño)
 
