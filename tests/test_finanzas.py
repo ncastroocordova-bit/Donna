@@ -442,3 +442,88 @@ def test_regla_comercio_sin_categoria_conserva_la_actual():
     reglas = [{"patron": "uber", "nombre": "Uber", "categoria": ""}]
     n, c = finanzas._aplicar_reglas_comercio("UBER *TRIP", "Transporte", reglas)
     assert n == "Uber" and c == "Transporte"
+
+
+# ───────────────────────── Validación de categoría contra Categorias (C1) ─────────────────────────
+# Las 14 categorías de gasto reales + 'Transferencias' (creada por decisión de Nico 2026-07-04).
+_CATS_REALES = ["Alimentación", "Chanchería", "Transporte", "Salud", "Hijo", "Entretenimiento",
+                "Suscripciones", "Ropa", "Hogar", "GGCC", "Educación", "Tecnología",
+                "Tarjeta Crédito", "Otro Gasto", "Transferencias"]
+
+
+def _mock_categorias(monkeypatch):
+    finanzas._cache_categorias = None  # el cache es global de módulo → resetear entre tests
+
+    async def _fake(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        return [{"Categoría": c, "Tipo": "Gasto"} for c in _CATS_REALES]
+
+    monkeypatch.setattr(finanzas.sheets, "get_dicts", _fake)
+
+
+def test_categoria_de_fallback_es_otro_gasto():
+    # El cajón por defecto ahora es 'Otro Gasto' (categoría real), no 'Otros' (huérfana).
+    assert finanzas._categoria_de("comercio marciano xyz") == "Otro Gasto"
+
+
+def test_validar_grafia_se_normaliza_a_canonica(monkeypatch):
+    _mock_categorias(monkeypatch)
+    assert asyncio.run(finanzas._validar_categoria("chancheria")) == ("Chanchería", True)
+    assert asyncio.run(finanzas._validar_categoria("CHANCHERÍA")) == ("Chanchería", True)
+
+
+def test_validar_sinonimos_conocidos(monkeypatch):
+    _mock_categorias(monkeypatch)
+    assert asyncio.run(finanzas._validar_categoria("Otros")) == ("Otro Gasto", True)
+    assert asyncio.run(finanzas._validar_categoria("Supermercado")) == ("Alimentación", True)
+    assert asyncio.run(finanzas._validar_categoria("Negocio")) == ("Alimentación", True)
+    assert asyncio.run(finanzas._validar_categoria("Cosas casa")) == ("Hogar", True)
+    assert asyncio.run(finanzas._validar_categoria("Software")) == ("Tecnología", True)
+    assert asyncio.run(finanzas._validar_categoria("transferencia a mi mismo")) == ("Transferencias", True)
+
+
+def test_validar_categoria_desconocida_cae_a_otro_gasto_e_invalida(monkeypatch):
+    _mock_categorias(monkeypatch)
+    cat, valida = asyncio.run(finanzas._validar_categoria("Cripto lunar"))
+    assert cat == "Otro Gasto" and valida is False
+
+
+def test_validar_categoria_sheets_caido_no_molesta(monkeypatch):
+    finanzas._cache_categorias = None
+
+    async def _boom(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        raise RuntimeError("Sheets down")
+
+    monkeypatch.setattr(finanzas.sheets, "get_dicts", _boom)
+    cat, valida = asyncio.run(finanzas._validar_categoria("Cualquiera"))
+    assert cat == "Cualquiera" and valida is True   # sin poder validar, passthrough (no dudosa)
+    finanzas._cache_categorias = None               # no contaminar otros tests
+
+
+def _mock_buffer(monkeypatch):
+    async def _fake_agregar(tx):
+        return True
+
+    async def _fake_comercios():
+        return []
+
+    monkeypatch.setattr(finanzas.memory, "buffer_agregar", _fake_agregar)
+    monkeypatch.setattr(finanzas.memory, "get_comercios", _fake_comercios)
+
+
+def test_bufferizar_categoria_huerfana_queda_dudosa(monkeypatch):
+    _mock_categorias(monkeypatch)
+    _mock_buffer(monkeypatch)
+    tx = asyncio.run(finanzas._bufferizar(
+        {"monto": 5000, "categoria": "Cosas raras", "comercio": "X", "tipo": "Gasto"}, "correo", reglas=[]))
+    assert tx["categoria"] == "Otro Gasto"
+    assert tx["dudosa"] is True
+    assert "Cosas raras" in tx["motivo_duda"]
+
+
+def test_bufferizar_categoria_valida_no_es_dudosa(monkeypatch):
+    _mock_categorias(monkeypatch)
+    _mock_buffer(monkeypatch)
+    tx = asyncio.run(finanzas._bufferizar(
+        {"monto": 5000, "categoria": "Alimentación", "comercio": "Jumbo", "tipo": "Gasto"}, "correo", reglas=[]))
+    assert tx["categoria"] == "Alimentación"
+    assert tx["dudosa"] is False

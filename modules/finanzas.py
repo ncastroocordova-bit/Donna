@@ -25,6 +25,7 @@ import base64
 import json
 import logging
 import re
+import unicodedata
 from datetime import datetime, timedelta
 
 from anthropic import AsyncAnthropic
@@ -201,7 +202,15 @@ async def _bufferizar(datos: dict, fuente: str, reglas: list[dict] | None = None
             reglas = await memory.get_comercios()
         except Exception:
             reglas = []
-    comercio, categoria = _aplicar_reglas_comercio(comercio_raw, datos.get("categoria", "Otros"), reglas)
+    comercio, categoria = _aplicar_reglas_comercio(comercio_raw, datos.get("categoria", "Otro Gasto"), reglas)
+    # Validación C1: la categoría debe existir en la hoja Categorias. Si no, cae a 'Otro Gasto' y
+    # se marca dudosa para que el digest la pregunte (nunca se escribe una categoría huérfana).
+    cat_previa = categoria
+    categoria, cat_valida = await _validar_categoria(categoria)
+    es_dudosa = bool(datos.get("dudosa", False)) or not cat_valida
+    motivo_duda = datos.get("motivo_duda", "")
+    if not cat_valida and not motivo_duda:
+        motivo_duda = f"'{cat_previa}' no está en tus categorías — ¿cuál va?"
     items_raw = datos.get("items") or None
     items = [_linea_detalle(l, comercio) for l in items_raw] if items_raw else None
     tx = {
@@ -217,8 +226,8 @@ async def _bufferizar(datos: dict, fuente: str, reglas: list[dict] | None = None
         # Intención: si hay detalle, es el resumen de las líneas (Mixto si difieren); si no, la de la categoría.
         "intencion": _intencion_resumen(items) if items else (datos.get("intencion") or _intencion_de(categoria)),
         "items": items,                            # detalle ítem-a-ítem (v3) o None
-        "dudosa": bool(datos.get("dudosa", False)),
-        "motivo_duda": datos.get("motivo_duda", ""),
+        "dudosa": es_dudosa,
+        "motivo_duda": motivo_duda,
     }
     nuevo = await memory.buffer_agregar(tx)
     return tx if nuevo else None
@@ -234,12 +243,13 @@ _MESES = {"enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 
 
 # Mejor apuesta de categoría sin LLM (Nico corrige en el digest si hace falta).
 _CATEGORIAS_KW = [
-    ("Alimentación",  ["isabel", "jumbo", "lider", "unimarc", "tottus", "acuenta", "mayorista", "minimarket", "supermerc"]),
+    ("Alimentación",  ["isabel", "jumbo", "lider", "unimarc", "tottus", "acuenta", "mayorista", "minimarket", "supermerc", "san vale", "sanva", "agroconcepcio"]),
     ("Chanchería",    ["chancher", "uber eats", "rappi", "pedidosya", "mcdonald", "doggis", "burger", "kfc", "sushi", "pizza", "fiambre"]),
     ("Transporte",    ["uber", "cabify", "didi", "copec", "shell", "petrobras", "combustible"]),
+    ("Tecnología",    ["anthropic", "github", "railway", "vercel", "supabase", "google cloud"]),
     ("Suscripciones", ["netflix", "spotify", "disney", "hbo", "prime", "youtube", "icloud", "google one", "openai", "claude"]),
     ("Salud",         ["farmacia", "cruz verde", "salcobrand", "ahumada", "clinica", "consulta"]),
-    ("Hogar",         ["sodimac", "easy", "construmart", "homecenter"]),
+    ("Hogar",         ["sodimac", "easy", "construmart", "homecenter", "super ganga"]),
 ]
 
 
@@ -248,7 +258,61 @@ def _categoria_de(comercio: str) -> str:
     for cat, kws in _CATEGORIAS_KW:
         if any(k in c for k in kws):
             return cat
-    return "Otros"
+    return "Otro Gasto"
+
+
+# ───────────────── Validación de categoría contra la hoja Categorias (C1) ─────────────────
+# Regla dura: toda categoría que se escriba debe existir en `Categorias`, o pasar por un toque
+# de Nico en el digest (marcada dudosa). El mapeador determinista da la mejor apuesta; esto es
+# la red de seguridad para que no entren categorías huérfanas ("Otros", "Supermercado", …).
+
+def _norm(s: str) -> str:
+    s = unicodedata.normalize("NFD", str(s or ""))
+    return "".join(c for c in s if not unicodedata.combining(c)).lower().strip()
+
+
+# Grafías/sinónimos conocidos → categoría canónica real (decisión de Nico 2026-07-04).
+_CAT_SINONIMOS = {
+    "otros": "Otro Gasto", "supermercado": "Alimentación", "negocio": "Alimentación",
+    "cosas casa": "Hogar", "software": "Tecnología",
+    "transferencia a mi mismo": "Transferencias", "transferencias": "Transferencias",
+}
+
+_cache_categorias: dict | None = None  # {norm: nombre_canonico}
+
+
+async def _categorias_reales() -> dict:
+    """Lee la hoja Categorias una vez por proceso → {norm: nombre_canonico}. Degrada a {} si falla."""
+    global _cache_categorias
+    if _cache_categorias is not None:
+        return _cache_categorias
+    try:
+        filas = await sheets.get_dicts(HOJA_CAT, sheet_id=sheets.fin_id())
+        _cache_categorias = {
+            _norm(f.get("Categoría", "")): str(f.get("Categoría", "")).strip()
+            for f in filas if str(f.get("Categoría", "")).strip()
+        }
+    except Exception:
+        logger.exception("_categorias_reales: no pude leer Categorias")
+        _cache_categorias = {}
+    return _cache_categorias
+
+
+async def _validar_categoria(cat: str) -> tuple[str, bool]:
+    """(categoria_canonica, era_valida). Match exacto contra Categorias (sin tildes/mayúsculas),
+    luego sinónimos conocidos; si no calza, cae a 'Otro Gasto' con era_valida=False → el digest
+    lo pregunta. Degrada elegante: si no se pudo leer Categorias, no invalida (passthrough)."""
+    reales = await _categorias_reales()
+    if not reales:
+        return (str(cat).strip() or "Otro Gasto"), True  # sin poder validar, no molestar
+    n = _norm(cat)
+    if not n:
+        return "Otro Gasto", False
+    if n in reales:
+        return reales[n], True
+    if n in _CAT_SINONIMOS:
+        return _CAT_SINONIMOS[n], True  # mapeo conocido y confiable
+    return "Otro Gasto", False  # desconocida → cajón + toque de Nico en el digest
 
 
 # Intención del gasto (v2): por qué se gastó, no solo en qué. Mejor apuesta por categoría;
@@ -321,7 +385,7 @@ def _categoria_item(nombre: str) -> str:
     """Categoría de una línea de detalle a partir del nombre del ítem. Usa el mapa de comercios
     si calza (ej. 'chanchería'→Chanchería); si no, capitaliza el nombre como categoría suelta."""
     cat = _categoria_de(nombre)
-    return cat if cat != "Otros" else (nombre.strip().capitalize() or "Otros")
+    return cat if cat != "Otro Gasto" else (nombre.strip().capitalize() or "Otro Gasto")
 
 
 def _linea_detalle(raw: dict, comercio: str = "") -> dict:
