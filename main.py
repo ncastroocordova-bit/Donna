@@ -176,6 +176,14 @@ async def manejar_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Gracias. Actualizado. Eso es lo que importa.")
         return
 
+    # ¿Está respondiendo con el monto de un gasto que dictó sin cifra? (no se pierde)
+    if finanzas.hay_gasto_incompleto():
+        r = await finanzas.completar_gasto_incompleto(texto)
+        if r:
+            await update.message.reply_text(r)
+            return
+        finanzas.limpiar_gasto_incompleto()  # no era el monto → sigo normal
+
     off = texto.lower().startswith(OFF_RECORD)
     history = context.chat_data.get("history", [])
     respuesta, history, tools, _ = await brain.responder(texto, history, off_record=off, _return_tools=True)
@@ -200,6 +208,14 @@ async def manejar_voz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             os.remove(path)
         except OSError:
             pass
+
+    # ¿Voz con el monto de un gasto que quedó sin cifra? (antes de los MITs: solo consume si es un monto)
+    if finanzas.hay_gasto_incompleto():
+        r = await finanzas.completar_gasto_incompleto(texto)
+        if r:
+            await update.message.reply_text(f"_{texto}_\n\n{r}", parse_mode="Markdown")
+            return
+        finanzas.limpiar_gasto_incompleto()
 
     # Si el cierre está esperando los MITs de mañana, esta voz son los MITs.
     hoy = datetime.now(settings.tz).strftime("%Y-%m-%d")

@@ -50,6 +50,7 @@ async def _texto_brief() -> str:
     señales = " ".join(s for s in [
         aviso_correo,
         await finanzas.senal_finanzas(),
+        await finanzas.senal_pendientes_digest(),
         await salud.senal_salud(),
         await salud.senal_mits_brief(),
         await recordatorios.texto_proximos(7),

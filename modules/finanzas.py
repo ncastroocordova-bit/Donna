@@ -139,6 +139,114 @@ def _id_unico(fecha: str, monto, comercio: str) -> str:
     return f"{fecha}_{int(_num(monto))}_{(comercio or '')[:20].strip()}"
 
 
+# ── Montos dictados en palabras/slang (Nico dice "mil pesos", "3 lucas") ──
+# El parser de _num solo lee dígitos; cuando Nico dicta el monto en palabras no quedaba nada
+# registrado. Esto cubre los casos comunes chilenos sin LLM (contrato de costos).
+_UNIDADES = {
+    "cero": 0, "un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10, "once": 11, "doce": 12, "trece": 13,
+    "catorce": 14, "quince": 15, "dieciseis": 16, "diecisiete": 17, "dieciocho": 18, "diecinueve": 19,
+    "veinte": 20, "veintiuno": 21, "veintiun": 21, "veintidos": 22, "veintitres": 23, "veinticuatro": 24,
+    "veinticinco": 25, "veintiseis": 26, "veintisiete": 27, "veintiocho": 28, "veintinueve": 29,
+    "treinta": 30, "cuarenta": 40, "cincuenta": 50, "sesenta": 60, "setenta": 70, "ochenta": 80, "noventa": 90,
+}
+_CIENTOS = {
+    "cien": 100, "ciento": 100, "doscientos": 200, "trescientos": 300, "cuatrocientos": 400,
+    "quinientos": 500, "seiscientos": 600, "setecientos": 700, "ochocientos": 800, "novecientos": 900,
+}
+_SLANG = {"luca": 1000, "lucas": 1000, "palo": 1_000_000, "palos": 1_000_000,
+          "gamba": 100, "gambas": 100, "quina": 500, "quinas": 500}
+
+
+def _palabras_a_numero(texto: str) -> int | None:
+    """Convierte un número dicho en palabras ('dos mil quinientos') a entero. Ignora el ruido
+    alrededor. 'un/una/uno' cuentan como 1 solo si preceden a una escala/centena ('un millón');
+    sueltos ('una compota') son artículo y se saltan. None si no hay ningún número."""
+    tokens = [t for t in re.split(r"[\s\-]+", _norm(texto)) if t and t != "y"]
+    total, actual, visto = 0, 0, False
+    for i, t in enumerate(tokens):
+        nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+        if t in ("un", "uno", "una"):
+            if nxt in ("mil", "millon", "millones") or nxt in _CIENTOS:
+                actual += 1; visto = True          # 'un millón' → número; 'una compota' → artículo (skip)
+        elif t in _UNIDADES:
+            actual += _UNIDADES[t]; visto = True
+        elif t in _CIENTOS:
+            actual += _CIENTOS[t]; visto = True
+        elif t == "mil":
+            actual = (actual or 1) * 1000; total += actual; actual = 0; visto = True
+        elif t in ("millon", "millones"):
+            actual = (actual or 1) * 1_000_000; total += actual; actual = 0; visto = True
+        # el ruido (palabras no numéricas) se salta sin cortar: agarra el número aunque venga
+        # rodeado de texto ('una compota que costó mil pesos' → 1000).
+    return (total + actual) if visto else None
+
+
+def _num_es(texto) -> int:
+    """Monto en pesos desde texto libre: dígitos ('$1.290', '1290'), slang ('3 lucas', 'medio
+    palo') o palabras ('mil quinientos'). 0 si no encuentra nada. Números ya numéricos pasan directo."""
+    if isinstance(texto, bool):
+        return 0
+    if isinstance(texto, (int, float)):
+        return int(texto)
+    s = _norm(texto)
+    m = re.search(r"(\d+(?:[.,]\d+)?|medio|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
+                  r"(luca|lucas|palo|palos|gamba|gambas|quina|quinas)", s)
+    if m:
+        base, mult = m.group(1), _SLANG[m.group(2)]
+        factor = 0.5 if base == "medio" else (_UNIDADES[base] if base in _UNIDADES else float(base.replace(",", ".")))
+        return int(round(factor * mult))
+    md = re.search(r"\$?\s*\d[\d.]*", s)   # dígitos con formato chileno de miles
+    if md:
+        return int(_num(md.group()))
+    n = _palabras_a_numero(s)
+    return int(n) if n else 0
+
+
+# Gasto dictado sin monto legible: queda esperando a que Nico diga cuánto (patrón de estado
+# de un solo usuario, igual que spam._PENDIENTE). Lo completa main.py con el próximo mensaje.
+_gasto_incompleto: dict | None = None
+
+
+def hay_gasto_incompleto() -> bool:
+    return _gasto_incompleto is not None
+
+
+def limpiar_gasto_incompleto() -> None:
+    global _gasto_incompleto
+    _gasto_incompleto = None
+
+
+async def completar_gasto_incompleto(texto: str) -> str | None:
+    """Nico respondió con el monto del gasto que quedó pendiente ('eran 3 mil'). Lo registra en
+    el buffer. Devuelve la confirmación, o None si el mensaje no traía un monto (no era la respuesta)."""
+    global _gasto_incompleto
+    if _gasto_incompleto is None:
+        return None
+    monto = _num_es(texto)
+    if monto <= 0:
+        return None  # no era el monto → main.py limpia y sigue normal
+    ctx, _gasto_incompleto = _gasto_incompleto, None
+    fecha = _hoy()
+    comercio = ctx.get("comercio", "")
+    tx = {
+        "fecha": fecha, "tipo": ctx.get("tipo", "Gasto"), "categoria": ctx.get("categoria", "Otros"),
+        "comercio": comercio, "monto": int(monto), "medio": ctx.get("medio", ""),
+        "fuente": "manual", "id_unico": _id_unico(fecha, monto, comercio),
+        "intencion": ctx.get("intencion") or _intencion_de(ctx.get("categoria", "Otros")),
+    }
+    try:
+        nuevo = await memory.buffer_agregar(tx)
+    except Exception:
+        logger.exception("completar_gasto_incompleto falló")
+        return "Tengo el monto pero no pude anotarlo ahora. Reintenta en un rato."
+    verbo = "Ingreso" if tx["tipo"] == "Ingreso" else "Gasto"
+    if not nuevo:
+        return f"Ese {verbo.lower()} ya lo tenía anotado para hoy. No lo duplico."
+    donde = f" en {comercio}" if comercio else ""
+    return f"{verbo} de {clp(monto)}{donde} anotado. Lo confirmas en el cierre de hoy."
+
+
 # ───────────────────────── (A) Registro pasivo → buffer (contexto aislado) ─────────────────────────
 
 EXTRACTOR_SYSTEM = (
@@ -850,6 +958,13 @@ async def confirmar_digest(correcciones: dict | None = None) -> dict:
             escritas += 1
         except Exception:
             logger.exception("confirmar_digest: no pude escribir una transacción")
+    # append_row agrega al final → la hoja queda desordenada por fecha (las tandas de correo
+    # traen compras de días previos). Reordeno por Fecha tras escribir para dejarla cronológica.
+    if escritas:
+        try:
+            await sheets.ordenar_por_columna(HOJA_TX, "Fecha", sheet_id=sheets.fin_id())
+        except Exception:
+            logger.exception("confirmar_digest: no pude reordenar Transacciones por fecha")
     return {"escritas": escritas, "descartadas": len(plan["a_descartar"]), "duplicadas": len(plan["duplicadas"])}
 
 
@@ -1131,10 +1246,15 @@ async def aportar_meta(nombre: str, monto) -> str:
 
 async def _t_registrar_gasto(inp: dict) -> str:
     """Ad-hoc por chat: 'gasté X'. Va al BUFFER del día (no a Sheets); se confirma en el cierre."""
-    monto = _num(inp.get("monto", 0))
-    if monto <= 0:
-        return "¿Cuánto fue? Pásame el monto y lo dejo listo para el cierre."
+    global _gasto_incompleto
+    monto = _num_es(inp.get("monto", 0))  # entiende número, palabras ('mil') o slang ('3 lucas')
     tipo = "Ingreso" if str(inp.get("tipo", "")).lower().startswith("ing") else "Gasto"
+    if monto <= 0:
+        # Sin monto legible: no lo pierdo — queda esperando a que Nico diga cuánto (main.py lo completa).
+        _gasto_incompleto = {"tipo": tipo, "categoria": inp.get("categoria", "Otros"),
+                             "comercio": inp.get("comercio", ""), "medio": inp.get("medio", "")}
+        return "¿Cuánto fue? Dímelo y lo dejo listo para el cierre."
+    _gasto_incompleto = None
     fecha = _hoy()
     comercio = inp.get("comercio", "")
     tx = {
@@ -1236,7 +1356,10 @@ async def _t_compra_detallada(inp: dict) -> str:
     else:
         lineas = await fin_desglose(str(inp.get("desglose", "")), total)
     if not lineas:
-        return "No te pillé el desglose. Dímelo como «arroz 1290, leche 990» o mándame la foto de la boleta."
+        # No pude sacar montos del desglose: no lo pierdo — pido el total y lo anoto como gasto simple.
+        global _gasto_incompleto
+        _gasto_incompleto = {"tipo": "Gasto", "categoria": "Otros", "comercio": comercio, "medio": ""}
+        return "No te pillé los montos. ¿Cuánto fue en total? Dímelo y lo anoto para el cierre."
     suma = sum(int(_num(l["precio"])) for l in lineas)
     monto = int(_num(total)) or suma
     guardado = await _bufferizar(
@@ -1265,6 +1388,19 @@ async def senal_finanzas() -> str:
     except Exception:
         logger.exception("senal_finanzas: deuda falló")
     return "Plata: " + "; ".join(partes) + "." if partes else ""
+
+
+async def senal_pendientes_digest() -> str:
+    """Para el brief: si quedaron gastos sin confirmar de cierres anteriores, lo recuerda (así no
+    se acumulan pendientes que nunca llegan a la planilla). Silencio si no hay ninguno."""
+    try:
+        n = len(await memory.buffer_pendientes())
+    except Exception:
+        logger.exception("senal_pendientes_digest falló")
+        return ""
+    if n == 0:
+        return ""
+    return f"Tienes {n} movimiento(s) sin confirmar del cierre — cuando quieras, /digest y los cierro contigo."
 
 
 # ───────────────────────── Registro de tools ─────────────────────────

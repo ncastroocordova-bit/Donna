@@ -527,3 +527,72 @@ def test_bufferizar_categoria_valida_no_es_dudosa(monkeypatch):
         {"monto": 5000, "categoria": "Alimentación", "comercio": "Jumbo", "tipo": "Gasto"}, "correo", reglas=[]))
     assert tx["categoria"] == "Alimentación"
     assert tx["dudosa"] is False
+
+
+# ───────────────────────── Montos en palabras/slang (captura sin monto legible) ─────────────────────────
+
+def test_num_es_digitos_y_formato():
+    assert finanzas._num_es("1290") == 1290
+    assert finanzas._num_es("$1.290") == 1290
+    assert finanzas._num_es("gasté 5000 en uber") == 5000
+    assert finanzas._num_es(2500) == 2500          # numérico pasa directo
+    assert finanzas._num_es("") == 0               # nada → 0
+
+
+def test_num_es_slang_chileno():
+    assert finanzas._num_es("3 lucas") == 3000
+    assert finanzas._num_es("dos lucas") == 2000
+    assert finanzas._num_es("medio palo") == 500000
+    assert finanzas._num_es("un palo") == 1_000_000
+
+
+def test_num_es_palabras():
+    assert finanzas._num_es("mil pesos") == 1000
+    assert finanzas._num_es("dos mil quinientos") == 2500
+    assert finanzas._num_es("una compota que costó mil pesos") == 1000   # ignora el ruido, agarra el número
+    assert finanzas._num_es("un millón quinientos mil") == 1_500_000
+
+
+def test_palabras_a_numero_none_si_no_hay():
+    assert finanzas._palabras_a_numero("hola cómo estás") is None
+
+
+# ───────────────────────── Gasto sin monto: no se pierde, queda esperando ─────────────────────────
+
+def test_completar_gasto_incompleto_registra_con_el_monto(monkeypatch):
+    finanzas.limpiar_gasto_incompleto()
+    _mock_buffer(monkeypatch)
+    # Simula el estado que deja _t_registrar_gasto cuando Nico no dio monto.
+    finanzas._gasto_incompleto = {"tipo": "Gasto", "categoria": "Chanchería", "comercio": "super ganga", "medio": ""}
+    r = asyncio.run(finanzas.completar_gasto_incompleto("fueron tres lucas"))
+    assert r is not None and "$3.000" in r
+    assert finanzas.hay_gasto_incompleto() is False       # se resolvió → estado limpio
+
+
+def test_completar_gasto_incompleto_ignora_si_no_hay_monto():
+    finanzas.limpiar_gasto_incompleto()
+    finanzas._gasto_incompleto = {"tipo": "Gasto", "categoria": "Otros", "comercio": "", "medio": ""}
+    r = asyncio.run(finanzas.completar_gasto_incompleto("no sé, después te digo"))
+    assert r is None                                      # no era el monto → main.py limpia y sigue
+    finanzas.limpiar_gasto_incompleto()
+
+
+def test_completar_sin_estado_devuelve_none():
+    finanzas.limpiar_gasto_incompleto()
+    assert asyncio.run(finanzas.completar_gasto_incompleto("3000")) is None
+
+
+def test_registrar_gasto_sin_monto_deja_estado_pendiente(monkeypatch):
+    finanzas.limpiar_gasto_incompleto()
+    r = asyncio.run(finanzas._t_registrar_gasto({"comercio": "super ganga", "categoria": "Chanchería"}))
+    assert "cuánto" in r.lower()
+    assert finanzas.hay_gasto_incompleto() is True        # quedó esperando el monto
+    finanzas.limpiar_gasto_incompleto()
+
+
+def test_registrar_gasto_con_monto_en_palabras(monkeypatch):
+    finanzas.limpiar_gasto_incompleto()
+    _mock_buffer(monkeypatch)
+    r = asyncio.run(finanzas._t_registrar_gasto({"monto": "mil", "comercio": "kiosco"}))
+    assert "$1.000" in r
+    assert finanzas.hay_gasto_incompleto() is False

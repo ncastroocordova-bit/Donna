@@ -67,6 +67,63 @@ async def append_row(hoja: str, valores: list, sheet_id: str | None = None) -> N
     await asyncio.to_thread(_call)
 
 
+async def _sheet_gid(hoja: str, sheet_id: str | None = None) -> int | None:
+    """gid (sheetId numérico) de una pestaña por su título. None si no existe. Lo necesita
+    batchUpdate (ordenar/formatear), que opera por gid, no por nombre."""
+    def _call():
+        meta = (
+            _svc().spreadsheets()
+            .get(spreadsheetId=_sid(sheet_id), fields="sheets(properties(sheetId,title))")
+            .execute()
+        )
+        for s in meta.get("sheets", []):
+            if s.get("properties", {}).get("title") == hoja:
+                return s["properties"]["sheetId"]
+        return None
+
+    return await asyncio.to_thread(_call)
+
+
+async def ordenar_por_columna(
+    hoja: str, columna: str, *, ascendente: bool = True, sheet_id: str | None = None
+) -> bool:
+    """Ordena IN-PLACE las filas de datos de `hoja` por la columna `columna` (por su header real),
+    saltando el banner + la fila de headers. Como `append_row` siempre agrega al final, la hoja
+    queda desordenada por fecha; esto la reordena tras escribir. Degrada elegante: si no puede
+    resolver la hoja/columna o no hay ≥2 filas de datos, no toca nada y devuelve False."""
+    try:
+        filas = await get_rows(hoja, sheet_id=sheet_id)
+    except Exception:
+        logger.exception("ordenar_por_columna: no pude leer %s", hoja)
+        return False
+    h_idx, headers = _fila_headers(filas)
+    if h_idx < 0 or columna not in headers:
+        return False
+    col_idx = headers.index(columna)
+    inicio = h_idx + 1          # primera fila de datos (0-based, exclusiva del header)
+    fin = len(filas)            # exclusivo
+    if fin - inicio < 2:        # 0 o 1 fila de datos → nada que ordenar
+        return False
+    gid = await _sheet_gid(hoja, sheet_id)
+    if gid is None:
+        return False
+
+    def _call():
+        _svc().spreadsheets().batchUpdate(
+            spreadsheetId=_sid(sheet_id),
+            body={"requests": [{
+                "sortRange": {
+                    "range": {"sheetId": gid, "startRowIndex": inicio, "endRowIndex": fin, "startColumnIndex": 0},
+                    "sortSpecs": [{"dimensionIndex": col_idx, "sortOrder": "ASCENDING" if ascendente else "DESCENDING"}],
+                }
+            }]},
+        ).execute()
+
+    await asyncio.to_thread(_call)
+    logger.info("Ordené '%s' por '%s' (%d filas de datos).", hoja, columna, fin - inicio)
+    return True
+
+
 async def get_rows(
     hoja: str, rango: str = "A:Z", sheet_id: str | None = None, value_render: str = "FORMATTED_VALUE"
 ) -> list[list]:
