@@ -15,8 +15,26 @@ Un solo Donna (un repo). Se construye y prueba **un módulo a la vez**. No empie
 2. Sesión nueva de Claude Code, contexto limpio, apuntando a `CLAUDE.md` + la ficha del módulo. (Una sesión por módulo = dejas de perder info entre frentes.)
 3. En `Config`, el módulo en construcción es el único **ON**; el resto dormido (para que no escriban basura).
 4. Construir hasta "completo" (ver ficha) → correr su eval → merge a `main` + deploy.
-5. Empieza la **semana de prueba**: tu único trabajo es usarlo y anotar lo que se rompe. **No construyes el siguiente.**
-6. 7 días estable + evals verdes → **promovido**. Recién ahí, módulo siguiente.
+5. **Actualizar los docs con lo nuevo construido** (ver "Al cerrar un módulo" abajo). Parte del "completo", no opcional.
+6. Empieza la **semana de prueba**: tu único trabajo es usarlo y anotar lo que se rompe. **No construyes el siguiente.**
+7. 7 días estable + evals verdes → **promovido**. Recién ahí, módulo siguiente.
+
+## Al cerrar un módulo: actualizar los docs (obligatorio, parte de "completo")
+Ningún módulo se da por cerrado hasta que los documentos vivos reflejen lo que se construyó. En la
+**misma sesión/PR** en que se termina o se extiende un módulo, actualiza:
+- **`docs/Tests_Aceptacion_Manual.md`** — agrega/reescribe la sección del módulo con los tests físicos
+  que Nico debe correr, listando las **tools reales** cableadas, los **comandos** y los **botones**
+  tal como quedaron en el código (no como estaban en la ficha). Si un flujo cambió (ej. un botón que
+  se reemplazó por chips), corrige el test viejo en vez de dejar el obsoleto. Marca el estado en el
+  índice (✅/🔶/⬜).
+- **El tablero de este archivo** (`Roadmap_Modular.md`) — mueve el módulo de estado y anota, con fecha,
+  qué se agregó y cuántos evals quedaron verdes.
+- **`docs/Spec_Herramientas_Nuevas.md`** — si se agregaron/cambiaron tools, deja su ficha al día.
+- **`CLAUDE.md`** (canon) — solo si la decisión de diseño cambió algo del contrato o los invariantes.
+
+Regla práctica: si tocaste `TOOLS`/`HANDLERS`, un teclado de `flows.py`, un `CommandHandler` de
+`main.py` o un job de `scheduler.py`, algo en `Tests_Aceptacion_Manual.md` casi seguro quedó desfasado
+— revísalo antes de cerrar. Un doc desactualizado cuenta como trabajo sin terminar.
 
 ## La espina de memoria (transversal — ver CLAUDE.md)
 No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "completo", **escribe sus inferencias y episodios a Supabase**. Cinco tipos: `perfil` (estable), `memoria` (episódica), `inferencias` (con dato), `compromisos`, `aprendizaje` (calibración).
@@ -25,7 +43,7 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 - **Surfacing:** bajo demanda + resumen domingo + **proactivo cuando es accionable** (esto último aterriza en el Módulo 7).
 
 ## Ficha de módulo (plantilla — se rellena igual cada vez)
-> Objetivo · Scope ("completo") · Prefijo · Datos (hojas + Supabase) · Aporte a la espina · Eval que lo gatilla · Semana cumplida.
+> Objetivo · Scope ("completo") · Prefijo · Datos (hojas + Supabase) · Aporte a la espina · Eval que lo gatilla · **Docs actualizados** (tests manuales + tablero + spec de tools) · Semana cumplida.
 
 ---
 

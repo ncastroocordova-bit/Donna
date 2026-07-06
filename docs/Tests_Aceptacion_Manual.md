@@ -4,6 +4,12 @@ Esto es tuyo, Nico. No es un eval automático (esos viven en `tests/`) — es la
 cosas que **tú** pruebas con la vida real (tu plata, tu correo, tus boletas) para
 comprobar que cada función y cada herramienta de un módulo hace lo que promete.
 
+> **Actualizado 2026-07-06** contra el código real (no telemetría de producción). Se reescribió
+> por completo: el flujo de sueño del brief cambió (ya no es el botón «7h+/menos», ahora son chips
+> de hora con derivación automática), agua/proteína pasaron a litros/gramos, los MITs viven en
+> `Tareas`, y se agregaron los módulos que ya están cableados en el bot pero no estaban aquí
+> (Recordatorios, Correo/Spam, Proyectos/Tareas, Diagnóstico).
+
 ## Cómo usarlo
 - Marca `- [x]` cuando lo probaste y salió bien. Anota la fecha y, si algo falló, qué pasó
   exactamente (mensaje que mandaste + lo que respondió Donna) justo debajo del ítem.
@@ -13,125 +19,291 @@ comprobar que cada función y cada herramienta de un módulo hace lo que promete
 - **Un módulo se da por completo (gate del roadmap) cuando todos sus tests están en verde**, no
   antes — eso reemplaza al "7 días estable" mientras no tengamos telemetría real de producción.
 
+## Atajos por comando (te ahorran esperar el reloj)
+- `/cierre` — abre el panel del cierre a mano (hábitos + ánimo + MIT + digest), sin esperar las 22:00.
+- `/digest` — muestra el digest financiero del día en cualquier momento.
+- `/correos` — fuerza la sincronización de correos de gasto ahora (si no, corre solo cada 3h).
+- `/lista` — manda la lista del súper tocable (un ✅ por producto).
+- `/spam` — muestra el digest de spam para archivar por toque.
+- `/perfil` — la vista "lo que sé de ti" (perfil + inferencias top).
+- `/onboarding` — re-arranca el onboarding (si tu perfil quedara vacío).
+
+## Trabajos automáticos (para saber cuándo esperar cada cosa)
+- **Brief 8:00** (solo lectura) · **Proactividad 12:00** (máx 1/día) · **Cierre 22:00** (panel + digest).
+- **Resumen semanal**: domingo 22:30 (escribe en la hoja `Semanal`, no manda mensaje).
+- **Sync de correos**: cada 3h · **"¿qué compraste?"**: revisa cada 5h · **Digest de spam**: 1×/día.
+- **Estados de cuenta**: diario 9:30, pero solo actúa cuando llega un PDF nuevo (≈ mensual).
+- Al reiniciarse el bot recupera el brief/cierre/spam del día si se los perdió, y corre un
+  **guardián de schema** que anota un incidente si a una hoja crítica le falta una columna.
+
 ## Índice de módulos
-1. [Finanzas](#finanzas-fin_) — ✅ listo abajo
-2. [Salud](#salud-sal_) — ✅ listo abajo
-3. Recordatorios (`rec_`) — 🔜 pendiente
-4. Correo/spam (`cor_`) — 🔜 pendiente (recuerda: tiene el riesgo de invariante del `trash`, ver Roadmap_Modular.md)
-5. Productividad — Tareas y Proyectos — 🔜 pendiente
-6. Proactividad (`pro_`) — 🔜 pendiente
-7. Compras (`cmp_`) y Familia (`fam_`) — ⬜ no aplica, no tienen código todavía
+1. [Finanzas](#1-finanzas-fin_) — ✅ construido (v1–v4). Tests abajo.
+2. [Salud](#2-salud-sal_) — ✅ construido (base + v2). Tests abajo.
+3. [Compras](#3-compras-cmp_) — ✅ Fase 1 (lista manual). Tests abajo. Fase 2 (predictor) diferida.
+4. [Recordatorios](#4-recordatorios-rec_) — 🔶 parcial (schema real OK, falta la escalera completa). Tests abajo.
+5. [Correo / Spam](#5-correo--spam-cor_--spam_) — 🔶 parcial (spam archivar OK; bucket "importante" pendiente). Tests abajo.
+6. [Proyectos y Tareas](#6-proyectos-y-tareas-proy_--tarea_) — 🔶 parcial (schema real OK, falta reconciliación/factor optimismo). Tests abajo.
+7. [Núcleo: memoria, perfil, inferencias, diagnóstico](#7-núcleo-memoria-perfil-inferencias-diagnóstico) — transversal. Tests abajo.
+8. Proactividad (`pro_`) — 🔶 base construida, se prueba junto con las señales de cada módulo (ver 7.E).
+9. Familia (`fam_`) — ⬜ sin código todavía. No aplica.
 
 ---
 
-## Finanzas (`fin_`)
+## 1. Finanzas (`fin_`)
 
-**Antes de empezar, tres atajos que te ahorran tiempo** (no hace falta esperar el reloj):
-- `/correos` — fuerza la sincronización de correos de gasto ahora mismo (si no, corre solo cada 3h).
-- `/digest` — muestra el digest del día en cualquier momento.
-- `/cierre` — abre el panel de cierre a mano, sin esperar a las 22:00.
+Tools cableadas: `fin_registrar_gasto`, `fin_saldo_mes`, `fin_presupuesto`, `fin_estado_deuda`,
+`fin_armar_digest`, `fin_metas`, `fin_aportar_meta`, `fin_compra_detallada`, `fin_progreso_deuda`.
 
-### A. Captura pasiva por correo (banco → buffer)
-- [ ] **A1.** Deja que llegue un cargo real (Banco de Chile o Mach) durante el día. Al rato, corre `/correos` y revisa `/digest`: debe aparecer con categoría razonable y el monto exacto.
-- [ ] **A2.** Un cargo en dólares (compra online, suscripción gringa) → en el digest debe salir marcado ⚠️ dudosa, con el motivo (estimado a $1.000/US$).
-- [ ] **A3.** Una transferencia tuya entre tus propias cuentas (Banco de Chile ↔ Itaú, por ejemplo) → **NO** debe aparecer como gasto en el digest. Se ignora por diseño.
-- [ ] **A4.** Una transferencia a un tercero (le pagas a alguien) → **sí** debe aparecer como gasto, con el nombre de la persona como comercio.
+### A. Captura pasiva por correo (banco → buffer del día)
+- [ ] **A1.** Deja que llegue un cargo real (Banco de Chile o Mach) durante el día. Corre `/correos` y revisa `/digest`: debe aparecer con categoría razonable y el monto exacto.
+- [ ] **A2.** Un cargo en dólares (compra online, suscripción gringa) → en el digest sale marcado ⚠️ dudosa, con el motivo (estimado a $1.000/US$, pide confirmar el monto en pesos).
+- [ ] **A3.** Una transferencia tuya entre tus propias cuentas → **NO** debe aparecer como gasto. Se ignora por RUT (requiere que tu RUT esté en el perfil; si nunca lo cargaste, anótalo como "no aplica" y avísame).
+- [ ] **A4.** Una transferencia a un tercero (le pagas a alguien) → **sí** aparece como gasto, con el nombre de la persona como comercio. Una transferencia que te hacen a ti (Itaú) → aparece como **Ingreso**.
 
 ### B. Captura pasiva por foto (Vision, ítem a ítem)
-- [ ] **B1.** Manda la foto de una boleta legible con productos (súper, farmacia). Donna debe responder al toque con el monto, la categoría y cuántos ítems leyó.
+- [ ] **B1.** Manda la foto de una boleta legible con productos (súper, farmacia). Donna responde al toque con el monto, la categoría y cuántos ítems leyó.
 - [ ] **B2.** Manda la foto de un ticket sin detalle de productos (bencinera, estacionamiento) → responde solo con el monto y categoría, sin ítems.
-- [ ] **B3.** Manda una boleta larga (10+ productos). En el digest de esa noche, revisa que la suma de los ítems (más una línea "Resto" si no cuadra) se acerque al total — no debe faltar plata por repartir.
+- [ ] **B3.** Manda una boleta larga (10+ productos). En el digest de esa noche, la suma de los ítems (más una línea "Resto" si no cuadra) debe acercarse al total — no debe faltar plata por repartir.
 
 ### C. Captura pasiva por dictado (texto o voz)
-- [ ] **C1.** Escribe: *"compré en el Jumbo arroz 1290, leche 990 y pan 1200"* → confirma que anotó 3 ítems.
-- [ ] **C2.** Dila igual pero por nota de voz → debe funcionar exactamente igual (transcribe y anota).
-- [ ] **C3.** Dila con "resto": *"en San Valentín gasté 2000 en chanchería, el resto pan"* — sin decir el total. Anota qué hace Donna cuando no le das el total explícito (puede que pida el total, o que "resto" quede en 0 — repórtame el comportamiento real).
+- [ ] **C1.** Escribe: *"compré en el Jumbo arroz 1290, leche 990 y pan 1200"* → confirma que anotó 3 ítems (usa `fin_compra_detallada`).
+- [ ] **C2.** Dila igual pero por nota de voz → transcribe y anota igual.
+- [ ] **C3.** Dila con "resto" sin dar el total: *"en San Valentín gasté 2000 en chanchería, el resto pan"* — anota qué hace Donna cuando no le das el total explícito y repórtame el comportamiento (el "resto" solo cuadra si hay un total del cargo con que cruzarlo).
+- [ ] **C4.** Un gasto simple sin desglose: *"gasté 5000 en Uber"* → lo anota al buffer (usa `fin_registrar_gasto`) y avisa que lo confirmas en el cierre.
 
 ### D. Correlación foto/dictado + correo (jamás doble conteo)
-- [ ] **D1.** El mismo gasto: manda la foto de la boleta Y deja que llegue (o fuerza con `/correos`) el cargo del banco por el mismo monto y fecha. Esa noche en el digest debe aparecer **una sola línea** con los ítems — no dos gastos separados.
-- [ ] **D2.** Justo después de mandar la foto (antes de que llegue el correo), revisa `/digest` → debe estar ahí como una entrada con ítems. Después de que cruce con el correo, sigue siendo una sola línea, no se duplica.
+- [ ] **D1.** El mismo gasto: manda la foto de la boleta Y deja que llegue (o fuerza con `/correos`) el cargo del banco por el mismo monto y fecha (±2 días). Esa noche en el digest debe aparecer **una sola línea** con los ítems — no dos gastos.
+- [ ] **D2.** Justo después de dictar una compra con detalle, a los ~30 min Donna intenta cruzarla con el cargo del correo; si lo logra te avisa "quedó como un solo gasto". Verifica que en el digest sea una sola línea.
 
 ### E. Pregunta "¿qué compraste?" (condicional)
-- [ ] **E1.** *Este solo aplica si ya corregiste la categoría de un súper/almacén un par de veces en el digest (eso lo "aprende" como comercio de compras).* Deja pasar un cargo sin detalle de ese comercio — dentro de las próximas ~5 horas Donna debería preguntarte "¿qué compraste?" con botones 📷/✍️/⏭️. Si nunca has corregido ningún comercio así, anota este test como "no aplica todavía" y sáltalo.
+- [ ] **E1.** *Solo aplica si ya corregiste la categoría de un súper/almacén un par de veces en el digest (así lo aprende como comercio "de compras").* Deja pasar un cargo sin detalle de ese comercio — dentro de las próximas ~5h Donna debería preguntarte "¿qué compraste?" con botones 📷/✍️/⏭️. Si nunca corregiste un comercio así, márcalo "no aplica todavía".
 
 ### F. Consultas conversacionales
-- [ ] **F1.** *"¿Cómo voy de plata este mes?"* → ingresos, gastos y balance; compáralo con lo que tú sabes que gastaste.
-- [ ] **F2.** *"¿Me estoy pasando en alguna categoría?"* → presupuesto por categoría, con montos y %.
-- [ ] **F3.** *"¿Cuánta deuda tengo en las tarjetas?"* → el faro completo (deuda real, intereses muertos, % de utilización).
-- [ ] **F4. (el freno)** *"Me quiero comprar unos audífonos en 12 cuotas"* → Donna tiene que mostrarte el costo real de tu deuda **antes** de opinar. No debe darte el sí fácil ni tampoco prohibirte sin datos.
-- [ ] **F5.** *"¿Qué tengo pendiente de confirmar hoy?"* (o `/digest`) → la lista del día.
-- [ ] **F6.** *"¿Cómo voy con mis metas?"* → si no tienes metas cargadas en la hoja `Metas`, debe decírtelo. Si ya tienes una o más, te muestra avance vs. objetivo.
-- [ ] **F7.** Con una meta que ya exista en la hoja `Metas`: *"aboné 50 mil al fondo de emergencia"* → confirma el aporte y el nuevo % de avance (revísalo también en la hoja).
+- [ ] **F1.** *"¿Cómo voy de plata este mes?"* (`fin_saldo_mes`) → ingresos, gastos y balance; compáralo con lo que sabes que gastaste.
+- [ ] **F2.** *"¿Me estoy pasando en alguna categoría?"* (`fin_presupuesto`) → presupuesto por categoría, con montos y %.
+- [ ] **F3.** *"¿Cuánta deuda tengo en las tarjetas?"* (`fin_estado_deuda`) → el faro completo (deuda real, intereses muertos, % de utilización, total a pagar).
+- [ ] **F4. (el freno)** *"Me quiero comprar unos audífonos en 12 cuotas"* → Donna debe mostrarte el costo real de tu deuda **antes** de opinar. No el sí fácil ni la prohibición sin datos.
+- [ ] **F5.** *"¿Qué tengo pendiente de confirmar hoy?"* o `/digest` (`fin_armar_digest`) → la lista del día.
+- [ ] **F6.** *"¿Cómo voy con mis metas?"* (`fin_metas`) → si no tienes metas en la hoja `Metas`, te lo dice; si hay una o más, te muestra avance vs. objetivo.
+- [ ] **F7.** Con una meta que ya exista en `Metas`: *"aboné 50 mil al fondo de emergencia"* (`fin_aportar_meta`) → confirma el aporte y el nuevo % (revísalo también en la hoja).
 
 ### G. Digest nocturno — botones del panel
 - [ ] **G1.** `/cierre` (o espera las 22:00) → llega el panel de hábitos y, si hay movimientos, el digest con botones.
-- [ ] **G2.** Toca **"✅ Aceptar todo"** → te dice cuántos escribió; revisa que efectivamente aparecieron en la hoja `Transacciones`.
-- [ ] **G3.** Toca una línea marcada ⚠️/✏️ y escribe la categoría correcta → la próxima vez que ese mismo comercio aparezca (día distinto), debería llegar ya con esa categoría sin que la corrijas de nuevo.
+- [ ] **G2.** Toca **"✅ Aceptar todo"** → dice cuántos escribió (y si algo ya estaba, no lo duplica); revisa que aparecieron en la hoja `Transacciones`.
+- [ ] **G3.** Toca una línea marcada ⚠️/✏️ y escribe la categoría correcta → la próxima vez que ese mismo comercio aparezca (día distinto), debería llegar ya con esa categoría sin corregirla de nuevo.
 - [ ] **G4.** Toca **"📝 Detallar"** en un gasto sin ítems → te ofrece foto o desglosar por texto. Prueba las dos rutas en gastos distintos.
-- [ ] **G5.** Toca **"📋 N ítems"** en un gasto con detalle → abre el editor. Toca un ítem, cámbiale Necesario/Inversión/Deseo, alterna Despensa/Perecible, toca "Categoría" y escribe una nueva, prueba "⬅️ Volver" y por último "✅ Listo".
-- [ ] **G6.** Al corregir una línea, escribe *"descartar"* → esa línea debe desaparecer del digest sin escribirse a la planilla.
+- [ ] **G5.** Toca **"📋 N ítems"** en un gasto con detalle → abre el panel de ítems (lista + "✅ Listo"). Toca un ítem → su editor: cambia Necesario/Inversión/Deseo, alterna 📦 Despensa/🥖 Perecible, toca "🏷️ Categoría" y escribe una nueva, prueba "⬅️ Volver" y por último "✅ Listo". Verifica que no se traba al re-tocar el mismo valor.
+- [ ] **G6.** Al corregir una línea, escribe *"descartar"* → esa línea desaparece del digest sin escribirse a la planilla.
 
 ### H. Anti-duplicado
-- [ ] **H1.** Corre `/correos` dos veces seguidas → la segunda vez no debe traer de nuevo los mismos gastos.
-- [ ] **H2.** Di el mismo gasto manual dos veces el mismo día (*"gasté 5000 en Uber"* dos veces) → la segunda vez Donna debe decirte que ya lo tenía anotado.
-- [ ] **H3.** Toca "Aceptar todo" y después vuelve a correr `/digest` el mismo día → lo ya aceptado no debe reaparecer ni duplicarse en la planilla.
+- [ ] **H1.** Corre `/correos` dos veces seguidas → la segunda no debe traer de nuevo los mismos gastos.
+- [ ] **H2.** Di el mismo gasto manual dos veces el mismo día (*"gasté 5000 en Uber"* dos veces) → la segunda vez Donna debe decir que ya lo tenía anotado.
+- [ ] **H3.** Toca "Aceptar todo" y después vuelve a correr `/digest` el mismo día → lo ya aceptado no reaparece ni se duplica en la planilla.
 
 ### I. Faro de deuda — cifras exactas
-- [ ] **I1.** Compara la respuesta de F3 con lo que dice físicamente la hoja "Tarjetas y Deuda" (celdas B4 a B8) — deben calzar exacto, incluida la línea de crédito.
-- [ ] **I2.** Después de una cuota nueva o un abono a la tarjeta, vuelve a preguntar por la deuda → el número tiene que reflejar el cambio real de la planilla, no quedarse pegado en el valor anterior.
+- [ ] **I1.** Compara la respuesta de F3 con lo que dice físicamente "Tarjetas y Deuda" (celdas B4 a B8) — deben calzar exacto, incluida la línea de crédito.
+- [ ] **I2.** Después de una cuota nueva o un abono a la tarjeta, vuelve a preguntar por la deuda → el número refleja el cambio real de la planilla, no se queda pegado.
 
-### J. Gap conocido — no es un bug nuevo, ya lo tengo mapeado
-- [ ] **J1.** Pide *"crea una meta nueva: viaje a Brasil, objetivo 800 mil"* → hoy Donna probablemente **no** la crea en la hoja `Metas` (el mensaje de `fin_metas` lo insinúa pero no existe esa herramienta todavía). Si de verdad te la crea, avísame — significaría que hay código que no vi.
+### J. Gap conocido — no es un bug nuevo
+- [ ] **J1.** Pide *"crea una meta nueva: viaje a Brasil, objetivo 800 mil"* → hoy Donna **no** tiene tool para crear metas (solo leer/aportar). Debería decirte que la cargues tú en la hoja `Metas`. Si de verdad te la crea, avísame.
+
+### K. Estados de cuenta automáticos (v4)
+Sin atajo por comando — corre solo a las **9:30** y solo actúa cuando hay un PDF de estado nuevo
+en el correo (Banco de Chile o Mach). Para forzarlo sin esperar, avísame en la sesión.
+- [ ] **K1.** El día que llegue un estado real, espera al día siguiente después de las 9:30 → debe llegarte un mensaje con el detalle y el delta vs. el mes anterior. Revisa la hoja `Deuda_Mensual`: fila nueva para ese mes/banco/producto.
+- [ ] **K2.** Revisa "Tarjetas y Deuda" (las celdas-input, no las fórmulas B4:B8) → el monto de deuda/cupo de ese producto refleja el valor real del estado, no el viejo.
+- [ ] **K3.** Pregunta *"¿cómo va mi deuda?"* (`fin_progreso_deuda`) → historial mes a mes (hasta 6 meses) desde `Deuda_Mensual`, y dice si subió o bajó. Antes de que exista algún estado procesado, dice que aún no tiene historial (no inventa).
+- [ ] **K4.** La reconciliación del estado contra `Transacciones` solo **marca** posibles compras faltantes (no las escribe solas).
+- [ ] **K5. (invariante)** El correo con el PDF sigue en tu inbox después de procesado — el módulo solo lee/baja, jamás borra ni archiva ese correo.
 
 ---
 
-## Salud (`sal_`)
+## 2. Salud (`sal_`)
 
-Antes de correr esto: `python setup_sheets.py` tiene que haber corrido contra tu planilla real
-al menos una vez (agrega las columnas nuevas de `Diario`/`Semanal` sin tocar tus datos — es
-aditivo). Si nunca lo corriste, estas columnas no existen todavía en tu Sheet y los tests van
-a fallar por eso, no por el código.
+> **Antes de correr esto:** `python setup_sheets.py` tiene que haber corrido contra tu planilla
+> real al menos una vez (agrega las columnas nuevas de `Diario`/`Semanal` sin tocar tus datos).
+> Si nunca lo corriste, esas columnas no existen y los tests fallan por eso, no por el código.
 
-### A. Toques del panel de cierre (botones)
-- [ ] **A1.** `/cierre` (o espera las 22:00) → toca **"🏃 Hice ejercicio"** → revisa la fila de hoy en `Diario`, columna `Ejercicio`.
-- [ ] **A2.** Toca **"🏃 Hoy no"** en otro día → queda "No", no rompe nada, solo no suma a la racha.
-- [ ] **A3.** Toca **"💧 Tomé agua"** y **"🥩 Comí proteína"** → revisa que escribieron en `Agua` y `Proteína`.
-- [ ] **A4.** Toca uno de los chips de **"🍽️ hora"** (última comida) → revisa `Última comida`.
-- [ ] **A5.** Toca un **Ánimo** (1 a 4) → revisa `Ánimo (1-4)`.
-- [ ] **A6.** Toca **"Avancé un MIT"** / **"Hoy no"**.
-- [ ] **A7.** Después del panel, dicta por voz tus 1-3 prioridades de mañana → revisa `MITs de mañana`.
+Tools cableadas: `sal_marcar_habito`, `sal_registrar_animo`, `sal_registrar_sueno`, `sal_racha`,
+`sal_resumen_semana`, `sal_set_hora`, `sal_peso`, `sal_resumen_ventanas`, `sal_score_semana`,
+`sal_evento_contextual`.
 
-### B. Sueño
-- [ ] **B1.** En el brief de las 8:00, toca **"😴 Dormí 7h+"** o **"Menos de 7h"** → revisa `Sueño 7h+`.
-- [ ] **B2.** En cualquier momento, dile *"anoche me dormí como a la 1"* → revisa `Hora dormí` (HH:MM).
+### A. Panel del cierre (botones) — un solo mensaje, marca varios
+`/cierre` (o espera las 22:00). El panel trae, en filas: ejercicio, meditación, agua (litros),
+proteína (gramos), primera comida, última comida, ánimo, y un botón por cada MIT pendiente.
+Cada toque marca ✅ **sin cerrar el panel** (puedes anotar varios).
+- [ ] **A1.** Toca **"🏃 Hice ejercicio"** → revisa la fila de hoy en `Diario`, columna `Ejercicio` = "Sí".
+- [ ] **A2.** Otro día toca **"🏃 Hoy no"** → queda "No" (registrado, pero no suma a la racha).
+- [ ] **A3.** Toca **"🧘 Medité"** → columna `Meditación`.
+- [ ] **A4.** Toca uno de los chips **"💧 1L/2L/3L"** → columna `Agua` guarda los litros (número, no "Sí").
+- [ ] **A5.** Toca uno de **"🥩 80g/90g/100g"** → columna `Proteína` guarda los gramos.
+- [ ] **A6.** Toca un chip **"🍳 9/10/11/12"** (primera comida) → columna `Primera comida` (HH:00).
+- [ ] **A7.** Toca un chip **"🍽️ 18/19/20/21+"** (última comida) → columna `Última comida`.
+- [ ] **A8.** Toca un **Ánimo** (1 a 4) → columna `Ánimo (1-4)`.
+- [ ] **A9.** Si hay MITs pendientes, cada uno es un botón (☐/✅). Tócalo → lo marca hecho en `Tareas`; tócalo de nuevo → lo desmarca (toggle).
+- [ ] **A10.** Después del panel llega el pedido de MITs por voz. Dicta 1-3 prioridades de mañana → se crean como filas en `Tareas` (Tipo=MIT, Fecha objetivo=mañana). *Ojo: la columna `MITs de mañana` de `Diario` es legado y ya no se usa — los MITs viven en `Tareas`.*
 
-### C. Horas nuevas — primera comida / hora de despertar (v2)
-- [ ] **C1.** *"Recién comí por primera vez, tipo las 8"* → revisa la columna nueva `Primera comida`.
-- [ ] **C2.** *"Desperté a las 7"* → revisa la columna nueva `Hora desperté`. Confirma que NO tocó `Hora dormí` (son cosas distintas).
-- [ ] **C3.** Corrige la última comida por texto en vez del chip: *"cené como a las 21:45"* → revisa `Última comida`.
+### B. Sueño — ahora por hora, con derivación automática (¡cambió!)
+El brief de las 8:00 ya **no** pregunta el binario "7h+/menos". En su lugar manda una pregunta
+con chips de hora y encadena dos pasos:
+- [ ] **B1.** En el brief, toca uno de los chips de **hora en que te dormiste** (22:30 / 23:00 / 00:00 / 01:00 / 02:00) → revisa `Hora dormí`. Donna encadena "¿y a qué hora despertaste?".
+- [ ] **B2.** Toca uno de los chips de **hora que despertaste** (06:30 / 07:00 / 07:30 / 08:00 / 09:00) → revisa `Hora desperté`. Donna calcula la ventana de sueño y **setea `Sueño 7h+` sola** (Sí/No) — verifica que la columna quedó coherente con las dos horas que tocaste, y que el mensaje te dice si dormiste tus 7h+.
+- [ ] **B3.** Por texto en cualquier momento: *"anoche me dormí como a la 1"* (`sal_registrar_sueno`) → revisa `Hora dormí`.
+
+### C. Horas conversacionales — primera comida / despertar (v2)
+- [ ] **C1.** *"Recién comí por primera vez, tipo las 8"* (`sal_set_hora`) → columna `Primera comida`.
+- [ ] **C2.** *"Desperté a las 7"* → columna `Hora desperté`. Confirma que **NO** tocó `Hora dormí` (son cosas distintas).
+- [ ] **C3.** Corrige la última comida por texto: *"cené como a las 21:45"* → columna `Última comida`.
 
 ### D. Peso semanal (v2)
-- [ ] **D1.** Un domingo, al final del panel del cierre debe llegar un mensaje aparte: *"¿cuánto pesaste esta semana?"*. Verifica que llegue solo los domingos, no el resto de la semana.
-- [ ] **D2.** Respóndele con tu peso (ej. *"77.5"* o *"peso 78 kilos"*) → revisa la columna `Peso (kg)` en `Diario`.
-- [ ] **D3.** Dile tu peso un día que NO es domingo → igual debe anotarlo (no lo rechaza, solo no lo pide a diario).
+- [ ] **D1.** Un domingo, al final del panel del cierre debe llegar un mensaje aparte: *"¿cuánto pesaste esta semana?"*. Verifica que llega solo los domingos.
+- [ ] **D2.** Respóndele con tu peso (*"77.5"* o *"peso 78 kilos"*, `sal_peso`) → columna `Peso (kg)`.
+- [ ] **D3.** Dile tu peso un día que NO es domingo → igual lo anota (no lo rechaza, solo no lo pide a diario).
 
 ### E. Evento contextual (v2)
-- [ ] **E1.** Cada noche, después del panel, debe llegar la pregunta *"¿hubo algo hoy fuera de tu control que te bajó el ánimo o no te dejó hacer lo planeado?"*. Respóndele *"no"* o *"nada"* → Donna no debe decir que anotó nada ni tratarlo como dato guardado.
-- [ ] **E2.** Otro día, cuéntale algo real (ej. *"se enfermó Emilio y tuve que llevarlo a urgencias"*) → debe confirmarte que lo anotó como contexto, no como patrón.
+- [ ] **E1.** Cada noche, después del panel, llega la pregunta *"¿hubo algo hoy fuera de tu control…?"*. Respóndele *"no"* / *"nada"* → Donna no debe decir que anotó nada (no guarda un evento nulo).
+- [ ] **E2.** Otro día, cuéntale algo real (*"se enfermó Emilio y tuve que llevarlo a urgencias"*, `sal_evento_contextual`) → confirma que lo anotó como **contexto**, no como patrón (memoria con tag `evento_externo`).
 
-### F. Ventanas y score (v2, conversacional)
-- [ ] **F1.** *"¿Cómo ando con mi ventana de comida/ayuno?"* → te da la mediana real (semana vs. fin de semana) con cuántos días la sostienen. No debe proponerte una meta ni un objetivo todavía (canon: solo mide).
-- [ ] **F2.** *"¿Cómo va mi score de hábitos esta semana?"* → un % que puedas verificar a mano contra lo que realmente tocaste esa semana (ejercicio + meditación + sueño 7h + agua + proteína, sobre 7 días).
+### F. Ventanas y score (conversacional)
+- [ ] **F1.** *"¿Cómo ando con mi ventana de comida/ayuno?"* (`sal_resumen_ventanas`) → mediana real (semana vs. finde) con cuántos días la sostienen. No propone meta todavía (canon: solo mide). Si aún no hay horas suficientes, lo dice.
+- [ ] **F2.** *"¿Cómo va mi score de hábitos esta semana?"* (`sal_score_semana`) → un % que puedas verificar a mano (ejercicio + meditación + sueño 7h + agua + proteína, sobre los días con fila esa semana).
 
 ### G. Resumen semanal automático — hoja `Semanal` (domingo 22:30)
-- [ ] **G1.** El lunes, revisa la hoja `Semanal`: debe existir una fila para la semana que acaba de terminar (columna `Semana (lunes)` con la fecha del lunes de esa semana), con `Score hábitos`, `Ventana comida`, `Ventana sueño` llenos. `Peso` debe tener algo si registraste tu peso esa semana (o la última lectura que tengas, si esa semana no hubo).
+- [ ] **G1.** El lunes, revisa `Semanal`: fila para la semana que terminó (columna `Semana (lunes)` con la fecha del lunes), con `Score hábitos`, `Ventana comida`, `Ventana sueño` llenos. `Peso` tiene algo si registraste peso esa semana (o la última lectura disponible).
 
 ### H. Señal de salud (brief / cierre)
-- [ ] **H1.** Después de 3+ noches seguidas marcando "menos de 7h", el brief de la mañana debe mencionar el patrón sueño→ánimo con su dato (no debe inventarlo antes de esas 3 noches).
-- [ ] **H2.** Verifica en `/perfil` (si ya la usas) que no aparece ningún patrón sin su dato al lado.
+- [ ] **H1.** Después de 3+ noches seguidas con poco sueño (ventana < 7h), el brief debe mencionar el patrón sueño→ánimo con su dato (no lo inventa antes de esas 3 noches).
+- [ ] **H2.** Verifica en `/perfil` que no aparece ningún patrón sin su dato al lado.
+- [ ] **H3.** Con 3+ días seguidos de un hábito binario (ejercicio/meditación/agua/proteína), la señal puede mencionar la racha. *"¿cuántos días llevo meditando?"* (`sal_racha`) debe darte el número real.
 
-### I. Resumen de la semana (conversacional, ahora con agua/proteína)
-- [ ] **I1.** *"¿Cómo voy esta semana?"* → ahora debe incluir agua y proteína además de ejercicio/meditación/sueño/ánimo, cada uno como "x/7".
+### I. Resumen de la semana (conversacional)
+- [ ] **I1.** *"¿Cómo voy esta semana?"* (`sal_resumen_semana`) → incluye ejercicio, meditación, agua, proteína (cada uno "x/7"), sueño 7h+ y ánimo promedio.
 
 ### J. Correlador — guardia anti-patrón-falso (horizonte largo, ≥2-3 semanas)
-- [ ] **J1.** Este es de plazo largo: identifica un día en que registraste un evento contextual (E2) Y esa misma noche dormiste mal. Con el tiempo, cuando el correlador tenga suficientes datos para proponerte el cruce sueño↔ánimo, ese día en particular no debería aparecer arrastrando el promedio hacia abajo — si notas que Donna te muestra un patrón que se apoya fuerte en un día que tú sabes que tuvo una causa externa, avísame.
+- [ ] **J1.** Plazo largo: un día con evento contextual (E2) Y mala noche de sueño. Cuando el correlador tenga datos para proponer el cruce sueño↔ánimo, ese día no debería arrastrar el promedio hacia abajo. Si ves que un patrón se apoya fuerte en un día que tuvo causa externa, avísame.
+
+---
+
+## 3. Compras (`cmp_`)
+
+Fase 1 (lista manual del súper) — parser determinista, sin LLM. Fase 2 (predictor de reposición)
+diferida por canon: no hay nada de eso que probar todavía. Tools: `cmp_agregar`, `cmp_lista`, `cmp_comprado`.
+
+### A. Agregar (`cmp_agregar`)
+- [ ] **A1.** *"Donna falta arroz"* → confirma "Anotado para el súper: Arroz." Revisa la hoja `Compras`: fila nueva, Estado=`pendiente`, `Fecha_Agregado`=hoy.
+- [ ] **A2.** *"queda poco atún y se acabó el papel higiénico"* (dos ítems en una frase) → **dos** filas separadas ("Atún" y "Papel Higiénico"), no una mezclada.
+- [ ] **A3.** Repite *"falta arroz"* (ya está pendiente) → Donna dice que ya estaba, **sin** crear fila duplicada.
+- [ ] **A4.** Dilo por nota de voz → funciona igual que A1.
+
+### B. Lista (`cmp_lista` y `/lista`)
+- [ ] **B1.** *"dame la lista del súper"* → devuelve **solo** lo pendiente (no lo comprado). Compáralo con la hoja.
+- [ ] **B2.** Con la lista vacía → dice que está vacía, no inventa ni tira error.
+- [ ] **B3.** `/lista` → mismo contenido pero con un botón ✅ por producto (teclado tocable).
+
+### C. Marcar comprado (`cmp_comprado` y botón)
+- [ ] **C1.** *"ya compré el arroz"* → confirma que lo sacó. Revisa `Compras`: la misma fila queda Estado=`comprado`, `Fecha_Comprado`=hoy.
+- [ ] **C2.** Toca el botón ✅ de un ítem en `/lista` → mismo resultado, y el mensaje se refresca mostrando la lista sin ese ítem (sin trabarse).
+- [ ] **C3.** Intenta marcar algo que **no** está en la lista (*"tacha el chocolate"* sin haberlo agregado) → dice que no lo encontró, no crea nada ni falla en silencio.
+- [ ] **C4.** Pide la lista de nuevo → el ítem comprado ya no aparece.
+
+---
+
+## 4. Recordatorios (`rec_`)
+
+🔶 Parcial: el schema real ya está bien (lee/escribe las columnas reales, incluye vencidos, la
+escritura es verificada). **Falta scope de la ficha:** la escalera completa (domingo + T-2 + T-0),
+"posponer exige fecha" y "nombra el patrón tras 3 posposiciones" — todavía no están construidos.
+Tools: `rec_proximos`, `rec_agregar`.
+
+### A. Agregar (`rec_agregar`)
+- [ ] **A1.** *"recuérdame pagar la contadora el 5 de cada mes"* → confirma que lo anotó. Revisa `Recordatorios`: fila nueva bien puesta (Recordatorio · Tipo=mensual · Día/Fecha=5 · Estado=Pendiente · Activo=Sí) — sin columnas corridas.
+- [ ] **A2.** Uno anual: *"avísame de la patente el 31 de marzo"* → Tipo=anual, Día/Fecha en formato fecha.
+- [ ] **A3.** Uno único: *"recuérdame la revisión técnica el 2026-09-15"* → Tipo=única (puede quedar vencido sin repetirse).
+
+### B. Leer (`rec_proximos`)
+- [ ] **B1.** *"¿qué recordatorios tengo cerca?"* → lista los activos no-hechos dentro de la ventana, **incluyendo los vencidos** (con "venció hace N días"). Compáralo con la hoja.
+- [ ] **B2.** Un recordatorio con monto → aparece con el monto aproximado.
+
+### C. Brief y vencidos (escalera parcial — C4 del roadmap)
+- [ ] **C1.** Si tienes un recordatorio dentro de los próximos 7 días, el brief de las 8:00 debe mencionarlo.
+- [ ] **C2.** Con un recordatorio **vencido**, el brief debe empujarlo con un botón **✅ Hecho**. Tócalo → queda Estado=Hecho y deja de insistir (revisa la hoja).
+
+### D. Gap conocido
+- [ ] **D1.** Intenta posponer un recordatorio ("pospón el IVA para el 20"). Hoy **no** está construido el flujo de posponer-con-fecha ni el "nombra el patrón tras 3 posposiciones". Anota qué hace Donna realmente (probablemente lo trate como un recordatorio nuevo). Es gap de scope, no bug.
+
+---
+
+## 5. Correo / Spam (`cor_` / `spam_`)
+
+🔶 Parcial: el triage de spam (archivar por toque, **jamás borra**) está construido; el bucket
+"importante → resumen del brief" todavía no es visible; el bucket financiero ya lo cubre Finanzas.
+**Requiere Gmail conectado** (Outlook OFF por canon). Tool: `spam_resumen`.
+
+### A. Digest de spam (`/spam` y job diario)
+- [ ] **A1.** `/spam` (o espera el job diario) → lista el spam del día con dominios y asuntos, botón "🗄️ Archivar todo" y un "✋ Conservar" por línea.
+- [ ] **A2.** Toca **"🗄️ Archivar todo"** → dice cuántos archivó. **Invariante:** en Gmail quedan con la etiqueta `Donna/Archivado` y **sin** `INBOX` — verifica que **NO** están en la papelera (recuperables de un clic).
+- [ ] **A3.** Toca **"✋ Conservar"** en una línea antes de archivar → esa se salva y el resto sigue en la lista.
+- [ ] **A4.** Con el spam vacío → dice que está limpio, no inventa.
+
+### B. Conversacional
+- [ ] **B1.** *"¿tengo spam?"* (`spam_resumen`) → cuenta cuántos hay y da una muestra, sin archivar nada todavía.
+
+### C. Invariante duro (revísalo con calma)
+- [ ] **C1.** Después de cualquier acción de spam, entra a Gmail y confirma que **ningún** correo terminó en Papelera/Trash. Si alguno desapareció de verdad, es una violación de invariante — avísame de inmediato.
+
+---
+
+## 6. Proyectos y Tareas (`proy_` / `tarea_`)
+
+🔶 Parcial: el bug de schema quedó **cerrado** (operan por nombre sobre el schema real). **Falta
+scope:** reconciliación nocturna, tiempo-por-frente en `Semanal` y factor de optimismo — no construidos.
+Tools: `proy_listar`, `proy_crear`, `proy_actualizar`, `proy_cerrar`, `tarea_listar`, `tarea_crear`, `tarea_completar`.
+
+> **Riesgo cruzado con Salud:** los MITs viven en la misma hoja `Tareas` (Tipo=MIT). El código de
+> Proyectos los **excluye** del avance, pero si mezclas MITs y tareas normales al probar, tenlo presente.
+
+### A. Proyectos
+- [ ] **A1.** *"tengo un proyecto nuevo: tesis"* (`proy_crear`) → revisa `Proyectos`: fila nueva (Proyecto · Estado=Activo · …) sin columnas corridas.
+- [ ] **A2.** *"¿cómo van mis proyectos?"* (`proy_listar`) → lista los activos con avance real (tareas hechas/total de **ese** proyecto, no todas). Verifica el conteo contra la hoja.
+- [ ] **A3.** *"en la tesis, el foco ahora es el capítulo 2"* (`proy_actualizar`) → actualiza Foco actual; revisa la hoja.
+- [ ] **A4.** *"terminé el proyecto X"* (`proy_cerrar`) → queda Estado=Completado.
+
+### B. Tareas
+- [ ] **B1.** *"agrega a la tesis: escribir la intro"* (`tarea_crear`) → fila nueva en `Tareas` (Creada · Descripción · Proyecto=tesis · …), Estado=Pendiente.
+- [ ] **B2.** *"¿qué tareas tengo?"* (`tarea_listar`) → lista las pendientes con su descripción real (no "None"). Los MITs salen etiquetados `[MIT]`.
+- [ ] **B3.** *"terminé la intro de la tesis"* (`tarea_completar`) → la marca Completada. Verifica en la hoja y que el avance del proyecto (A2) sube.
+- [ ] **B4.** Tras completar tareas, `proy_listar` debe reflejar el nuevo %.
+
+---
+
+## 7. Núcleo: memoria, perfil, inferencias, diagnóstico
+
+Transversal (la espina). Tools de núcleo: `buscar_memoria`, `guardar_memoria`, `actualizar_perfil`,
+`leer_agenda`, `abrir_inferencia`, `registrar_compromiso`, `ver_compromisos`, y `diag_estado`.
+
+### A. Perfil (`/perfil`, `actualizar_perfil`)
+- [ ] **A1.** Cuéntale un hecho estable tuyo (*"me dedico a Ñoomi y a la tesis"*) → debe guardarlo. Luego `/perfil` lo muestra bajo "lo que sé de ti".
+- [ ] **A2.** `/perfil` muestra también las inferencias top, cada una con su marca (✓ confirmada / · por validar) y su dato.
+
+### B. Memoria (`guardar_memoria`, `buscar_memoria`)
+- [ ] **B1.** Cuéntale algo que valga la pena recordar → luego, en otra conversación, pregúntale por eso y debe recuperarlo.
+- [ ] **B2. (privacidad)** Arranca un mensaje con *"off the record …"* → no debe guardar eso. Y *"olvida X"* debe borrarlo.
+
+### C. Inferencias (mecanismo estrella)
+- [ ] **C1.** Cuando Donna te proponga una inferencia (en el cierre, si hay una pendiente) con botones **"Sí, me pasa" / "No, coincidencia" / "Es por otra razón…"** → prueba las tres rutas en momentos distintos y verifica que responde acorde (confirma, archiva, o pide la razón).
+- [ ] **C2. (invariante)** Nunca debe afirmarte un patrón sin mostrarte el dato que lo respalda. Si lo hace, avísame.
+
+### D. Compromisos (`registrar_compromiso`, `ver_compromisos`)
+- [ ] **D1.** *"mañana llamo al banco"* → lo registra como compromiso. Luego *"¿qué tengo pendiente?"* debe listarlo.
+
+### E. Proactividad (12:00, máx 1/día)
+- [ ] **E1.** Un día que NO le hayas escrito y haya una señal real (compromiso vencido / proyecto en riesgo / meta atrasada), cerca de las 12:00 Donna puede romper el silencio con **un** mensaje. Verifica que es máximo 1 al día y que calla si no hay señal.
+
+### F. Diagnóstico (`diag_estado`)
+- [ ] **F1.** *"¿qué se ha roto?"* / *"¿estás funcionando bien?"* → lista los incidentes abiertos que detectó (o dice que está todo en orden). No inventa.
+- [ ] **F2.** Si alguna tool falla mientras la usas, Donna te responde **en carácter** (sin stacktrace) y deja el incidente anotado. Si lo pillas, confirma que `diag_estado` después lo muestra.
+
+---
+
+*Familia (`fam_`) no tiene código todavía — cuando se construya, se agrega su sección aquí siguiendo
+la misma estructura (ver la nota de mantenimiento en `Roadmap_Modular.md`).*
