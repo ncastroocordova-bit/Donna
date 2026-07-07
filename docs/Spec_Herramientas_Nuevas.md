@@ -88,25 +88,25 @@ Detalle de implementación de las herramientas que el canon agrega o cambia. Aco
 
 ---
 
-## §sal_ — Salud v2 (nutrición, ventanas, peso, score, eventos)
+## §sal_ — Salud v2 (ventanas, peso, score, eventos)
 
-**Propósito:** sumar nutrición, ventanas de ayuno/sueño, peso, un score semanal y la captura de contexto, sin inflar el cierre.
+**Propósito:** sumar ventanas de ayuno/sueño, peso, un score semanal y la captura de contexto, sin inflar el cierre.
 
-**Esquema:** `Diario` += `Primera_Comida · Hora_Despertar · Agua · Proteina · Peso` (ya existen `Ultima_Comida`, `Hora_Dormi`). `Semanal` += `Score_Habitos · Ventana_Comida · Ventana_Sueno · Peso`.
+**Esquema:** `Diario` += `Primera_Comida · Hora_Despertar · Peso` (ya existen `Ultima_Comida`, `Hora_Dormi`). `Agua`/`Proteina` quedan como columnas legado, sin capturar. `Semanal` += `Score_Habitos · Ventana_Comida · Ventana_Sueno · Peso`.
 
 **Firmas:**
-- `sal_marcar_habito(campo, valor)` — reusa la existente; ahora cubre `Agua`/`Proteina` (sí/no) en el cierre.
+- `sal_marcar_habito(campo, valor)` — ejercicio/meditación/última comida en el cierre. `Agua`/`Proteina` se retiraron del cierre (columnas legado sin capturar).
 - `sal_set_hora(campo, hora)` — escribe `Primera_Comida` / `Ultima_Comida` / `Hora_Despertar` (HH:MM) en la fila del día.
-- `sal_peso(kg)` — escribe `Peso`; se pide **los domingos**, no diario.
+- `sal_peso(kg)` — escribe `Peso`; se pregunta **cada cierre** (22:00), no solo domingo.
 - `sal_resumen_ventanas(semana) -> dict` — mediana de ventana de comida (1ª→última) y de sueño (dormir→despertar), **semana vs fin de semana**. **Solo mide**; no propone meta hasta ≥2-3 semanas de baseline. Escribe `Ventana_Comida`/`Ventana_Sueno` en `Semanal` (lectura).
-- `sal_score_semana() -> int` — % de hábitos cumplidos (default: sueño 7h, ejercicio, meditación, agua, proteína). Escribe `Score_Habitos` (lectura).
+- `sal_score_semana() -> int` — % de hábitos cumplidos (default: sueño 7h, ejercicio, meditación). Escribe `Score_Habitos` (lectura).
 - `sal_evento_contextual(texto)` — guarda en `core/memory` con tag `evento_externo` lo que Nico no controló ese día.
 
 **Invariantes:** las ventanas se **miden, no se exigen** (canon "calla hasta tener datos"). El `evento_externo` hace que el **correlador trate el día como contexto, no patrón** (guardia anti-patrón-falso). Score y ventanas en `Semanal` son **lectura**; el modelo no vive en el Sheet.
 
-**Borde:** día sin hora de comida/despertar → la ventana de ese día no entra a la mediana (no inventa). Peso sin registro semanal → muestra la última lectura, no falla.
+**Borde:** día sin hora de comida/despertar → la ventana de ese día no entra a la mediana (no inventa). Peso sin registro un día → muestra la última lectura de la semana, no falla.
 
-**LISTO CUANDO:** toques de agua/proteína/comidas escriben en `Diario`; `sal_peso` registra el domingo; `sal_resumen_ventanas` da medianas coherentes; `Score_Habitos` cuadra con los toques; un evento contextual no se cuenta como patrón.
+**LISTO CUANDO:** toques de comidas escriben en `Diario`; `sal_peso` registra cada cierre; `sal_resumen_ventanas` da medianas coherentes; `Score_Habitos` cuadra con los toques; un evento contextual no se cuenta como patrón.
 
 ---
 

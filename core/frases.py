@@ -30,11 +30,11 @@ POOLS = {
         "Fuera de lo tuyo: ¿algo hoy que se cruzó y no controlabas?",
         "¿Algo externo hoy que te haya movido el ánimo o los planes?",
     ],
-    "peso_domingo": [
-        "Y como es domingo: ¿cuánto pesaste esta semana?",
-        "Domingo de pesa: ¿cuánto marcaste?",
-        "Cierre de semana: pásame tu peso.",
-        "¿El peso de la semana? Aprovecha que es domingo.",
+    "peso_cierre": [
+        "¿Cuánto marcaste hoy en la pesa?",
+        "Pásame tu peso de hoy.",
+        "¿Cuánto pesaste hoy?",
+        "Y el peso de hoy, ¿cuánto fue?",
     ],
 }
 

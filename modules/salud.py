@@ -3,16 +3,17 @@
 Sobre la hoja `Diario`: una fila por día. Donna busca/crea la fila del día y setea la
 columna. Salud es el eje #1 (el sueño es salud).
 
-v2 (E8) suma nutrición (Agua/Proteína), ventanas de ayuno+sueño (Primera_Comida +
-Hora_Despertar; Última_Comida y Hora_Dormi ya existían), peso semanal, un score % de
-hábitos y eventos contextuales — sin inflar el cierre (toques + conversación, un panel).
-El score/ventanas/peso de la semana se escriben en `Semanal` (lectura; el domingo, vía
+v2 (E8) suma ventanas de ayuno+sueño (Primera_Comida + Hora_Despertar; Última_Comida
+y Hora_Dormi ya existían), peso (se pregunta cada cierre), un score % de hábitos y
+eventos contextuales — sin inflar el cierre (toques + conversación, un panel). El
+score/ventanas/peso de la semana se escriben en `Semanal` (lectura; el domingo, vía
 `generar_resumen_semanal`, disparado por `core/scheduler.py`).
 
 Columnas (Donna_Canonico.xlsx, Diario fila 2): Fecha · Ejercicio · Meditación ·
 Última comida · Sueño 7h+ · Ánimo (1-4) · Hora dormí · MITs de mañana · Brief ✓ ·
 Cierre ✓ · Excepción · Notas · Primera comida · Hora desperté · Agua · Proteína · Peso (kg) ·
-MITs cumplidos. Las columnas `MITs de mañana`/`MITs cumplidos` quedan como legado sin uso: el
+MITs cumplidos. Agua/Proteína quedan como columnas legado (ya no se preguntan en el cierre).
+Las columnas `MITs de mañana`/`MITs cumplidos` quedan como legado sin uso: el
 backlog de MITs ahora vive en `Tareas` (Tipo=MIT), no en el texto libre de Diario — ver la
 sección "MITs" más abajo.
 
@@ -60,12 +61,12 @@ COLS_SEMANAL = {
     "peso": "Peso",
 }
 # Hábitos binarios (presencia = cumplido) → admiten racha y default "Sí".
-BINARIOS = ("ejercicio", "meditacion", "agua", "proteina")
-# Hábitos que el cierre pregunta por toque (ejercicio/meditación/última comida = panel único;
-# agua/proteína también son toque, mismo patrón, ver core/flows.py teclado_cierre).
-HABITOS_TOQUE = ("ejercicio", "meditacion", "ultima_comida", "agua", "proteina")
+BINARIOS = ("ejercicio", "meditacion")
+# Hábitos que el cierre pregunta por toque (ejercicio/meditación/última comida = panel único,
+# ver core/flows.py teclado_cierre). Agua/proteína se sacaron del cierre (ya no se preguntan).
+HABITOS_TOQUE = ("ejercicio", "meditacion", "ultima_comida")
 # Composición del score semanal de hábitos (default del canon, E8).
-HABITOS_SCORE = ("ejercicio", "meditacion", "sueno_7h", "agua", "proteina")
+HABITOS_SCORE = ("ejercicio", "meditacion", "sueno_7h")
 # Campos de hora libres (conversacionales, sal_set_hora) — Hora_Dormi tiene su propio tool
 # (sal_registrar_sueno) porque va junto con el sueno_7h.
 CAMPOS_HORA = ("primera_comida", "ultima_comida", "hora_despertar")
@@ -87,9 +88,8 @@ _AFIRMATIVO = {"sí", "si", "✓", "x", "true", "1", "hecho", "hice"}
 
 def _afirmativo(v) -> bool:
     """¿La celda marca el hábito como HECHO? 'No' (o vacío) cuenta como no hecho — así el
-    'Hoy no' explícito queda registrado pero no rompe ni alimenta la racha. Agua (litros) y
-    proteína (gramos) se anotan como CANTIDAD: cualquier número > 0 cuenta como consumido ese
-    día (para la racha y el score semanal)."""
+    'Hoy no' explícito queda registrado pero no rompe ni alimenta la racha. Admite también
+    hábitos anotados como CANTIDAD: cualquier número > 0 cuenta como cumplido ese día."""
     s = str(v).strip().lower()
     if s in _AFIRMATIVO:
         return True
@@ -303,7 +303,7 @@ _EVENTO_NULO = {"no", "nada", "no pasó nada", "no paso nada", "ninguna", "ningu
 
 
 async def registrar_peso(kg) -> str:
-    """Se pide los domingos (no diario) — igual acepta el registro cualquier día si Nico lo dice."""
+    """Se pregunta en cada cierre (22:00) — igual acepta el registro cualquier día que Nico lo diga."""
     try:
         valor = float(str(kg).replace(",", "."))
     except (TypeError, ValueError):
@@ -436,8 +436,8 @@ async def resumen_ventanas(dias: int = 7) -> dict:
 # ───────────────────────── v2 (E8): score semanal de hábitos ─────────────────────────
 
 def _calcular_score(filas: list[dict]) -> dict:
-    """% de hábitos cumplidos sobre los días con fila (sueño 7h, ejercicio, meditación,
-    agua, proteína). Cuadra 1:1 con los toques: cada 'Sí' de cada hábito, cada día, suma."""
+    """% de hábitos cumplidos sobre los días con fila (sueño 7h, ejercicio, meditación).
+    Cuadra 1:1 con los toques: cada 'Sí' de cada hábito, cada día, suma."""
     total = len(filas) * len(HABITOS_SCORE)
     if total == 0:
         return {"score": None, "cumplidos": 0, "total": 0}
@@ -453,23 +453,66 @@ async def score_semana(dias: int = 7) -> dict:
 
 # ───────────────────────── v2 (E8): resumen semanal → Semanal (domingo) ─────────────────────────
 
+def _lecturas_peso(filas: list[dict]) -> list[tuple[str, float]]:
+    """(fecha, kg) de las filas con peso legible, ordenadas por fecha ascendente. Ignora las
+    celdas que no son un número (no inventa)."""
+    out = []
+    for f in filas:
+        v = str(f.get(COLS["peso"], "")).strip()
+        if not v:
+            continue
+        try:
+            out.append((str(f.get("Fecha", "")).strip(), float(v.replace(",", "."))))
+        except ValueError:
+            continue
+    out.sort(key=lambda t: t[0])
+    return out
+
+
 async def _ultimo_peso(filas: list[dict]) -> str:
     """Última lectura de peso disponible (no falla si esta semana no hubo registro)."""
-    con_peso = [(str(f.get("Fecha", "")), f.get(COLS["peso"])) for f in filas if str(f.get(COLS["peso"], "")).strip()]
-    if not con_peso:
-        return ""
-    con_peso.sort(key=lambda t: t[0])
-    return str(con_peso[-1][1])
+    lecturas = _lecturas_peso(filas)
+    return _fmt_peso(lecturas[-1][1]) if lecturas else ""
+
+
+def _fmt_peso(kg: float) -> str:
+    """Sin decimal de más: 78 en vez de 78.0, pero 77.5 se mantiene."""
+    return str(int(kg)) if float(kg).is_integer() else str(round(kg, 1))
+
+
+def _peso_actual_y_delta(filas: list[dict]) -> tuple[float | None, float | None]:
+    """Último peso registrado y su cambio vs la lectura anterior separada ≥5 días (para que el
+    delta sea semana-a-semana y no dos pesajes del mismo día). delta=None si no hay con qué
+    comparar. No inventa: si solo hay una lectura, delta queda en None."""
+    lecturas = _lecturas_peso(filas)
+    if not lecturas:
+        return None, None
+    fecha_act, peso_act = lecturas[-1]
+    try:
+        d_act = datetime.strptime(fecha_act, "%Y-%m-%d").date()
+    except ValueError:
+        return peso_act, None
+    for fecha, kg in reversed(lecturas[:-1]):
+        try:
+            d_ref = datetime.strptime(fecha, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if (d_act - d_ref).days >= 5:
+            return peso_act, round(peso_act - kg, 1)
+    return peso_act, None
 
 
 async def generar_resumen_semanal() -> dict:
-    """Domingo: calcula score + ventanas + último peso y los escribe en `Semanal` (lectura;
-    el modelo no vive en el Sheet). Disparado por core/scheduler.py. Idempotente (upsert)."""
+    """Domingo: calcula score + ventanas + último peso (con su tendencia) y los escribe en
+    `Semanal` (lectura; el modelo no vive en el Sheet). Disparado por core/scheduler.py.
+    Idempotente (upsert). Devuelve las piezas para armar el mensaje dominical a Nico."""
     semana_clave = _lunes_de_semana()
     filas = await _ultimos(7)
     score = _calcular_score(filas)
     ventanas = _calcular_ventanas(filas)
-    peso = await _ultimo_peso(await _ultimos(90))  # el peso se pide semanal; mira más atrás si esta semana no hubo
+    filas90 = await _ultimos(90)  # se pregunta cada cierre; mira más atrás para tendencia
+    peso = await _ultimo_peso(filas90)
+    peso_actual, peso_delta = _peso_actual_y_delta(filas90)
 
     async def _w(campo: str, valor) -> None:
         await sheets.upsert_por_clave(HOJA_SEMANAL, "Semana (lunes)", semana_clave, COLS_SEMANAL[campo], valor)
@@ -482,7 +525,33 @@ async def generar_resumen_semanal() -> dict:
     await _w("ventana_sueno", ventana_sueno)
     if peso:
         await _w("peso", peso)
-    return {"semana": semana_clave, "score": score, "ventanas": ventanas, "peso": peso}
+    return {"semana": semana_clave, "score": score, "ventanas": ventanas,
+            "peso": peso, "peso_actual": peso_actual, "peso_delta": peso_delta}
+
+
+def texto_revision_semanal(r: dict) -> str:
+    """Bloque de datos EXACTOS de la semana (para el mensaje dominical). Sin LLM: los números
+    son los que son; la voz la pone quien lo envuelva (scheduler → brain). '' si no hay nada
+    que mostrar todavía (semana sin datos)."""
+    lineas = []
+    s = r.get("score", {})
+    if s.get("score") is not None:
+        lineas.append(f"Score de hábitos: {s['score']}% ({s['cumplidos']}/{s['total']}).")
+    v = r.get("ventanas", {})
+    if v.get("comida_semana_n") or v.get("comida_finde_n"):
+        lineas.append(f"Ventana de comida: L-V {v['comida_semana_txt']} · S-D {v['comida_finde_txt']}.")
+    if v.get("sueno_semana_n") or v.get("sueno_finde_n"):
+        lineas.append(f"Ventana de sueño: L-V {v['sueno_semana_txt']} · S-D {v['sueno_finde_txt']}.")
+    pa, pd = r.get("peso_actual"), r.get("peso_delta")
+    if pa is not None:
+        if pd is None:
+            lineas.append(f"Peso: {_fmt_peso(pa)} kg.")
+        elif pd == 0:
+            lineas.append(f"Peso: {_fmt_peso(pa)} kg (igual que la lectura anterior).")
+        else:
+            signo = "+" if pd > 0 else ""
+            lineas.append(f"Peso: {_fmt_peso(pa)} kg ({signo}{pd} vs la anterior).")
+    return "\n".join(f"• {l}" for l in lineas)
 
 
 # ───────────────────────── Handlers de tools ─────────────────────────
@@ -526,7 +595,7 @@ async def _t_resumen_semana(inp: dict) -> str:
     try:
         recientes = await _ultimos(7)
         partes = []
-        for c in ("ejercicio", "meditacion", "agua", "proteina"):
+        for c in ("ejercicio", "meditacion"):
             n = sum(1 for f in recientes if _afirmativo(f.get(COLS[c], "")))
             partes.append(f"{c}: {n}/7")
         n_sueno = sum(1 for f in recientes if str(f.get(COLS["sueno_7h"], "")).strip().lower() in ("sí", "si", "true", "x"))
@@ -624,9 +693,8 @@ TOOLS = [
     {
         "name": "sal_marcar_habito",
         "description": (
-            "OBLIGATORIO cuando Nico dice que cumplió un hábito del día: ejercicio, meditación, si tomó agua, "
-            "si comió proteína, o a qué hora comió por última vez (ayuno). Anota en la fila del día. Sin esta "
-            "llamada NO queda registrado."
+            "OBLIGATORIO cuando Nico dice que cumplió un hábito del día: ejercicio, meditación, o a qué hora "
+            "comió por última vez (ayuno). Anota en la fila del día. Sin esta llamada NO queda registrado."
         ),
         "input_schema": {
             "type": "object",
@@ -691,7 +759,7 @@ TOOLS = [
         "name": "sal_peso",
         "description": (
             "OBLIGATORIO cuando Nico dice cuánto pesa o pesó ('peso 78 kilos', 'esta semana 77.5'). "
-            "Se pide normalmente los domingos, pero anótalo cualquier día que lo diga."
+            "Se pregunta cada cierre, pero anótalo cualquier día que lo diga."
         ),
         "input_schema": {
             "type": "object",

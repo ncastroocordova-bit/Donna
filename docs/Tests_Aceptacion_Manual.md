@@ -6,9 +6,10 @@ comprobar que cada función y cada herramienta de un módulo hace lo que promete
 
 > **Actualizado 2026-07-06** contra el código real (no telemetría de producción). Se reescribió
 > por completo: el flujo de sueño del brief cambió (ya no es el botón «7h+/menos», ahora son chips
-> de hora con derivación automática), agua/proteína pasaron a litros/gramos, los MITs viven en
-> `Tareas`, y se agregaron los módulos que ya están cableados en el bot pero no estaban aquí
-> (Recordatorios, Correo/Spam, Proyectos/Tareas, Diagnóstico).
+> de hora con derivación automática), los MITs viven en `Tareas`, y se agregaron los módulos que ya
+> están cableados en el bot pero no estaban aquí (Recordatorios, Correo/Spam, Proyectos/Tareas,
+> Diagnóstico). El mismo día se sacó agua/proteína del cierre (quedan como columnas legado) y el
+> peso pasó de preguntarse solo el domingo a preguntarse cada cierre.
 
 ## Cómo usarlo
 - Marca `- [x]` cuando lo probaste y salió bien. Anota la fecha y, si algo falló, qué pasó
@@ -129,19 +130,18 @@ Tools cableadas: `sal_marcar_habito`, `sal_registrar_animo`, `sal_registrar_suen
 `sal_evento_contextual`.
 
 ### A. Panel del cierre (botones) — un solo mensaje, marca varios
-`/cierre` (o espera las 22:00). El panel trae, en filas: ejercicio, meditación, agua (litros),
-proteína (gramos), primera comida, última comida, ánimo, y un botón por cada MIT pendiente.
-Cada toque marca ✅ **sin cerrar el panel** (puedes anotar varios).
+`/cierre` (o espera las 22:00). El panel trae, en filas: ejercicio, meditación, primera comida,
+última comida, ánimo, y un botón por cada MIT pendiente. Cada toque marca ✅ **sin cerrar el
+panel** (puedes anotar varios). *Agua/proteína se sacaron del panel — ya no se preguntan en el
+cierre; las columnas `Agua`/`Proteína` quedan como legado sin capturar.*
 - [ ] **A1.** Toca **"🏃 Hice ejercicio"** → revisa la fila de hoy en `Diario`, columna `Ejercicio` = "Sí".
 - [ ] **A2.** Otro día toca **"🏃 Hoy no"** → queda "No" (registrado, pero no suma a la racha).
 - [ ] **A3.** Toca **"🧘 Medité"** → columna `Meditación`.
-- [ ] **A4.** Toca uno de los chips **"💧 1L/2L/3L"** → columna `Agua` guarda los litros (número, no "Sí").
-- [ ] **A5.** Toca uno de **"🥩 80g/90g/100g"** → columna `Proteína` guarda los gramos.
-- [ ] **A6.** Toca un chip **"🍳 9/10/11/12"** (primera comida) → columna `Primera comida` (HH:00).
-- [ ] **A7.** Toca un chip **"🍽️ 18/19/20/21+"** (última comida) → columna `Última comida`.
-- [ ] **A8.** Toca un **Ánimo** (1 a 4) → columna `Ánimo (1-4)`.
-- [ ] **A9.** Si hay MITs pendientes, cada uno es un botón (☐/✅). Tócalo → lo marca hecho en `Tareas`; tócalo de nuevo → lo desmarca (toggle).
-- [ ] **A10.** Después del panel llega el pedido de MITs por voz. Dicta 1-3 prioridades de mañana → se crean como filas en `Tareas` (Tipo=MIT, Fecha objetivo=mañana). *Ojo: la columna `MITs de mañana` de `Diario` es legado y ya no se usa — los MITs viven en `Tareas`.*
+- [ ] **A4.** Toca un chip **"🍳 9/10/11/12"** (primera comida) → columna `Primera comida` (HH:00).
+- [ ] **A5.** Toca un chip **"🍽️ 18/19/20/21+"** (última comida) → columna `Última comida`.
+- [ ] **A6.** Toca un **Ánimo** (1 a 4) → columna `Ánimo (1-4)`.
+- [ ] **A7.** Si hay MITs pendientes, cada uno es un botón (☐/✅). Tócalo → lo marca hecho en `Tareas`; tócalo de nuevo → lo desmarca (toggle).
+- [ ] **A8.** Después del panel llega el pedido de MITs por voz. Dicta 1-3 prioridades de mañana → se crean como filas en `Tareas` (Tipo=MIT, Fecha objetivo=mañana). *Ojo: la columna `MITs de mañana` de `Diario` es legado y ya no se usa — los MITs viven en `Tareas`.*
 
 ### B. Sueño — ahora por hora, con derivación automática (¡cambió!)
 El brief de las 8:00 ya **no** pregunta el binario "7h+/menos". En su lugar manda una pregunta
@@ -155,10 +155,9 @@ con chips de hora y encadena dos pasos:
 - [ ] **C2.** *"Desperté a las 7"* → columna `Hora desperté`. Confirma que **NO** tocó `Hora dormí` (son cosas distintas).
 - [ ] **C3.** Corrige la última comida por texto: *"cené como a las 21:45"* → columna `Última comida`.
 
-### D. Peso semanal (v2)
-- [ ] **D1.** Un domingo, al final del panel del cierre debe llegar un mensaje aparte: *"¿cuánto pesaste esta semana?"*. Verifica que llega solo los domingos.
+### D. Peso — se pregunta cada cierre (¡cambió!)
+- [ ] **D1.** Cada noche, al final del panel del cierre debe llegar un mensaje aparte preguntando el peso (ej. *"¿cuánto marcaste hoy en la pesa?"*). Verifica que llega todos los días, no solo domingo.
 - [ ] **D2.** Respóndele con tu peso (*"77.5"* o *"peso 78 kilos"*, `sal_peso`) → columna `Peso (kg)`.
-- [ ] **D3.** Dile tu peso un día que NO es domingo → igual lo anota (no lo rechaza, solo no lo pide a diario).
 
 ### E. Evento contextual (v2)
 - [ ] **E1.** Cada noche, después del panel, llega la pregunta *"¿hubo algo hoy fuera de tu control…?"*. Respóndele *"no"* / *"nada"* → Donna no debe decir que anotó nada (no guarda un evento nulo).
@@ -166,18 +165,22 @@ con chips de hora y encadena dos pasos:
 
 ### F. Ventanas y score (conversacional)
 - [ ] **F1.** *"¿Cómo ando con mi ventana de comida/ayuno?"* (`sal_resumen_ventanas`) → mediana real (semana vs. finde) con cuántos días la sostienen. No propone meta todavía (canon: solo mide). Si aún no hay horas suficientes, lo dice.
-- [ ] **F2.** *"¿Cómo va mi score de hábitos esta semana?"* (`sal_score_semana`) → un % que puedas verificar a mano (ejercicio + meditación + sueño 7h + agua + proteína, sobre los días con fila esa semana).
+- [ ] **F2.** *"¿Cómo va mi score de hábitos esta semana?"* (`sal_score_semana`) → un % que puedas verificar a mano (ejercicio + meditación + sueño 7h, sobre los días con fila esa semana).
 
-### G. Resumen semanal automático — hoja `Semanal` (domingo 22:30)
-- [ ] **G1.** El lunes, revisa `Semanal`: fila para la semana que terminó (columna `Semana (lunes)` con la fecha del lunes), con `Score hábitos`, `Ventana comida`, `Ventana sueño` llenos. `Peso` tiene algo si registraste peso esa semana (o la última lectura disponible).
+### G. Revisión semanal — mensaje del domingo 22:30 (¡ahora visible!)
+El domingo 22:30 Donna te manda la **revisión de la semana** en su voz (además de escribir la hoja `Semanal`). Antes esto era silencioso; ahora te llega.
+- [ ] **G1.** El domingo a las 22:30 (después del cierre) debe llegar un mensaje con tu semana: score de hábitos, ventanas de ayuno/sueño y tu peso con la tendencia (ej. *"77 kg (-1.0 vs la anterior)"*). Los números tienen que cuadrar con lo que registraste.
+- [ ] **G2.** Justo después, si el correlador tiene cruces vigentes (sueño↔ánimo / sueño↔gasto), te llega **uno por cruce** con los botones *"Sí, me pasa" / "No, coincidencia" / "Es por otra razón…"* — incluidos los que ya estaban confirmados. Prueba **"No, coincidencia"** en uno que veas raro → lo archiva (deja de insistir). Prueba **"Es por otra razón…"** → te pide la razón y la guarda.
+- [ ] **G3.** El lunes, revisa la hoja `Semanal`: fila de la semana que terminó (columna `Semana (lunes)` con la fecha del lunes), con `Score hábitos`, `Ventana comida`, `Ventana sueño` llenos. `Peso` tiene algo si registraste peso esa semana (o la última lectura disponible).
+- [ ] **G4. (resiliencia)** Si el domingo el bot estuvo caído a las 22:30 y arranca más tarde (aún domingo), la revisión debe salir igual al reiniciar (no se pierde en silencio como antes).
 
 ### H. Señal de salud (brief / cierre)
 - [ ] **H1.** Después de 3+ noches seguidas con poco sueño (ventana < 7h), el brief debe mencionar el patrón sueño→ánimo con su dato (no lo inventa antes de esas 3 noches).
 - [ ] **H2.** Verifica en `/perfil` que no aparece ningún patrón sin su dato al lado.
-- [ ] **H3.** Con 3+ días seguidos de un hábito binario (ejercicio/meditación/agua/proteína), la señal puede mencionar la racha. *"¿cuántos días llevo meditando?"* (`sal_racha`) debe darte el número real.
+- [ ] **H3.** Con 3+ días seguidos de un hábito binario (ejercicio/meditación), la señal puede mencionar la racha. *"¿cuántos días llevo meditando?"* (`sal_racha`) debe darte el número real.
 
 ### I. Resumen de la semana (conversacional)
-- [ ] **I1.** *"¿Cómo voy esta semana?"* (`sal_resumen_semana`) → incluye ejercicio, meditación, agua, proteína (cada uno "x/7"), sueño 7h+ y ánimo promedio.
+- [ ] **I1.** *"¿Cómo voy esta semana?"* (`sal_resumen_semana`) → incluye ejercicio, meditación (cada uno "x/7"), sueño 7h+ y ánimo promedio.
 
 ### J. Correlador — guardia anti-patrón-falso (horizonte largo, ≥2-3 semanas)
 - [ ] **J1.** Plazo largo: un día con evento contextual (E2) Y mala noche de sueño. Cuando el correlador tenga datos para proponer el cruce sueño↔ánimo, ese día no debería arrastrar el promedio hacia abajo. Si ves que un patrón se apoya fuerte en un día que tuvo causa externa, avísame.

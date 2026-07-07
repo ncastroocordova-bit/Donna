@@ -218,6 +218,23 @@ async def get_inferencias_top(limite: int = 5) -> list[dict]:
     return sorted(r.data, key=lambda x: orden.get(x.get("estado"), 2))
 
 
+async def get_inferencias_correlador(limite: int = 10) -> list[dict]:
+    """Cruces del correlador aún vigentes (dominio='correlador', estado pendiente o confirmado)
+    para la revisión dominical: ahí Nico puede reeditarlos (sí/no/corregir) si algo se ve raro.
+    Los descartados quedan afuera (ya los archivó). Más nuevos primero."""
+    db = await _get_db()
+    r = (
+        await db.table("inferencias")
+        .select("*")
+        .eq("dominio", "correlador")
+        .in_("estado", ["confirmada", "pendiente"])
+        .order("created_at", desc=True)
+        .limit(limite)
+        .execute()
+    )
+    return r.data
+
+
 async def get_inferencia(inferencia_id: str) -> dict | None:
     db = await _get_db()
     r = await db.table("inferencias").select("*").eq("id", inferencia_id).limit(1).execute()

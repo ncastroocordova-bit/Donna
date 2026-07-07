@@ -95,13 +95,7 @@
   entrada: "¿Cuántos días llevo meditando seguido?"
   espera: "Consulta la racha de meditación con sal_racha; no inventa el número."
 
-# ───────── Salud: tool (v2 / E8 — nutrición, ventanas, peso, score, eventos) ─────────
-- id: tool_marcar_habito_agua
-  tipo: tool
-  tool_esperada: "sal_marcar_habito"
-  entrada: "Hoy tomé harta agua."
-  espera: "Marca el hábito de agua del día con sal_marcar_habito (habito=agua). No usa otra herramienta."
-
+# ───────── Salud: tool (v2 / E8 — ventanas, peso, score, eventos) ─────────
 - id: tool_set_hora_primera_comida
   tipo: tool
   tool_esperada: "sal_set_hora"

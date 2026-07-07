@@ -67,14 +67,15 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 - **Objetivo:** el eje #1 (sueño) + hábitos, ánimo, nutrición y ritmo diario.
 - **Scope completo:** `Diario` (ejercicio, meditación, sueño 7h, ánimo 1-4, hora dormí, MITs) + brief 8:00 (lectura) + cierre 22:00 (toques) + señal sueño×ánimo.
 - **Scope ampliado (añadido):**
-  - **Nutrición:** toques de **agua** sí/no y **proteína** sí/no en el cierre (`Diario` +`Agua`, +`Proteina`).
+  - **Nutrición (retirada del cierre):** los toques de **agua**/**proteína** se sacaron del panel del cierre; `Diario` +`Agua`, +`Proteina` quedan como columnas legado sin capturar.
   - **Ventanas (ayuno + sueño):** `Diario` +`Primera_Comida`, +`Hora_Despertar` (ya existen `Ultima_Comida` y `Hora_Dormi`) → **resumen semanal de ventanas**: mediana de la ventana de comida (1ª→última) y de sueño (dormir→despertar), semana vs fin de semana. **Solo medir, sin meta todavía** (cuando haya 2-3 semanas de baseline, recién ahí se propone ventana objetivo — canon "calla hasta tener datos").
-  - **Peso:** `Diario` +`Peso` (kg), pedido **semanal** (domingo), no diario; muestra tendencia.
-  - **Score % semanal de hábitos:** número único calculado el domingo en `Semanal` (`Score_Habitos`). Composición default (revisable): sueño 7h, ejercicio, meditación, agua, proteína.
+  - **Peso:** `Diario` +`Peso` (kg), pedido **cada cierre** (22:00), no solo domingo; muestra tendencia.
+  - **Score % semanal de hábitos:** número único calculado el domingo en `Semanal` (`Score_Habitos`). Composición default (revisable): sueño 7h, ejercicio, meditación.
   - **Eventos contextuales:** pregunta en el cierre — *"¿hubo algo hoy fuera de tu control que te bajó el ánimo o no te dejó hacer lo planeado?"* → texto libre → `memoria` episódica con tag `evento_externo`. **El correlador trata ese día como contexto, no como patrón** (guardia anti-patrón-falso).
+  - **Revisión dominical (touchpoint visible):** domingo 22:30 Donna manda la revisión de la semana en su voz (score + ventanas + peso con tendencia) Y los cruces del correlador vigentes con botones *sí/no/corregir* — Nico puede reeditar hasta los ya confirmados si algo se ve raro. Escribe `Semanal` como antes; ahora además surfacing a Telegram. Registrado en `jobs_log` + recuperado por `check_pendientes` (antes se perdía mudo si Railway estaba caído a las 22:30).
 - **Datos:** Sheets `Diario`/`Semanal`; Supabase `inferencias`/`memoria`.
 - **Espina:** **se enciende el correlador** (2º dominio). Primeros cruces: sueño↔ánimo; con finanzas, sueño↔gasto; y ahora ventana/nutrición↔ánimo.
-- **Eval:** marcas hábitos por botón → fila correcta · señal coherente · el cruce sueño↔ánimo aparece con su dato · el resumen de ventanas da medianas coherentes · el score % cuadra con los toques de la semana · un evento contextual marca el día como contexto.
+- **Eval:** marcas hábitos por botón → fila correcta · señal coherente · el cruce sueño↔ánimo aparece con su dato · el resumen de ventanas da medianas coherentes · el score % cuadra con los toques de la semana · un evento contextual marca el día como contexto · la revisión dominical llega con los números correctos y sus cruces editables.
 - **Semana:** 7 días de cierre real, estable, evals verdes.
 
 ### 3. Compras `cmp_`  ⟵ NUEVO

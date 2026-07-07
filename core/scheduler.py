@@ -130,9 +130,8 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
     # 2.5) Evento contextual (E8): lo que Nico no controló hoy, para que el correlador no lo
     # confunda con un patrón. Conversacional — no bloquea el panel ni cuenta contra Proactividad.
     await context.bot.send_message(chat, frases.frase("evento_contextual"))
-    # 2.6) Peso (E8): se pide solo los domingos, no diario.
-    if datetime.now(settings.tz).weekday() == 6:
-        await context.bot.send_message(chat, frases.frase("peso_domingo"))
+    # 2.6) Peso (E8): se pregunta en cada cierre.
+    await context.bot.send_message(chat, frases.frase("peso_cierre"))
     # 3) Digest financiero del día.
     await flows.enviar_digest(context.bot, chat)
     # 3.5) La espina aprende de la plata (perfil + inferencia de deuda con su dato).
@@ -157,14 +156,46 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ───────────────────────── Resumen semanal (domingo, E8) ─────────────────────────
 
+async def _texto_revision_semanal(r: dict) -> str:
+    """Envuelve los datos EXACTOS de la semana en la voz de Donna (sin tocar números). Si el
+    LLM falla, degrada a los datos crudos — nunca se queda muda con datos en mano."""
+    datos = salud.texto_revision_semanal(r)
+    if not datos:
+        return ""
+    prompt = (
+        "Es la revisión dominical de Nico (cierre de semana). Estos son los datos EXACTOS de su "
+        f"semana — NO cambies ni inventes ningún número, solo entrégaselos en tu voz, cálida y "
+        f"breve:\n\n{datos}\n\nDale una lectura corta de cómo vino la semana. Si el sueño o los "
+        "hábitos vinieron flojos, dilo sin regañar. Cierra suave: después le muestro los cruces aparte."
+    )
+    try:
+        return await brain.generar(prompt)
+    except Exception:
+        logger.exception("revisión semanal: brain falló, mando los datos crudos")
+        return "Tu semana:\n\n" + datos
+
+
 async def job_resumen_semanal(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Domingo: Salud calcula score de hábitos + ventanas de ayuno/sueño + último peso y los
-    deja en `Semanal` (lectura). No manda mensaje aparte — se lee bajo demanda o el domingo."""
+    """Domingo 22:30: Salud calcula score + ventanas + peso y los deja en `Semanal` (lectura),
+    y ADEMÁS le manda a Nico la revisión de la semana en su voz + los cruces del correlador con
+    botones para reeditarlos. Registra el job en `jobs_log` para resiliencia (lo recupera
+    `check_pendientes` si Railway estaba caído a las 22:30)."""
+    chat = settings.nico_telegram_id
     try:
         r = await salud.generar_resumen_semanal()
         logger.info("Resumen semanal escrito (%s): score=%s", r["semana"], r["score"].get("score"))
     except Exception:
         logger.exception("No pude generar el resumen semanal de Salud")
+        return
+    try:
+        texto = await _texto_revision_semanal(r)
+        if texto:
+            await context.bot.send_message(chat, texto)
+        n = await flows.enviar_cruces_correlador(context.bot, chat)
+        logger.info("Revisión semanal enviada a Nico (%d cruce(s) del correlador).", n)
+    except Exception:
+        logger.exception("No pude enviar la revisión semanal a Nico")
+    await memory.marcar_job("resumen_semanal")
 
 
 # ───────────────────────── Proactividad 12:00 ─────────────────────────
@@ -301,6 +332,12 @@ async def check_pendientes(context: ContextTypes.DEFAULT_TYPE) -> None:
     if ahora.hour >= 22 and not await memory.job_ya_corrio("cierre"):
         logger.info("Cierre de hoy pendiente tras reinicio; lo envío.")
         await job_cierre(context)
+    # Revisión semanal: solo el domingo (weekday 6, stdlib) tras las 22:30. Sin esto quedaba
+    # silenciosamente perdida si Railway se reiniciaba en esa ventana (no la cubría nadie).
+    es_domingo_tarde = ahora.weekday() == 6 and (ahora.hour, ahora.minute) >= (22, 30)
+    if es_domingo_tarde and not await memory.job_ya_corrio("resumen_semanal"):
+        logger.info("Revisión semanal del domingo pendiente tras reinicio; la envío.")
+        await job_resumen_semanal(context)
     if correo.disponible() and ahora.hour >= settings.spam_hora and not await memory.job_ya_corrio("spam"):
         logger.info("Digest de spam pendiente tras reinicio; lo envío.")
         await job_spam(context)

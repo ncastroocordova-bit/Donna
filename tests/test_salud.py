@@ -4,8 +4,8 @@ registrar_peso, evento_contextual), se monkeypatchea esa llamada: se prueba la l
 determinista de Donna, no la API externa.
 
 Cubren los criterios del roadmap (ficha Salud, E8):
-  · toques de agua/proteína/comidas escriben en Diario (vía el mismo _set que ya prueba
-    marcar_habito; aquí se prueba el enrutamiento agua/proteina/horas específico de v2).
+  · toques de comidas/horas escriben en Diario (vía el mismo _set que ya prueba
+    marcar_habito; aquí se prueba el enrutamiento horas específico de v2).
   · sal_resumen_ventanas da medianas coherentes (semana vs fin de semana), sin inventar
     con días incompletos.
   · Score_Habitos cuadra con los toques.
@@ -98,29 +98,27 @@ def test_calcular_ventanas_sin_datos_no_falla():
 
 # ───────────────────────── Score semanal de hábitos ─────────────────────────
 
-def _fila_habitos(fecha, ejercicio="No", meditacion="No", sueno="No", agua="No", proteina="No"):
+def _fila_habitos(fecha, ejercicio="No", meditacion="No", sueno="No"):
     return {
         "Fecha": fecha,
         salud.COLS["ejercicio"]: ejercicio,
         salud.COLS["meditacion"]: meditacion,
         salud.COLS["sueno_7h"]: sueno,
-        salud.COLS["agua"]: agua,
-        salud.COLS["proteina"]: proteina,
     }
 
 
 def test_calcular_score_cuadra_con_los_toques():
-    # 1 día, 5 hábitos, 3 cumplidos -> 60%.
-    filas = [_fila_habitos("2026-06-15", ejercicio="Sí", meditacion="Sí", sueno="Sí")]
+    # 1 día, 3 hábitos, 2 cumplidos -> 67%.
+    filas = [_fila_habitos("2026-06-15", ejercicio="Sí", meditacion="Sí")]
     s = salud._calcular_score(filas)
-    assert s == {"score": 60, "cumplidos": 3, "total": 5}
+    assert s == {"score": 67, "cumplidos": 2, "total": 3}
 
 
 def test_calcular_score_semana_completa():
     # 7 días, todo "Sí" -> 100%.
-    filas = [_fila_habitos(f"2026-06-{15+i}", "Sí", "Sí", "Sí", "Sí", "Sí") for i in range(7)]
+    filas = [_fila_habitos(f"2026-06-{15+i}", "Sí", "Sí", "Sí") for i in range(7)]
     s = salud._calcular_score(filas)
-    assert s == {"score": 100, "cumplidos": 35, "total": 35}
+    assert s == {"score": 100, "cumplidos": 21, "total": 21}
 
 
 def test_calcular_score_sin_filas_no_falla():
@@ -128,18 +126,11 @@ def test_calcular_score_sin_filas_no_falla():
 
 
 def test_afirmativo_cuenta_cantidades():
-    # Agua (litros) y proteína (gramos) se anotan como número: cualquier cantidad > 0 = consumido.
+    # Hábitos anotados como número (cantidad) cuentan como cumplidos si son > 0.
     assert salud._afirmativo("2") and salud._afirmativo("90") and salud._afirmativo("100")
     assert salud._afirmativo("Sí") and salud._afirmativo("si")   # sigue valiendo el binario
     assert not salud._afirmativo("0")
     assert not salud._afirmativo("No") and not salud._afirmativo("")
-
-
-def test_score_cuenta_agua_y_proteina_numericas():
-    # Un día con agua=2L y proteína=90g debe contar esos dos hábitos como cumplidos.
-    filas = [_fila_habitos("2026-06-15", ejercicio="Sí", agua="2", proteina="90")]
-    s = salud._calcular_score(filas)
-    assert s == {"score": 60, "cumplidos": 3, "total": 5}   # ejercicio + agua + proteína
 
 
 # ───────────────────────── Evento contextual: no guarda "no pasó nada" ─────────────────────────
@@ -216,21 +207,76 @@ def test_registrar_peso_invalido_no_escribe(monkeypatch):
     assert "kilos" in r.lower()
 
 
-# ───────────────────────── Hábitos v2: agua/proteína entran al mismo patrón ─────────────────────────
+# ───────────────────────── Revisión semanal: tendencia de peso + texto ─────────────────────────
 
-def test_agua_proteina_son_toque_y_binario():
-    assert "agua" in salud.HABITOS_TOQUE and "proteina" in salud.HABITOS_TOQUE
-    assert "agua" in salud.BINARIOS and "proteina" in salud.BINARIOS
+def _fila_peso(fecha, kg):
+    return {"Fecha": fecha, salud.COLS["peso"]: kg}
 
 
-def test_marcar_habito_agua_default_si(monkeypatch):
+def test_fmt_peso_sin_decimal_de_mas():
+    assert salud._fmt_peso(78.0) == "78"
+    assert salud._fmt_peso(77.5) == "77.5"
+
+
+def test_peso_delta_compara_lecturas_separadas():
+    # dos pesajes a ≥5 días → delta semana-a-semana.
+    filas = [_fila_peso("2026-06-28", "78"), _fila_peso("2026-07-05", "77")]
+    pa, pd = salud._peso_actual_y_delta(filas)
+    assert pa == 77.0 and pd == -1.0
+
+
+def test_peso_delta_none_si_lecturas_muy_cercanas():
+    # dos pesajes con < 5 días de separación → no hay referencia semana-a-semana (no inventa).
+    filas = [_fila_peso("2026-07-04", "78"), _fila_peso("2026-07-05", "77")]
+    pa, pd = salud._peso_actual_y_delta(filas)
+    assert pa == 77.0 and pd is None
+
+
+def test_peso_delta_none_con_una_sola_lectura():
+    pa, pd = salud._peso_actual_y_delta([_fila_peso("2026-07-05", "77")])
+    assert pa == 77.0 and pd is None
+
+
+def test_peso_ignora_celdas_no_numericas():
+    assert salud._peso_actual_y_delta([_fila_peso("2026-07-05", "no sé")]) == (None, None)
+
+
+def test_texto_revision_semanal_arma_lineas_con_datos():
+    r = {
+        "score": {"score": 67, "cumplidos": 2, "total": 3},
+        "ventanas": {"comida_semana_n": 3, "comida_semana_txt": "12h", "comida_finde_n": 2,
+                     "comida_finde_txt": "11h", "sueno_semana_n": 3, "sueno_semana_txt": "7h",
+                     "sueno_finde_n": 2, "sueno_finde_txt": "8h"},
+        "peso_actual": 77.0, "peso_delta": -1.0,
+    }
+    t = salud.texto_revision_semanal(r)
+    assert "67%" in t and "2/3" in t
+    assert "Ventana de comida" in t and "Ventana de sueño" in t
+    assert "77 kg" in t and "-1.0 vs la anterior" in t
+
+
+def test_texto_revision_semanal_vacio_si_no_hay_datos():
+    r = {"score": {"score": None}, "ventanas": {}, "peso_actual": None, "peso_delta": None}
+    assert salud.texto_revision_semanal(r) == ""
+
+
+# ───────────────────────── Hábitos v2: agua/proteína ya NO están en el cierre ─────────────────────────
+
+def test_agua_proteina_ya_no_son_toque_ni_binario():
+    # Se sacaron del cierre: ya no cuentan para el panel de toques ni para el score/racha.
+    assert "agua" not in salud.HABITOS_TOQUE and "proteina" not in salud.HABITOS_TOQUE
+    assert "agua" not in salud.BINARIOS and "proteina" not in salud.BINARIOS
+    assert "agua" not in salud.HABITOS_SCORE and "proteina" not in salud.HABITOS_SCORE
+
+
+def test_marcar_habito_ejercicio_default_si(monkeypatch):
     llamadas = _mock_sheets(monkeypatch)
 
     async def _fake_racha(campo):
         return 1
 
     monkeypatch.setattr(salud, "calcular_racha", _fake_racha)
-    r = asyncio.run(salud.marcar_habito("agua"))  # sin valor explícito -> default "Sí" (BINARIOS)
+    r = asyncio.run(salud.marcar_habito("ejercicio"))  # sin valor explícito -> default "Sí" (BINARIOS)
     assert llamadas[0]["valor"] == "Sí"
     assert "Racha" in r
 
