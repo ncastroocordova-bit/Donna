@@ -12,7 +12,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from config import settings
-from core import memory, sheets
+from core import espera, memory, sheets
 from modules import aprendizaje, compras, finanzas, recordatorios, salud
 from modules import spam as spam_mod
 
@@ -463,10 +463,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data.startswith("digest:fix:"):
         buffer_id = data.split(":", 2)[2]
-        context.user_data["corrigiendo_tx"] = buffer_id
+        espera.iniciar(context.user_data, "correccion_tx", {"buffer_id": buffer_id})
         await q.edit_message_text(
             "Dime la categoría correcta para esa línea (o escribe «descartar» para botarla). "
-            "Después toca el cierre de nuevo para aceptar el resto."
+            "Después toca el cierre de nuevo para aceptar el resto. (Si te arrepentiste, escribe «cancelar»)."
         )
         return
 
@@ -513,8 +513,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await q.answer("Elegí el ítem de nuevo.")
             return
         if accion == "cat":
-            context.user_data["corrigiendo_item_cat"] = True
-            await _edit_ok(q, f"¿Qué categoría para «{items[idx].get('item', '')}»? Escríbela.")
+            espera.iniciar(context.user_data, "correccion_item_cat")
+            await _edit_ok(q, f"¿Qué categoría para «{items[idx].get('item', '')}»? Escríbela (o «cancelar»).")
             return
         if accion == "d":
             items[idx]["intencion"] = partes[2]
@@ -527,9 +527,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data.startswith("compra:"):
         _, accion, buffer_id = data.split(":", 2)
         if accion == "desglosar":
-            context.user_data["desglosando_cargo"] = buffer_id
+            espera.iniciar(context.user_data, "desglose_cargo", {"buffer_id": buffer_id})
             await q.edit_message_text(
-                "Dale: ¿qué compraste? Dímelo como «arroz 1290, leche 990» o «2000 chanchería, resto pan»."
+                "Dale: ¿qué compraste? Dímelo como «arroz 1290, leche 990» o «2000 chanchería, resto pan» "
+                "(o «cancelar» si mejor no)."
             )
         elif accion == "foto":
             await q.edit_message_text("Mándame la foto de la boleta y la cruzo con este cargo. 📷")
@@ -570,8 +571,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await aprendizaje.registrar_resultado(dominio, acertada=False)
             await q.edit_message_text("Entendido. Lo archivo. No insisto.")
         elif accion == "corregir":
-            context.user_data["corrigiendo_inferencia"] = inf_id
-            await q.edit_message_text("Cuéntame — ¿por qué pasa de verdad?")
+            espera.iniciar(context.user_data, "correccion_inferencia", {"inf_id": inf_id})
+            await q.edit_message_text("Cuéntame — ¿por qué pasa de verdad? (o «cancelar»)")
 
 
 # ───────────────────────── Corrección de una línea del digest ─────────────────────────

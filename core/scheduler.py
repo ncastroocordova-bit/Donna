@@ -306,9 +306,14 @@ async def job_verificar_schema(context: ContextTypes.DEFAULT_TYPE) -> None:
     mismatch → incidente `schema_sheets` (habría atrapado los bugs de Recordatorios/Proyectos el
     día uno, en vez de descubrirlos corrompiendo datos)."""
     try:
-        from setup_sheets import TABS
-        esperados = {h: TABS[h] for h in HOJAS_CRITICAS if h in TABS}
-        problemas = await sheets.verificar_headers(esperados)
+        from setup_sheets import TABS, TABS_LOUIS
+        fin_hojas = set(TABS_LOUIS)
+        esp_vida = {h: TABS[h] for h in HOJAS_CRITICAS if h in TABS and h not in fin_hojas}
+        esp_louis = {h: TABS[h] for h in HOJAS_CRITICAS if h in fin_hojas}
+        # Vida contra la planilla Donna (default); finanzas contra Louis. fin_id() cae a la
+        # planilla Donna si Louis no existe, así que esto funciona igual en single-workbook.
+        problemas = await sheets.verificar_headers(esp_vida)
+        problemas += await sheets.verificar_headers(esp_louis, sheet_id=sheets.fin_id())
     except Exception:
         logger.exception("job_verificar_schema falló")
         return

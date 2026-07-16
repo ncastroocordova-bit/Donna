@@ -25,13 +25,14 @@ import base64
 import json
 import logging
 import re
+import time
 import unicodedata
 from datetime import datetime, timedelta
 
 from anthropic import AsyncAnthropic
 
 from config import settings
-from core import correo, memory, sheets
+from core import correo, espera, memory, sheets
 
 logger = logging.getLogger(__name__)
 _anthropic = AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -205,11 +206,22 @@ def _num_es(texto) -> int:
 
 # Gasto dictado sin monto legible: queda esperando a que Nico diga cuánto (patrón de estado
 # de un solo usuario, igual que spam._PENDIENTE). Lo completa main.py con el próximo mensaje.
+# Vive en un global de proceso (no en user_data) porque este tool se llama desde el loop de tools
+# del cerebro, sin contexto de Telegram — sigue las mismas reglas que core.espera (cancelable,
+# valida antes de aceptar, expira sola) aplicadas localmente al no poder reusar ese motor.
+TTL_GASTO_INCOMPLETO = 15 * 60  # pasado esto, deja de insistir con un gasto que ya se enfrió
+
 _gasto_incompleto: dict | None = None
 
 
 def hay_gasto_incompleto() -> bool:
-    return _gasto_incompleto is not None
+    global _gasto_incompleto
+    if _gasto_incompleto is None:
+        return False
+    if time.time() - _gasto_incompleto.get("creado", 0) > TTL_GASTO_INCOMPLETO:
+        _gasto_incompleto = None  # expiró: no lo pesco con el próximo número que aparezca
+        return False
+    return True
 
 
 def limpiar_gasto_incompleto() -> None:
@@ -217,15 +229,48 @@ def limpiar_gasto_incompleto() -> None:
     _gasto_incompleto = None
 
 
+# Filtro de "¿esto parece plata?" para no capturar cualquier dígito suelto de un mensaje que
+# habla de otra cosa ('recuérdame pagar el agua el 15', 'dormí 7 horas', 'reunión a las 10').
+_MONTO_FILLER = {
+    "eran", "fueron", "fue", "costo", "costó", "salio", "salió", "como", "unos", "unas",
+    "aprox", "aproximadamente", "pesos", "peso", "clp", "el", "la", "de", "en", "total",
+    "monto", "y", "un", "una", "uno", "mil", "millon", "millones",
+}
+_MONTO_NO_KW = ("recuerda", "recuerdame", "avisa", "avisame", "agenda", "agendame", "record")
+
+
+def parece_monto(texto: str) -> bool:
+    """¿Esta respuesta parece EL MONTO que Donna preguntó, y no un mensaje sobre otra cosa que
+    de casualidad trae un número? Exige que, sacando el número y el relleno normal ('eran',
+    'pesos'...), no quede casi nada más — un mensaje sobre otra cosa deja palabras de contenido
+    de sobra, y las frases con pinta de otra intención (recordatorio, agenda) se rechazan directo."""
+    t = _norm(texto)
+    if not t or "?" in texto:
+        return False
+    if any(kw in t for kw in _MONTO_NO_KW):
+        return False
+    if _num_es(texto) <= 0:
+        return False
+    palabras = [w for w in re.split(r"[\s,]+", t) if w]
+    resto = [w for w in palabras
+             if w not in _MONTO_FILLER and w not in _UNIDADES and w not in _CIENTOS and w not in _SLANG
+             and not re.fullmatch(r"\$?\d[\d.,]*", w)]
+    return len(resto) <= 1
+
+
 async def completar_gasto_incompleto(texto: str) -> str | None:
     """Nico respondió con el monto del gasto que quedó pendiente ('eran 3 mil'). Lo registra en
-    el buffer. Devuelve la confirmación, o None si el mensaje no traía un monto (no era la respuesta)."""
+    el buffer. 'cancelar'/'olvídalo' lo bota sin anotar nada. Devuelve None si el mensaje no
+    parece el monto (no era la respuesta) → main.py limpia el estado y sigue normal."""
     global _gasto_incompleto
     if _gasto_incompleto is None:
         return None
-    monto = _num_es(texto)
-    if monto <= 0:
+    if espera.es_cancelacion(texto):
+        _gasto_incompleto = None
+        return "Ok, no anoto ese gasto."
+    if not parece_monto(texto):
         return None  # no era el monto → main.py limpia y sigue normal
+    monto = _num_es(texto)
     ctx, _gasto_incompleto = _gasto_incompleto, None
     fecha = _hoy()
     comercio = ctx.get("comercio", "")
@@ -1252,8 +1297,9 @@ async def _t_registrar_gasto(inp: dict) -> str:
     if monto <= 0:
         # Sin monto legible: no lo pierdo — queda esperando a que Nico diga cuánto (main.py lo completa).
         _gasto_incompleto = {"tipo": tipo, "categoria": inp.get("categoria", "Otros"),
-                             "comercio": inp.get("comercio", ""), "medio": inp.get("medio", "")}
-        return "¿Cuánto fue? Dímelo y lo dejo listo para el cierre."
+                             "comercio": inp.get("comercio", ""), "medio": inp.get("medio", ""),
+                             "creado": time.time()}
+        return "¿Cuánto fue? Dímelo y lo dejo listo para el cierre (o «cancelar»)."
     _gasto_incompleto = None
     fecha = _hoy()
     comercio = inp.get("comercio", "")
@@ -1358,8 +1404,9 @@ async def _t_compra_detallada(inp: dict) -> str:
     if not lineas:
         # No pude sacar montos del desglose: no lo pierdo — pido el total y lo anoto como gasto simple.
         global _gasto_incompleto
-        _gasto_incompleto = {"tipo": "Gasto", "categoria": "Otros", "comercio": comercio, "medio": ""}
-        return "No te pillé los montos. ¿Cuánto fue en total? Dímelo y lo anoto para el cierre."
+        _gasto_incompleto = {"tipo": "Gasto", "categoria": "Otros", "comercio": comercio, "medio": "",
+                             "creado": time.time()}
+        return "No te pillé los montos. ¿Cuánto fue en total? Dímelo y lo anoto para el cierre (o «cancelar»)."
     suma = sum(int(_num(l["precio"])) for l in lineas)
     monto = int(_num(total)) or suma
     guardado = await _bufferizar(

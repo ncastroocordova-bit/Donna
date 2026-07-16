@@ -134,6 +134,8 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 ## Tablero (una línea por módulo)
 **Actualizado 2026-07-02 por auditoría de código** (qué existe y está enganchado en `brain`/`scheduler`/`flows`,
 no telemetría de producción — el repo no dice si algo lleva sus 7 días estables en Railway).
+**Addendum 2026-07-16:** canon v8 (dos sombreros/dos planillas) + Tanda 1 (esperas unificadas) — ver el
+bloque "Trabajo transversal reciente" bajo el tablero.
 
 Estados: ⬜ pendiente · 🔨 construido (scope de la ficha completo) · 🔶 parcial (falta scope de la ficha) ·
 🧪 prueba sem X/7 · ✅ promovido · ⚠️ riesgo (viola un invariante duro de `CLAUDE.md`, o el código
@@ -207,6 +209,38 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
 **Transversal (la espina):** `modules/aprendizaje.py` construido (calibración por dominio, patrones con
 decay, guardia anti-patrones-falsos) y el correlador ya corre con 2 dominios vivos (Finanzas + Salud), antes
 de lo que sugiere la secuencia del roadmap.
+
+## Trabajo transversal reciente (2026-07-16 — cableado, aún sin commitear al abrir la sesión)
+
+Dos piezas que cruzan módulos, no son un módulo del roadmap. Ambas con tests verdes (204/204 en total).
+
+**1. Canon v8 — dos sombreros, dos planillas (Donna vida / Louis plata).** Finanzas y estados de cuenta
+se separan a su propia planilla `GOOGLE_SHEET_ID_LOUIS`. **Cableado hecho:** `config.py`
+(`sheet_finanzas` resuelve Louis → legacy Finanzas → Donna), `core/sheets.py` (`fin_id()` cae a Donna si
+Louis vacío), `setup_sheets.py` (`TABS` partido en `TABS_DONNA`/`TABS_LOUIS`, asegura cada grupo contra
+su planilla; `TABS` combinado se mantiene para el guardián de schema), `core/scheduler.py`
+(`job_verificar_schema` chequea vida contra Donna y finanzas contra `fin_id()` — sin esto tiraría
+incidentes falsos "columnas faltantes"). `CLAUDE.md` actualizado al canon v8. Detalle y pasos de
+migración en [`docs/Sombreros_Donna_Louis.md`](Sombreros_Donna_Louis.md). **Degrada elegante:** con
+`GOOGLE_SHEET_ID_LOUIS` vacío sigue en single-workbook, nada se rompe. **Pendiente (manual de Nico, no
+código):** crear la planilla Louis, mover las 8 hojas de finanzas, setear la env en `.env` + Railway,
+correr `setup_sheets.py` y verificar el faro. Hasta ese paso, la separación existe en código pero no
+está activa en producción. **Cable cruzado a vigilar:** Compras Fase 2 leerá `Compras_Detalle` (ahora en
+Louis) → deberá pasar `sheet_id=sheets.fin_id()` explícito.
+
+**2. Tanda 1 — esperas unificadas (`core/espera.py` nuevo).** Antes cada corrección pendiente (categoría
+de una línea del digest, categoría de un ítem, desglose de un cargo, corrección de una inferencia, monto
+de un gasto sin cifra) vivía como una llave suelta en `user_data` que se tragaba el PRÓXIMO mensaje fuera
+cual fuera — sin cancelar, sin validar forma, sin vencer nunca; y un error así se aprendía después como
+regla permanente. Ahora hay **una sola pieza de estado por chat** con tres reglas parejas: se cancela
+(«cancelar»/«olvídalo»), expira sola (TTL 15 min), y quien la resuelve **valida que la respuesta tenga
+forma de tal** antes de darla por buena — si no calza, se suelta y el mensaje sigue normal al cerebro.
+**Cableado:** `core/espera.py` (motor), `core/flows.py` (los 4 botones que abrían una espera ahora llaman
+`espera.iniciar`), `main.py` (`_procesar_entrada` como punto único para texto y voz, con eco de voz solo
+tras validar). El gasto sin monto legible es la excepción de forma (vive en un global de `finanzas.py`
+porque el tool corre sin contexto de Telegram) pero sigue las mismas tres reglas: `parece_monto` rechaza
+"recuérdame pagar el agua el 15" / "dormí 7 horas", cancelable y con TTL propio. 12 tests nuevos
+(`tests/test_espera.py`) + 5 en `tests/test_finanzas.py`.
 
 ## Auditoría contra la planilla real (2026-07-01, actualizada 2026-07-02)
 

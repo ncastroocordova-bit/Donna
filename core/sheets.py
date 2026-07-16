@@ -1,7 +1,9 @@
 """Capa de Google Sheets (datos de los módulos). Auth por service account.
 
-v7 usa DOS planillas: Vida_v6 (vida) y Finanzas_vigente (plata). Cada helper toma
-un `sheet_id` opcional; por defecto apunta a Vida. Finanzas pasa `sheets.fin_id()`.
+Canon v8: DOS sombreros / DOS planillas — "Donna" (vida) y "Louis" (plata). Cada
+helper toma un `sheet_id` opcional; por defecto apunta a Donna (`vida_id()`). Finanzas
+y estados de cuenta pasan `sheets.fin_id()` (Louis). Si Louis no tiene planilla propia,
+`fin_id()` cae a la de Donna (single-workbook), así nada se rompe antes de migrar.
 
 Los helpers son async: el cliente de Google es bloqueante, así que el trabajo real
 corre en un hilo (asyncio.to_thread) para no tapar el event loop del bot.
@@ -22,10 +24,12 @@ _service = None
 
 
 def vida_id() -> str:
+    """Planilla "Donna" (vida)."""
     return settings.sheet_vida
 
 
 def fin_id() -> str:
+    """Planilla "Louis" (plata). Cae a la de Donna si Louis no está configurado."""
     return settings.sheet_finanzas
 
 

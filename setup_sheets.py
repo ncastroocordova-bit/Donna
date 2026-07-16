@@ -1,10 +1,16 @@
-"""Asegura los tabs/headers canónicos del workbook único "Donna" (Plan E0).
+"""Asegura los tabs/headers canónicos de los DOS sombreros de Donna (Plan E0 / canon v8).
 
-Canon v7.2: vida + finanzas viven en UNA sola planilla. Este script es idempotente
-y ADITIVO: crea los tabs que falten y agrega al final las columnas que falten,
-**nunca reordena ni borra** columnas existentes (no pierde datos). Los tabs con
-fórmulas (Dashboard, Comparativo, 'Tarjetas y Deuda') NO se tocan: Donna solo los
-lee por celda.
+Canon v8: DOS planillas.
+  • "Donna" (settings.sheet_vida)   → vida: recordatorios, salud, familia, correo,
+    productividad, compras.  (TABS_DONNA)
+  • "Louis" (settings.sheet_finanzas) → plata: finanzas + estados de cuenta.  (TABS_LOUIS)
+Si Louis no tiene planilla propia (GOOGLE_SHEET_ID_LOUIS vacío) las hojas de finanzas
+se aseguran DENTRO de la planilla Donna (modo single-workbook, como antes de separar).
+
+Este script es idempotente y ADITIVO: crea los tabs que falten y agrega al final las
+columnas que falten, **nunca reordena ni borra** columnas existentes (no pierde datos).
+Los tabs con fórmulas (Dashboard, Comparativo, 'Tarjetas y Deuda') NO se tocan: viven en
+Louis y Donna solo los lee por celda.
 
 Correr: python setup_sheets.py
 """
@@ -14,8 +20,9 @@ from core import sheets
 # Headers sin acentos/emojis: el código los usa como claves de dict (get_dicts).
 # El orden de esta lista solo aplica a tabs NUEVOS. En tabs existentes se respeta
 # el orden ya escrito y solo se agregan al final las columnas que falten.
-TABS = {
-    # --- Vida ---
+
+# ── Sombrero Donna (vida) ──────────────────────────────────────────────────────
+TABS_DONNA = {
     # Headers EXACTOS del canon (con tildes/símbolos — calzan con Donna_Canonico.xlsx fila 2 y
     # con modules/salud.py COLS, verificado contra la planilla real 2026-07-01). Salud v2 (E8)
     # agrega las últimas 5 al final (merge aditivo). "MITs de mañana" queda como columna legado
@@ -58,7 +65,12 @@ TABS = {
     # Lista del súper (módulo Compras, Fase 1). Estado = pendiente|comprado; lo escribe
     # modules/compras.py. La predicción de reposición (Fase 2) es diferida y no usa este tab aún.
     "Compras": ["Item", "Estado", "Fecha_Agregado", "Fecha_Comprado", "Categoria"],
-    # --- Finanzas (tabs de ENTRADA; las de fórmulas no se tocan) ---
+}
+
+# ── Sombrero Louis (plata) ─────────────────────────────────────────────────────
+# Tabs de ENTRADA de finanzas; las de fórmulas (Dashboard, Comparativo, 'Tarjetas y
+# Deuda') no aparecen acá: viven en la planilla Louis y el código solo las lee por celda.
+TABS_LOUIS = {
     # Headers EXACTOS de la planilla real. Intención (v2): se infiere y se confirma en el digest.
     "Transacciones": ["Fecha", "Tipo", "Categoría", "Subcategoría", "Comercio", "Monto",
                       "Medio", "Fuente", "ID_Único", "Intención"],
@@ -76,6 +88,10 @@ TABS = {
     "Deuda_Mensual": ["Mes", "Banco", "Producto", "Deuda", "Cupo", "Interés mes", "Pago mínimo",
                       "Fecha estado", "Actualizado"],
 }
+
+# Vista combinada (compat): consumidores que solo necesitan "¿qué columnas espera la
+# hoja X?" sin importar en qué planilla vive — p. ej. el guardián de schema al boot.
+TABS = {**TABS_DONNA, **TABS_LOUIS}
 
 # Filas seed de Config (solo se escriben si el tab queda SIN filas de datos). Estado
 # de módulos del canon: Aprendizaje ON, Proactividad ON, Tiempo log OFF, Outlook OFF.
@@ -132,6 +148,9 @@ def _ensure(sheet_id: str, tabs: dict, config_seed: list) -> None:
         print(f"  [{nombre}] fila {fila_destino}: {nota}")
 
     # 3) Seed de Config solo si el tab no tiene ninguna fila de DATOS (banner + header no cuentan).
+    # Solo aplica al sombrero que trae el tab Config (Donna); Louis pasa config_seed vacío.
+    if not config_seed:
+        return
     r = ss.values().get(spreadsheetId=sheet_id, range=sheets._rng("⚙️ Config", "A1:ZZ50")).execute()
     filas = r.get("values", [])
     h_idx, _ = sheets._fila_headers(filas)
@@ -148,13 +167,24 @@ def _ensure(sheet_id: str, tabs: dict, config_seed: list) -> None:
 
 
 def main():
-    sheet_id = settings.google_sheet_id or settings.sheet_vida
-    print("Asegurando tabs canónicos del workbook único Donna (E0)...")
+    vida = settings.sheet_vida
+    louis = settings.sheet_finanzas
+    print("Asegurando tabs canónicos de los dos sombreros (canon v8)...")
+
+    print(f"\n[Donna · vida] {vida or '(sin id)'}")
     if not settings.google_sheet_id:
-        print("  ⚠ GOOGLE_SHEET_ID vacío; usando el id legacy de Vida. Para el workbook")
-        print("    único, setea GOOGLE_SHEET_ID en .env (vida + finanzas en una planilla).")
-    _ensure(sheet_id, TABS, CONFIG_SEED)
-    print("\nListo. (Dashboard/Comparativo/'Tarjetas y Deuda' no se tocaron: son fórmulas.)")
+        print("  ⚠ GOOGLE_SHEET_ID vacío; usando el id legacy de Vida.")
+    _ensure(vida, TABS_DONNA, CONFIG_SEED)
+
+    if louis and louis != vida:
+        print(f"\n[Louis · plata] {louis}")
+        _ensure(louis, TABS_LOUIS, [])
+    else:
+        print("\n[Louis · plata] sin planilla propia (GOOGLE_SHEET_ID_LOUIS vacío).")
+        print("  Aseguro las hojas de finanzas en la planilla Donna (modo single-workbook).")
+        _ensure(vida, TABS_LOUIS, [])
+
+    print("\nListo. (Dashboard/Comparativo/'Tarjetas y Deuda' no se tocaron: son fórmulas de Louis.)")
 
 
 if __name__ == "__main__":

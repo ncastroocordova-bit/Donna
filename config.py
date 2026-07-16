@@ -45,11 +45,15 @@ class Settings(BaseSettings):
     banco_pdf_password_mach: str = ""   # clave del PDF de estado de cuenta de Mach
 
     # --- Google (Sheets + Calendar) ---
-    # Canon v7.2: UN solo workbook "Donna" (vida + finanzas en la misma planilla).
-    # GOOGLE_SHEET_ID es el id único. Los dos de abajo quedan como legacy: solo se
-    # usan si el único está vacío (compatibilidad con la etapa de dos planillas).
+    # Canon v8: DOS sombreros, DOS planillas.
+    #   • "Donna" (GOOGLE_SHEET_ID) = vida: recordatorios, salud, familia, correo,
+    #     productividad y compras.
+    #   • "Louis" (GOOGLE_SHEET_ID_LOUIS) = plata: finanzas + estados de cuenta.
+    # Si GOOGLE_SHEET_ID_LOUIS queda vacío, finanzas cae a la planilla Donna (modo
+    # single-workbook, como antes de la separación) — así nada se rompe antes de migrar.
     google_credentials_json: str = "credentials.json"   # ruta al JSON del service account
-    google_sheet_id: str = ""                            # workbook único "Donna" (canon)
+    google_sheet_id: str = ""                            # workbook "Donna" (vida) — canon
+    google_sheet_id_louis: str = ""                      # workbook "Louis" (finanzas) — canon
     google_sheet_id_vida: str = ""                       # legacy: planilla Vida_v6
     google_sheet_id_finanzas: str = ""                   # legacy: planilla Finanzas_vigente
     google_calendar_id: str = "primary"                  # calendario compartido con el service account
@@ -66,12 +70,14 @@ class Settings(BaseSettings):
 
     @property
     def sheet_vida(self) -> str:
-        # Workbook único primero; cae al split legacy solo si el único está vacío.
+        # Planilla "Donna" (vida). Cae al id legacy de Vida solo si el principal está vacío.
         return self.google_sheet_id or self.google_sheet_id_vida
 
     @property
     def sheet_finanzas(self) -> str:
-        return self.google_sheet_id or self.google_sheet_id_finanzas
+        # Planilla "Louis" (plata). Orden: Louis → legacy Finanzas → planilla Donna.
+        # El fallback a Donna mantiene el modo single-workbook mientras Louis no exista.
+        return self.google_sheet_id_louis or self.google_sheet_id_finanzas or self.google_sheet_id
 
     @property
     def gmail_activo(self) -> bool:

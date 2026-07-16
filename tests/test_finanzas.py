@@ -12,6 +12,7 @@ El freno-antes-de-cuota vive en los evals conversacionales (tests/casos.yaml, ca
 tool_freno_cuotas) y en la semana de prueba real.
 """
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -596,3 +597,52 @@ def test_registrar_gasto_con_monto_en_palabras(monkeypatch):
     r = asyncio.run(finanzas._t_registrar_gasto({"monto": "mil", "comercio": "kiosco"}))
     assert "$1.000" in r
     assert finanzas.hay_gasto_incompleto() is False
+
+
+# ───────────────────────── parece_monto: no cualquier dígito es el monto (Tanda 1, punto 7) ─────────────────────────
+
+def test_parece_monto_acepta_respuestas_de_plata():
+    assert finanzas.parece_monto("3 lucas")
+    assert finanzas.parece_monto("$1.290")
+    assert finanzas.parece_monto("1290")
+    assert finanzas.parece_monto("fueron tres lucas")
+    assert finanzas.parece_monto("eran como 10500")
+
+
+def test_parece_monto_rechaza_mensajes_de_otra_cosa_con_numeros():
+    # Estos son justo los casos del audit: un dígito suelto en un mensaje que no es la respuesta.
+    assert not finanzas.parece_monto("recuérdame pagar el agua el 15")
+    assert not finanzas.parece_monto("dormí 7 horas")
+    assert not finanzas.parece_monto("mañana tengo reunión a las 10")
+    assert not finanzas.parece_monto("¿cuánto llevo gastado?")
+    assert not finanzas.parece_monto("")
+
+
+def test_completar_gasto_incompleto_rechaza_por_no_parecer_monto():
+    finanzas.limpiar_gasto_incompleto()
+    finanzas._gasto_incompleto = {"tipo": "Gasto", "categoria": "Otros", "comercio": "", "medio": "",
+                                  "creado": time.time()}
+    r = asyncio.run(finanzas.completar_gasto_incompleto("recuérdame pagar el agua el 15"))
+    assert r is None                                      # no se traga el recordatorio como monto
+    assert finanzas.hay_gasto_incompleto() is True         # el estado sigue vivo, esperando el monto real
+    finanzas.limpiar_gasto_incompleto()
+
+
+# ───────────────────────── Cancelación y expiración (Tanda 1, puntos 6 y 7) ─────────────────────────
+
+def test_completar_gasto_incompleto_se_puede_cancelar():
+    finanzas.limpiar_gasto_incompleto()
+    finanzas._gasto_incompleto = {"tipo": "Gasto", "categoria": "Otros", "comercio": "super ganga", "medio": "",
+                                  "creado": time.time()}
+    r = asyncio.run(finanzas.completar_gasto_incompleto("cancelar"))
+    assert r is not None and "no anoto" in r.lower()
+    assert finanzas.hay_gasto_incompleto() is False
+
+
+def test_gasto_incompleto_expira_solo():
+    finanzas.limpiar_gasto_incompleto()
+    viejo = time.time() - finanzas.TTL_GASTO_INCOMPLETO - 1
+    finanzas._gasto_incompleto = {"tipo": "Gasto", "categoria": "Otros", "comercio": "", "medio": "",
+                                  "creado": viejo}
+    assert finanzas.hay_gasto_incompleto() is False        # ya se enfrió, no insiste con esto
+    finanzas.limpiar_gasto_incompleto()

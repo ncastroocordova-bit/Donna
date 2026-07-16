@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 from config import settings
-from core import brain, correo, flows, memory, voice
+from core import brain, correo, espera, flows, memory, voice
 from core.scheduler import DELAY_CORRELACION, job_correlacionar_una_vez, setup_scheduler
 from modules import aprendizaje, finanzas, salud
 
@@ -134,6 +134,114 @@ async def cmd_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await flows.enviar_lista_compras(context.bot, update.effective_chat.id)
 
 
+# ───────────────────────── Esperas de un turno (Tanda 1) ─────────────────────────
+# Punto único por el que pasa TODO mensaje (texto o voz ya transcrita) antes del cerebro: ¿hay
+# algo que Donna esperaba (un monto, una categoría, un desglose, la corrección de una inferencia)
+# y este mensaje lo resuelve? Antes cada espera vivía suelta y se tragaba lo que fuera; ahora se
+# puede cancelar, expira sola, y si la respuesta no tiene pinta de tal se suelta y sigue normal
+# hacia el cerebro — ver core/espera.py.
+
+_CANCELAR_MSGS = {
+    "correccion_tx": "Ok, dejo esa línea como estaba. Tócala de nuevo si quieres corregirla.",
+    "correccion_item_cat": "Ok, no le cambio la categoría a ese ítem.",
+    "desglose_cargo": "Ok, lo dejamos para el cierre.",
+    "correccion_inferencia": "Ok, no la corrijo. Sigue como estaba.",
+}
+
+
+async def _resolver_correccion_tx(update, context, payload: dict, texto: str, eco) -> bool:
+    if not espera.parece_respuesta_corta(texto):
+        return False
+    await eco()  # el eco de voz sale SOLO tras validar que este mensaje sí resuelve la espera
+    await update.message.reply_text(await flows.aplicar_correccion_tx(payload["buffer_id"], texto))
+    await flows.enviar_digest(context.bot, update.effective_chat.id)  # re-muestra con "Aceptar todo"
+    return True
+
+
+async def _resolver_correccion_item_cat(update, context, payload: dict, texto: str, eco) -> bool:
+    if not espera.parece_respuesta_corta(texto):
+        return False
+    buf = context.user_data.get("items_buffer")
+    idx = context.user_data.get("item_idx")
+    it = await flows.corregir_categoria_item(buf, idx, texto) if buf is not None and idx is not None else None
+    await eco()
+    if it:
+        await update.message.reply_text(flows._texto_item(it), reply_markup=flows._teclado_item_editor(it))
+    else:
+        await update.message.reply_text("No pude actualizar ese ítem.")
+    return True
+
+
+async def _resolver_desglose_cargo(update, context, payload: dict, texto: str, eco) -> bool:
+    if not texto.strip() or texto.strip().endswith("?"):
+        return False
+    cargo_id = payload["buffer_id"]
+    await eco()
+    await update.message.reply_text(await finanzas.desglosar_cargo(cargo_id, texto))
+    context.user_data["items_buffer"] = cargo_id
+    await flows.enviar_panel_items(context.bot, update.effective_chat.id, cargo_id)  # abre el editor por ítem
+    return True
+
+
+async def _resolver_correccion_inferencia(update, context, payload: dict, texto: str, eco) -> bool:
+    if not texto.strip() or texto.strip().endswith("?"):
+        return False
+    inf_id = payload["inf_id"]
+    inf = await memory.get_inferencia(inf_id)
+    await memory.resolver_inferencia(inf_id, "corregida", correccion=texto)
+    await aprendizaje.registrar_resultado((inf or {}).get("dominio", ""), acertada=False)
+    await eco()
+    await update.message.reply_text("Gracias. Actualizado. Eso es lo que importa.")
+    return True
+
+
+_MANEJADORES_ESPERA = {
+    "correccion_tx": _resolver_correccion_tx,
+    "correccion_item_cat": _resolver_correccion_item_cat,
+    "desglose_cargo": _resolver_desglose_cargo,
+    "correccion_inferencia": _resolver_correccion_inferencia,
+}
+
+
+async def _procesar_entrada(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str, es_voz: bool = False) -> bool:
+    """¿Este mensaje resuelve algo que Donna estaba esperando? True si quedó consumido acá (no
+    debe seguir al cerebro). Cubre, en orden: el gasto sin monto legible (global de finanzas, sin
+    contexto de Telegram) y las esperas de un turno (digest / ítems / desglose / inferencia).
+
+    El eco de la transcripción ('🎙️ Escuché…') se emite SOLO cuando el mensaje efectivamente
+    resuelve la espera: si cae al cerebro, el eco lo pone manejar_voz (uno solo, no dos)."""
+    async def eco():
+        if es_voz:
+            await update.message.reply_text(f"🎙️ Escuché: «{texto}»")
+
+    if finanzas.hay_gasto_incompleto():
+        r = await finanzas.completar_gasto_incompleto(texto)
+        if r:
+            await eco()
+            await update.message.reply_text(r)
+            return True
+        finanzas.limpiar_gasto_incompleto()  # no era el monto → sigue normal
+        return False
+
+    esp = espera.activa(context.user_data)
+    if esp is None:
+        return False
+    if espera.es_cancelacion(texto):
+        espera.limpiar(context.user_data)
+        await eco()
+        await update.message.reply_text(_CANCELAR_MSGS.get(esp["tipo"], "Ok, lo dejamos."))
+        return True
+    manejador = _MANEJADORES_ESPERA.get(esp["tipo"])
+    if manejador is None:
+        espera.limpiar(context.user_data)
+        return False
+    resuelto = await manejador(update, context, esp["payload"], texto, eco)
+    if not resuelto:
+        return False  # no calzó -> se deja caer al cerebro (manejar_voz pone su propio eco)
+    espera.limpiar(context.user_data)
+    return True
+
+
 # ───────────────────────── Mensajes ─────────────────────────
 
 async def manejar_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -141,48 +249,8 @@ async def manejar_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     texto = update.message.text
 
-    # ¿Está corrigiendo una línea del digest? (categoría o "descartar")
-    tx_id = context.user_data.pop("corrigiendo_tx", None)
-    if tx_id:
-        await update.message.reply_text(await flows.aplicar_correccion_tx(tx_id, texto))
-        await flows.enviar_digest(context.bot, update.effective_chat.id)  # re-muestra con "Aceptar todo"
+    if await _procesar_entrada(update, context, texto):
         return
-
-    # ¿Está corrigiendo la categoría de un ítem en el mini-panel? (v3)
-    if context.user_data.pop("corrigiendo_item_cat", None):
-        buf = context.user_data.get("items_buffer")
-        idx = context.user_data.get("item_idx")
-        it = await flows.corregir_categoria_item(buf, idx, texto) if buf is not None and idx is not None else None
-        if it:
-            await update.message.reply_text(flows._texto_item(it), reply_markup=flows._teclado_item_editor(it))
-        else:
-            await update.message.reply_text("No pude actualizar ese ítem.")
-        return
-
-    # ¿Está respondiendo "¿qué compraste?" con el desglose de un cargo? (v3)
-    cargo_id = context.user_data.pop("desglosando_cargo", None)
-    if cargo_id:
-        await update.message.reply_text(await finanzas.desglosar_cargo(cargo_id, texto))
-        context.user_data["items_buffer"] = cargo_id
-        await flows.enviar_panel_items(context.bot, update.effective_chat.id, cargo_id)  # abre el editor por ítem
-        return
-
-    # ¿Está corrigiendo una inferencia? (la deducción original falló → cuenta como descarte)
-    inf_id = context.user_data.pop("corrigiendo_inferencia", None)
-    if inf_id:
-        inf = await memory.get_inferencia(inf_id)
-        await memory.resolver_inferencia(inf_id, "corregida", correccion=texto)
-        await aprendizaje.registrar_resultado((inf or {}).get("dominio", ""), acertada=False)
-        await update.message.reply_text("Gracias. Actualizado. Eso es lo que importa.")
-        return
-
-    # ¿Está respondiendo con el monto de un gasto que dictó sin cifra? (no se pierde)
-    if finanzas.hay_gasto_incompleto():
-        r = await finanzas.completar_gasto_incompleto(texto)
-        if r:
-            await update.message.reply_text(r)
-            return
-        finanzas.limpiar_gasto_incompleto()  # no era el monto → sigo normal
 
     off = texto.lower().startswith(OFF_RECORD)
     history = context.chat_data.get("history", [])
@@ -209,13 +277,8 @@ async def manejar_voz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         except OSError:
             pass
 
-    # ¿Voz con el monto de un gasto que quedó sin cifra? (antes de los MITs: solo consume si es un monto)
-    if finanzas.hay_gasto_incompleto():
-        r = await finanzas.completar_gasto_incompleto(texto)
-        if r:
-            await update.message.reply_text(f"_{texto}_\n\n{r}", parse_mode="Markdown")
-            return
-        finanzas.limpiar_gasto_incompleto()
+    if await _procesar_entrada(update, context, texto, es_voz=True):
+        return
 
     # Si el cierre está esperando los MITs de mañana, esta voz son los MITs.
     hoy = datetime.now(settings.tz).strftime("%Y-%m-%d")

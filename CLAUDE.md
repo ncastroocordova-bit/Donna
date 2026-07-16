@@ -13,9 +13,16 @@ Python monolito · `python-telegram-bot` · Supabase + pgvector · Anthropic SDK
 - `modules/` (un prefijo por módulo): `salud` (`sal_`), `finanzas` (`fin_`), `compras` (`cmp_`), `recordatorios` (`rec_`), `correo`/`spam` (`cor_`), productividad/reconciliación (`prod_`), `aprendizaje` (`apr_`), `proactividad`, `familia` (`fam_`), `proyectos`. Dormidos: `tiempo` (`metas` puede despertar para las metas financieras de `fin_`).
 - `migrations/` 001–011 · `prompts/` (constitution, anchors, capacidades) · `tests/` (evals.py, casos.yaml) · `setup_sheets.py`.
 
+## Dos sombreros, dos planillas (canon v8)
+Donna trabaja con **dos sombreros**, cada uno en su propia planilla de Google Sheets:
+- **Sombrero Donna (vida)** — planilla `GOOGLE_SHEET_ID`: recordatorios, salud, familia, correo, productividad y compras. Hojas: Diario, Tareas, Proyectos, Recordatorios, Reconciliacion, Semanal, Compras, Ideas, ⚙️ Config.
+- **Sombrero Louis (plata)** — planilla `GOOGLE_SHEET_ID_LOUIS`: finanzas + estados de cuenta. Hojas: Transacciones, Categorias, Tarjetas y Deuda, Dashboard, Comparativo, Metas, Compras_Detalle, Deuda_Mensual.
+
+En el código: todo lo de vida usa el id por defecto (`sheets.vida_id()`); finanzas y estados de cuenta pasan **siempre** `sheets.fin_id()` (Louis). Si `GOOGLE_SHEET_ID_LOUIS` está vacío, `fin_id()` cae a la planilla Donna (modo single-workbook) — nada se rompe antes de migrar. `setup_sheets.py` asegura `TABS_DONNA` contra Donna y `TABS_LOUIS` contra Louis. **Cable cruzado a vigilar:** `Compras_Detalle` lo escribe Louis (finanzas) y lo leerá **Compras Fase 2** — esa lectura debe pasar `sheet_id=sheets.fin_id()` explícito (cruza de Donna a Louis).
+
 ## Dos capas de datos (NO las mezcles)
-Donna tiene dos almacenes con roles distintos:
-- **Google Sheets = los registros (lo que pasó y lo que Nico ve/edita).** Un workbook **Donna** (ver `Donna_Canonico.xlsx`): hojas de vida (Diario, Tareas, Proyectos, Recordatorios, Reconciliacion, Semanal, Compras, Config) + finanzas (Transacciones, Categorias, Tarjetas y Deuda, Dashboard, Comparativo, Metas, Compras_Detalle). Estado y registros, legibles para Nico. El esquema lo fija `Donna_Canonico.xlsx`; `setup_sheets.py` debe calzar con él.
+Ortogonal a los dos sombreros: cada planilla es "registros"; Supabase es "aprendizaje".
+- **Google Sheets = los registros (lo que pasó y lo que Nico ve/edita).** Repartidos en las dos planillas de arriba (Donna + Louis; ver `Donna_Canonico.xlsx` para el esquema). Estado y registros, legibles para Nico. El esquema lo fija `Donna_Canonico.xlsx`; `setup_sheets.py` debe calzar con él.
 - **Supabase = lo que Donna APRENDE de esos registros.** `perfil`, `memoria` episódica (+ embeddings Voyage/pgvector), `inferencias`, `compromisos`, `aprendizaje` (calibración, factor de optimismo, lookup de correcciones). No es legible para Nico ni reemplaza los registros.
 
 **Flujo (una sola dirección para aprender):** registros en Sheets → Donna lee → infiere/calibra → **guarda el aprendizaje en Supabase** → aconseja usando esa memoria. Regla dura: el aprendizaje (patrones, ratios, inferencias) **se persiste en Supabase, nunca en el Sheet**. El Sheet puede mostrar un *resultado* (p. ej. `Factor_Optimismo` en `Semanal` es una lectura), pero el modelo que lo produce vive en Supabase. Y al revés: los registros crudos viven en Sheets, no en Supabase.
