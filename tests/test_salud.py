@@ -13,6 +13,41 @@ Cubren los criterios del roadmap (ficha Salud, E8):
 """
 import asyncio
 
+from core import flows as _flows_chips
+
+
+# ───────────────────────── chips de comida (rango elegido por Nico) ─────────────────────────
+
+def test_chips_primera_comida_cubre_6_a_12():
+    vals = [v for _, v in _flows_chips.CHIPS_PRIMERA_COMIDA]
+    assert vals[0] == "06:00" and vals[-1] == "12:00" and len(vals) == 7
+
+
+def test_chips_ultima_comida_cruza_medianoche():
+    """18..23 + 00 + 01: comer pasada la medianoche es real (noche de producción) y el rango
+    debe cubrirlo. La ventana la resuelve _ventana_minutos sumando 24h, no un negativo."""
+    vals = [v for _, v in _flows_chips.CHIPS_COMIDA]
+    assert vals[0] == "18:00" and vals[-2:] == ["00:00", "01:00"] and len(vals) == 8
+
+
+def test_ventana_con_ultima_comida_pasada_medianoche():
+    from modules import salud as _s
+    assert _s._ventana_minutos("09:00", "01:00") == 16 * 60      # 16h, no negativo
+
+
+# ───────────────────────── guardián del peso ─────────────────────────
+
+def test_parece_peso_acepta_formatos_reales():
+    from modules import salud as _s
+    assert all(_s.parece_peso(x) for x in ["82", "82,5", "82.5", "82.5 kg", " 80 kilos "])
+
+
+def test_parece_peso_rechaza_lo_que_no_es_un_peso():
+    """Si Nico contesta otra cosa mientras Donna espera el peso, se suelta hacia el cerebro en
+    vez de anotar un número inventado."""
+    from modules import salud as _s
+    assert not any(_s.parece_peso(x) for x in ["¿cómo va mi deuda?", "nada", "", "5", "2026"])
+
 from modules import salud
 
 

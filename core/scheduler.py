@@ -23,6 +23,16 @@ logger = logging.getLogger(__name__)
 HOJA_CONFIG = "⚙️ Config"
 
 
+def _hoy_str() -> str:
+    return datetime.now(settings.tz).strftime("%Y-%m-%d")
+
+
+def es_domingo(ahora: datetime | None = None) -> bool:
+    """Domingo = weekday() 6 (stdlib). Ojo: NO es la convención de PTB en `run_daily(days=...)`,
+    donde 0=domingo — dos convenciones distintas conviven en este archivo a propósito."""
+    return (ahora or datetime.now(settings.tz)).weekday() == 6
+
+
 async def _mes_config() -> int | None:
     """Lee 'Mes activo' del ⚙️ Config (int) o None si no está / no se puede leer (C2)."""
     try:
@@ -150,14 +160,12 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
     intro = await _texto_cierre()
     # 1) Panel único de toques (hábitos + ánimo + MIT).
     await flows.enviar_panel_cierre(context.bot, chat, intro)
-    # 2) MITs de mañana por voz (la próxima nota de voz se interpreta como MITs).
-    context.bot_data["esperando_mits"] = datetime.now(settings.tz).strftime("%Y-%m-%d")
-    await context.bot.send_message(chat, frases.frase("mits_voz"))
-    # 2.5) Evento contextual (E8): lo que Nico no controló hoy, para que el correlador no lo
-    # confunda con un patrón. Conversacional — no bloquea el panel ni cuenta contra Proactividad.
-    await context.bot.send_message(chat, frases.frase("evento_contextual"))
-    # 2.6) Peso (E8): se pregunta en cada cierre.
-    await context.bot.send_message(chat, frases.frase("peso_cierre"))
+    # 2) Cadena de preguntas abiertas: MITs → evento contextual → peso (solo domingo). UNA a la
+    # vez. Antes las tres salían de corrido y `esperando_mits` se tragaba cualquier nota de voz:
+    # contestar el peso por audio lo guardaba como MIT. La cadena la avanza main._procesar_entrada
+    # (el punto por el que pasan texto Y voz), así cada respuesta cae donde corresponde.
+    context.bot_data["cierre_cadena"] = {"paso": "mits", "fecha": _hoy_str()}
+    await context.bot.send_message(chat, frases.frase("mits"))
     # 3) Digest financiero del día.
     await flows.enviar_digest(context.bot, chat)
     # 3.5) La espina aprende de la plata (perfil + inferencia de deuda con su dato).

@@ -302,8 +302,21 @@ async def derivar_sueno_de_ventana(fecha: str | None = None) -> str | None:
 _EVENTO_NULO = {"no", "nada", "no pasó nada", "no paso nada", "ninguna", "ninguno", "todo normal", "nada raro"}
 
 
+def parece_peso(texto: str) -> bool:
+    """¿Este mensaje tiene forma de un peso en kg? Guardián de la cadena del cierre: si Nico
+    contesta otra cosa (una pregunta, un comentario) mientras Donna espera el peso, se suelta y
+    sigue al cerebro en vez de anotarse como un número inventado. Acepta '82', '82,5', '82.5 kg'."""
+    t = str(texto or "").strip().lower().removesuffix("kg").removesuffix("kilos").strip()
+    try:
+        valor = float(t.replace(",", "."))
+    except ValueError:
+        return False
+    return 20 < valor < 400          # rango humano: descarta un '5' suelto o un año
+
+
 async def registrar_peso(kg) -> str:
-    """Se pregunta en cada cierre (22:00) — igual acepta el registro cualquier día que Nico lo diga."""
+    """Se pregunta UNA vez por semana, en el cierre del domingo (antes era cada noche: se mueve
+    lento, no valía la fricción diaria) — igual acepta el registro cualquier día que Nico lo diga."""
     try:
         valor = float(str(kg).replace(",", "."))
     except (TypeError, ValueError):

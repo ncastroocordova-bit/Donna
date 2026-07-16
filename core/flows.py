@@ -19,8 +19,13 @@ from modules import spam as spam_mod
 logger = logging.getLogger(__name__)
 
 # Chips del cierre. Para las horas: (etiqueta, valor); el valor "HH:00" alimenta las ventanas.
-CHIPS_PRIMERA_COMIDA = [("9", "09:00"), ("10", "10:00"), ("11", "11:00"), ("12", "12:00")]   # primera comida
-CHIPS_COMIDA = [("18", "18:00"), ("19", "19:00"), ("20", "20:00"), ("21+", "21:00")]          # última comida
+# Horas completas (sin minutos, por canon). Rango elegido por Nico: primera 6-12, última 18-01.
+# La última cruza medianoche a propósito (00/01 = comió pasada la medianoche, típico de una noche
+# de producción): `salud._ventana_minutos` ya suma 24h cuando el fin es menor que el inicio, así
+# que "primera 09:00 → última 01:00" da 16h, no un negativo.
+CHIPS_PRIMERA_COMIDA = [(str(h), f"{h:02d}:00") for h in range(6, 13)]                        # 6..12
+CHIPS_COMIDA = [(f"{h % 24:02d}", f"{h % 24:02d}:00") for h in range(18, 26)]                 # 18..23, 00, 01
+CHIPS_POR_FILA = 4
 CHIPS_HORA_DORMI = ["22:30", "23:00", "00:00", "01:00", "02:00"]
 CHIPS_HORA_DESPERTAR = ["06:30", "07:00", "07:30", "08:00", "09:00"]
 HOJA_CONFIG = "⚙️ Config"
@@ -58,14 +63,20 @@ def teclado_cierre(estado: dict | None = None, mits: list[str] | None = None, fe
     def mk(label: str, on: bool) -> str:
         return ("✅ " + label) if on else label
 
+    def chips(emoji: str, campo: str, opciones: list[tuple[str, str]], prefijo: str) -> list[list]:
+        """Las horas de una comida, repartidas en filas de CHIPS_POR_FILA. El rango completo va
+        a la vista (no hay 'otra hora'): siempre 1 toque, nunca un paso extra."""
+        botones = [InlineKeyboardButton(mk(f"{emoji} {lbl}", e.get(campo) == val), callback_data=f"{prefijo}:{val}{suf}")
+                   for lbl, val in opciones]
+        return [botones[i:i + CHIPS_POR_FILA] for i in range(0, len(botones), CHIPS_POR_FILA)]
+
     filas = [
         [InlineKeyboardButton(mk("🏃 Hice ejercicio", e.get("ejercicio") == "si"), callback_data=f"hab:ejercicio:si{suf}"),
          InlineKeyboardButton(mk("🏃 Hoy no", e.get("ejercicio") == "no"), callback_data=f"hab:ejercicio:no{suf}")],
         [InlineKeyboardButton(mk("🧘 Medité", e.get("meditacion") == "si"), callback_data=f"hab:meditacion:si{suf}"),
          InlineKeyboardButton(mk("🧘 Hoy no", e.get("meditacion") == "no"), callback_data=f"hab:meditacion:no{suf}")],
-        # 🍳 primera comida (9–12) y 🍽️ última comida (18–21+), cada una en UNA fila horizontal.
-        [InlineKeyboardButton(mk(f"🍳 {lbl}", e.get("primera_comida") == val), callback_data=f"pcom:{val}{suf}") for lbl, val in CHIPS_PRIMERA_COMIDA],
-        [InlineKeyboardButton(mk(f"🍽️ {lbl}", e.get("comida") == val), callback_data=f"comida:{val}{suf}") for lbl, val in CHIPS_COMIDA],
+        *chips("🍳", "primera_comida", CHIPS_PRIMERA_COMIDA, "pcom"),
+        *chips("🍽️", "comida", CHIPS_COMIDA, "comida"),
         [InlineKeyboardButton(mk(f"Ánimo {n}", e.get("animo") == n), callback_data=f"animo:{n}{suf}") for n in ("1", "2", "3", "4")],
     ]
     for i, texto in enumerate(mits or []):

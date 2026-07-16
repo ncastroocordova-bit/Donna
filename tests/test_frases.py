@@ -9,9 +9,15 @@ def test_frase_siempre_del_pool():
 
 def test_frase_no_repite_la_ultima():
     # Con pools de ≥2 variantes, dos llamadas seguidas no dan la misma (evita la última usada).
-    a = frases.frase("mits_voz")
-    b = frases.frase("mits_voz")
+    a = frases.frase("mits")
+    b = frases.frase("mits")
     assert a != b
+
+
+def test_los_mits_no_empujan_un_solo_canal():
+    """Los MITs se contestan por texto O por voz: ninguna variante puede pedir solo audio."""
+    for f in frases.POOLS["mits"]:
+        assert "por voz:" not in f.lower()
 
 
 def test_frase_key_desconocido_es_vacio():

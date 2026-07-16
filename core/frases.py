@@ -18,11 +18,13 @@ POOLS = {
         "¿Y anoche, a qué hora te dormiste?",
         "Cuéntame la hora en que te dormiste anoche.",
     ],
-    "mits_voz": [
-        "Y por voz: dime tus 1 a 3 prioridades de mañana. 🎙️",
-        "¿Qué sí o sí tiene que pasar mañana? Grábamelo. 🎙️",
-        "Por voz: tus 1–3 imprescindibles de mañana. 🎙️",
-        "Dime en un audio qué es lo que mueve la aguja mañana. 🎙️",
+    # MITs y evento: texto o voz, como quiera Nico. La cadena del cierre (main._procesar_entrada)
+    # los captura igual por los dos canales, así que las frases no empujan un formato.
+    "mits": [
+        "Dime tus 1 a 3 prioridades de mañana — escríbelas o mándame un audio. 🎙️",
+        "¿Qué sí o sí tiene que pasar mañana? Escríbelo o grábamelo. 🎙️",
+        "Tus 1–3 imprescindibles de mañana: por texto o por voz, como prefieras. 🎙️",
+        "¿Qué mueve la aguja mañana? Dímelo escrito o en un audio. 🎙️",
     ],
     "evento_contextual": [
         "¿Hubo algo hoy fuera de tu control que te bajó el ánimo o no te dejó hacer lo planeado?",
@@ -30,11 +32,13 @@ POOLS = {
         "Fuera de lo tuyo: ¿algo hoy que se cruzó y no controlabas?",
         "¿Algo externo hoy que te haya movido el ánimo o los planes?",
     ],
-    "peso_cierre": [
-        "¿Cuánto marcaste hoy en la pesa?",
-        "Pásame tu peso de hoy.",
-        "¿Cuánto pesaste hoy?",
-        "Y el peso de hoy, ¿cuánto fue?",
+    # Peso: pasó de cada noche a UNA vez por semana (domingo) — se mueve lento, preguntarlo a
+    # diario era mucha fricción para poca señal nueva.
+    "peso_semanal": [
+        "Cierre de semana: ¿cuánto marcaste en la pesa?",
+        "Y lo de una vez por semana: tu peso, ¿cuánto fue?",
+        "Antes de cerrar la semana, pásame tu peso.",
+        "El peso de la semana, ¿en cuánto quedaste?",
     ],
 }
 

@@ -104,3 +104,54 @@ def test_revision_dominical_si_salud_falla_registra_incidente(monkeypatch):
 
     assert len(registrados) == 1
     assert registrados[0][0] == "job_resumen_semanal" and registrados[0][1] == "tool_excepcion"
+
+
+# ───────────────────────── cierre: cadena de una pregunta a la vez ─────────────────────────
+
+def _mock_cierre(monkeypatch):
+    """Silencia todo lo que el cierre toca salvo lo que se está probando."""
+    async def _nada(*a, **k):
+        return None
+    async def _ingerir():
+        return {"revisados": 0, "nuevos": 0}
+    async def _intro():
+        return "cerremos"
+    monkeypatch.setattr(scheduler.finanzas, "ingerir_gastos_email", _ingerir)
+    monkeypatch.setattr(scheduler, "_texto_cierre", _intro)
+    monkeypatch.setattr(scheduler.flows, "enviar_panel_cierre", _nada)
+    monkeypatch.setattr(scheduler.flows, "enviar_digest", _nada)
+    monkeypatch.setattr(scheduler.flows, "preguntar_inferencia_pendiente", _nada)
+    monkeypatch.setattr(scheduler.finanzas, "sembrar_espina", _nada)
+    monkeypatch.setattr(scheduler.correlador, "correr", _nada)
+    monkeypatch.setattr(scheduler.salud, "marcar_cierre", _nada)
+    monkeypatch.setattr(scheduler.memory, "marcar_job", _nada)
+
+
+class _CtxCierre(_CtxFake):
+    def __init__(self):
+        super().__init__()
+        self.bot_data = {}
+
+
+def test_cierre_pregunta_solo_los_mits_y_arma_la_cadena(monkeypatch):
+    """El cierre ya no dispara MITs + evento + peso de corrido: abre UNA pregunta y deja la
+    cadena armada. Con tres abiertas, un audio caía en la equivocada."""
+    _mock_cierre(monkeypatch)
+    ctx = _CtxCierre()
+    asyncio.run(scheduler.job_cierre(ctx))
+
+    assert ctx.bot_data["cierre_cadena"]["paso"] == "mits"
+    assert len(ctx.bot.enviados) == 1          # una sola pregunta abierta
+
+
+def test_cierre_ya_no_pregunta_el_peso(monkeypatch):
+    """El peso pasó a ser semanal (domingo). No puede volver a aparecer cada noche."""
+    _mock_cierre(monkeypatch)
+    ctx = _CtxCierre()
+    asyncio.run(scheduler.job_cierre(ctx))
+    assert not any("pesa" in t.lower() or "peso" in t.lower() for t in ctx.bot.enviados)
+
+
+def test_es_domingo_usa_la_convencion_stdlib():
+    assert scheduler.es_domingo(datetime(2026, 7, 19)) is True    # domingo
+    assert scheduler.es_domingo(datetime(2026, 7, 13)) is False   # lunes

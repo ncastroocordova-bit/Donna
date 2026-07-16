@@ -71,12 +71,22 @@ def test_teclado_cierre_ya_no_tiene_agua_ni_proteina():
     assert not any(c.startswith("hab:agua") or c.startswith("hab:proteina") for c in cbs)
 
 
-def test_teclado_cierre_ultima_comida_en_una_sola_fila():
+def test_teclado_cierre_ultima_comida_cubre_18_a_01():
+    """Reemplaza al test de 'una sola fila con 21+': el rango pasó a 18–01 en filas de 4, porque
+    la hora real de Nico se salía del rango viejo (y el '21+' escondía cualquier hora posterior)."""
     kb = flows.teclado_cierre(fecha="2026-07-01").inline_keyboard
     filas_comida = [row for row in kb if any("🍽" in b.text for b in row)]
-    assert len(filas_comida) == 1 and len(filas_comida[0]) == 4   # línea horizontal de 4
-    textos = [b.text for b in filas_comida[0]]
-    assert any("21+" in t for t in textos)                        # última opción es 21+
+    assert len(filas_comida) == 2                                  # 8 horas en filas de 4
+    textos = [b.text for row in filas_comida for b in row]
+    assert not any("+" in t for t in textos)                       # ya no hay hora-cajón
+    assert any(t.endswith(" 01") for t in textos)                  # llega hasta la 01:00
+
+
+def test_teclado_cierre_primera_comida_cubre_6_a_12():
+    kb = flows.teclado_cierre(fecha="2026-07-01").inline_keyboard
+    filas = [row for row in kb if any("🍳" in b.text for b in row)]
+    textos = [b.text for row in filas for b in row]
+    assert len(textos) == 7 and textos[0].endswith(" 6") and textos[-1].endswith(" 12")
 
 
 def test_chips_de_hora_dormi_y_despertar():

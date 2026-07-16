@@ -15,8 +15,14 @@ from telegram.ext import (
 )
 
 from config import settings
-from core import brain, correo, espera, flows, memory, voice
-from core.scheduler import DELAY_CORRELACION, job_correlacionar_una_vez, setup_scheduler, texto_brief_manual
+from core import brain, correo, espera, flows, frases, memory, voice
+from core.scheduler import (
+    DELAY_CORRELACION,
+    es_domingo,
+    job_correlacionar_una_vez,
+    setup_scheduler,
+    texto_brief_manual,
+)
 from modules import aprendizaje, finanzas, salud
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -31,6 +37,10 @@ ONBOARDING_PROMPT = (
     "a qué se dedica, su meta principal ahora, su situación de plata/deudas, y qué hábitos quiere que le siga. "
     "A medida que te vaya contando, guarda cada hecho estable con actualizar_perfil. Con tu voz, no como formulario.]"
 )
+
+
+def _hoy_str() -> str:
+    return datetime.now(settings.tz).strftime("%Y-%m-%d")
 
 
 def _es_nico(update: Update) -> bool:
@@ -103,8 +113,7 @@ async def cmd_cierre(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not _es_nico(update):
         return
     await flows.enviar_panel_cierre(context.bot, update.effective_chat.id, "Cerremos el día.")
-    context.bot_data["esperando_mits"] = datetime.now(settings.tz).strftime("%Y-%m-%d")
-    await update.message.reply_text("Y por voz: tus 1 a 3 MITs de mañana. 🎙️")
+    await _preguntar_paso(update, context, "mits", "mits")   # arranca la misma cadena del job
 
 
 async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -211,6 +220,69 @@ _MANEJADORES_ESPERA = {
 }
 
 
+# ───────────────────────── Cadena del cierre (MITs → evento → peso) ─────────────────────────
+# El cierre hace UNA pregunta abierta a la vez y la siguiente sale recién cuando la anterior se
+# contesta. Antes las tres salían juntas y el flag de MITs se tragaba cualquier audio: contestar
+# el peso por voz lo guardaba como MIT. Como esto vive en `_procesar_entrada`, texto y voz
+# funcionan igual sin código duplicado.
+
+def _parece_respuesta_abierta(texto: str) -> bool:
+    """¿Tiene pinta de RESPUESTA y no de otra cosa? Una pregunta de Nico ('¿cómo va mi deuda?')
+    en medio del cierre no es su MIT: se suelta y sigue al cerebro, y la cadena queda esperando."""
+    t = (texto or "").strip()
+    return bool(t) and not t.endswith("?")
+
+
+async def _preguntar_paso(update, context, paso: str, frase_key: str) -> None:
+    context.bot_data["cierre_cadena"] = {"paso": paso, "fecha": _hoy_str()}
+    await update.message.reply_text(frases.frase(frase_key))
+
+
+async def _resolver_cadena_cierre(update, context, texto: str, eco) -> bool:
+    """True si este mensaje resolvió un paso de la cadena (no debe seguir al cerebro)."""
+    cad = context.bot_data.get("cierre_cadena")
+    if not cad or cad.get("fecha") != _hoy_str():
+        return False
+    paso = cad.get("paso")
+
+    if paso == "mits":
+        if not _parece_respuesta_abierta(texto):
+            return False
+        await eco()
+        await update.message.reply_text(await _guardar_mits(texto))
+        await _preguntar_paso(update, context, "evento", "evento_contextual")
+        return True
+
+    if paso == "evento":
+        if not _parece_respuesta_abierta(texto):
+            return False
+        await eco()
+        try:
+            r = await salud.evento_contextual(texto)
+        except Exception:
+            logger.exception("No pude guardar el evento contextual")
+            r = ""
+        # `evento_contextual` devuelve '' cuando Nico dice que no pasó nada: no hay nada que
+        # guardar, pero la cadena igual avanza (respondió).
+        await update.message.reply_text(r or "Ok, nada que anotar entonces.")
+        if es_domingo():
+            await _preguntar_paso(update, context, "peso", "peso_semanal")
+        else:
+            context.bot_data.pop("cierre_cadena", None)
+        return True
+
+    if paso == "peso":
+        if not salud.parece_peso(texto):
+            return False        # no era el peso (una pregunta, un comentario) → sigue al cerebro
+        await eco()
+        await update.message.reply_text(await salud.registrar_peso(texto))
+        context.bot_data.pop("cierre_cadena", None)
+        return True
+
+    context.bot_data.pop("cierre_cadena", None)
+    return False
+
+
 async def _procesar_entrada(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str, es_voz: bool = False) -> bool:
     """¿Este mensaje resuelve algo que Donna estaba esperando? True si quedó consumido acá (no
     debe seguir al cerebro). Cubre, en orden: el gasto sin monto legible (global de finanzas, sin
@@ -230,6 +302,9 @@ async def _procesar_entrada(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             return True
         finanzas.limpiar_gasto_incompleto()  # no era el monto → sigue normal
         return False
+
+    if await _resolver_cadena_cierre(update, context, texto, eco):
+        return True
 
     esp = espera.activa(context.user_data)
     if esp is None:
@@ -287,13 +362,9 @@ async def manejar_voz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if await _procesar_entrada(update, context, texto, es_voz=True):
         return
-
-    # Si el cierre está esperando los MITs de mañana, esta voz son los MITs.
-    hoy = datetime.now(settings.tz).strftime("%Y-%m-%d")
-    if context.bot_data.get("esperando_mits") == hoy:
-        context.bot_data.pop("esperando_mits", None)
-        await update.message.reply_text(f"_{texto}_\n\n" + await _guardar_mits(texto), parse_mode="Markdown")
-        return
+    # Los MITs ya NO se capturan acá: la cadena del cierre los toma en _procesar_entrada, que
+    # ven por igual el texto y la voz. Antes esto vivía solo en el handler de voz y por eso los
+    # MITs eran voice-only (y se tragaban el audio del peso).
 
     history = context.chat_data.get("history", [])
     respuesta, history, tools, _ = await brain.responder(texto, history, _return_tools=True)
