@@ -41,6 +41,18 @@ async def _mes_config() -> int | None:
 
 # ───────────────────────── Brief 8:00 (read-only) ─────────────────────────
 
+# En español y a mano: `%A` depende del locale del sistema y en Railway saldría en inglés.
+DIAS_ES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+
+
+def _encabezado_fecha(ahora: datetime | None = None) -> str:
+    """Día y fecha del brief, EXACTOS y deterministas — no se los dejamos al LLM. El punto es
+    que Nico pueda verificar de un vistazo que Donna está parada en el día correcto; si esto
+    lo redactara el cerebro, sería justo lo que no se puede auditar."""
+    d = ahora or datetime.now(settings.tz)
+    return f"📅 {DIAS_ES[d.weekday()].capitalize()} {d.strftime('%d/%m')}"
+
+
 async def _texto_brief() -> str:
     eventos = await agenda.eventos_de_hoy()
     ag = "; ".join(f"{e['hora']} {e['titulo']}" for e in eventos) or "sin eventos"
@@ -63,7 +75,9 @@ async def _texto_brief() -> str:
         "No le pidas datos: el sueño se lo pregunto aparte con un botón. "
         "Varía tu apertura, el ángulo y el remate respecto a otros días: no repitas la misma fórmula."
     )
-    return await brain.generar(prompt)
+    # El encabezado va FUERA del prompt, antepuesto al texto: así el día/fecha nunca depende de
+    # que el cerebro se acuerde de ponerlo ni de que lo escriba bien.
+    return f"{_encabezado_fecha()}\n\n{await brain.generar(prompt)}"
 
 
 async def texto_brief_manual() -> str:
@@ -196,8 +210,15 @@ async def job_resumen_semanal(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         r = await salud.generar_resumen_semanal()
         logger.info("Resumen semanal escrito (%s): score=%s", r["semana"], r["score"].get("score"))
-    except Exception:
+    except Exception as e:
+        # Antes esto era un `return` mudo: si Salud fallaba, el domingo no llegaba NADA y Nico
+        # nunca se enteraba de por qué. Ahora queda como incidente → el heartbeat se lo dice en
+        # el brief del lunes. El silencio es el peor modo de falla.
         logger.exception("No pude generar el resumen semanal de Salud")
+        await diagnostico.registrar(
+            "job_resumen_semanal", "tool_excepcion",
+            "la revisión dominical no se pudo generar", error_texto=repr(e),
+        )
         return
     try:
         texto = await _texto_revision_semanal(r)
@@ -205,8 +226,12 @@ async def job_resumen_semanal(context: ContextTypes.DEFAULT_TYPE) -> None:
             await context.bot.send_message(chat, texto)
         n = await flows.enviar_cruces_correlador(context.bot, chat)
         logger.info("Revisión semanal enviada a Nico (%d cruce(s) del correlador).", n)
-    except Exception:
+    except Exception as e:
         logger.exception("No pude enviar la revisión semanal a Nico")
+        await diagnostico.registrar(
+            "job_resumen_semanal", "tool_excepcion",
+            "la revisión dominical se generó pero no te la pude enviar", error_texto=repr(e),
+        )
     await memory.marcar_job("resumen_semanal")
 
 
