@@ -16,7 +16,7 @@ from telegram.ext import (
 
 from config import settings
 from core import brain, correo, espera, flows, memory, voice
-from core.scheduler import DELAY_CORRELACION, job_correlacionar_una_vez, setup_scheduler
+from core.scheduler import DELAY_CORRELACION, job_correlacionar_una_vez, setup_scheduler, texto_brief_manual
 from modules import aprendizaje, finanzas, salud
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -88,6 +88,14 @@ async def cmd_perfil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         lineas = "\n".join(f"{marca.get(i.get('estado'), '·')} {i['contenido']}" for i in inferencias)
         partes.append("Y algunos patrones que vengo notando (✓ confirmado, · por validar):\n" + lineas)
     await update.message.reply_text("\n\n".join(partes))
+
+
+async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """El brief de las 8:00 a demanda: para verlo si se te pasó y para verificar el heartbeat
+    sin esperar a mañana. Solo lectura — no consume el brief programado (ver texto_brief_manual)."""
+    if not _es_nico(update):
+        return
+    await update.message.reply_text(await texto_brief_manual())
 
 
 async def cmd_cierre(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -335,6 +343,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("onboarding", cmd_onboarding))
     app.add_handler(CommandHandler("perfil", cmd_perfil))
+    app.add_handler(CommandHandler("brief", cmd_brief))
     app.add_handler(CommandHandler("cierre", cmd_cierre))
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CommandHandler("spam", cmd_spam))

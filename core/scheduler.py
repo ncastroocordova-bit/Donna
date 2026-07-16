@@ -66,6 +66,17 @@ async def _texto_brief() -> str:
     return await brain.generar(prompt)
 
 
+async def texto_brief_manual() -> str:
+    """El MISMO brief de las 8:00, a demanda (comando /brief). Reutiliza `_texto_brief` a
+    propósito: si divergieran, `/brief` dejaría de servir para verificar lo que Nico recibe
+    de verdad.
+
+    **Estrictamente solo lectura.** NO marca `Brief ✓` en Diario ni `marcar_job("brief")`:
+    si lo hiciera, el chequeo de resiliencia creería que el brief del día ya salió y el de
+    las 8:00 **no se enviaría**. Pedirlo a mano nunca puede consumir el programado."""
+    return await _texto_brief()
+
+
 async def job_brief(context: ContextTypes.DEFAULT_TYPE) -> None:
     texto = await _texto_brief()
     await context.bot.send_message(settings.nico_telegram_id, texto)
