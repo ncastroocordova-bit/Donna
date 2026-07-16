@@ -49,6 +49,7 @@ async def _texto_brief() -> str:
                     if correo.disponible() and correo.gmail_token_invalido() else "")
     señales = " ".join(s for s in [
         aviso_correo,
+        await diagnostico.senal_heartbeat(),   # heartbeat: Donna avisa sola si algo se rompió
         await finanzas.senal_finanzas(),
         await finanzas.senal_pendientes_digest(),
         await salud.senal_salud(),

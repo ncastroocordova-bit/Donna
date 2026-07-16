@@ -101,6 +101,25 @@ async def cerrar(incidente_id: int) -> bool:
         return False
 
 
+# ───────────────────────── Heartbeat: el brief avisa solo (push) ─────────────────────────
+
+async def senal_heartbeat() -> str:
+    """Señal PUSH para el brief de las 8:00: si hay incidentes abiertos, Donna los saca sola,
+    sin que Nico tenga que preguntar con `diag_estado`. **Silenciosa si todo está en orden** —
+    no rellena el brief (contrato §2: señal destilada; canon: no afirmar por afirmar). Degrada
+    elegante: `pendientes()` ya devuelve [] si Supabase se cae, así que aquí sale '' y el brief
+    sigue sin el heartbeat."""
+    incs = await pendientes()
+    if not incs:
+        return ""
+    n = len(incs)
+    top = incs[0]
+    freq = f" (va {top['frecuencia']}x)" if top.get("frecuencia", 1) > 1 else ""
+    plural = "incidente" if n == 1 else "incidentes"
+    return (f"AVISO REAL para decirle a Nico en tu voz (breve, sin stacktrace): tengo {n} {plural} "
+            f"abierto(s) que arreglar con Claude Code; el más repetido es «{top['resumen']}»{freq}.")
+
+
 # ───────────────────────── Tool: ¿qué se ha roto? ─────────────────────────
 
 async def _t_estado(inp: dict) -> str:

@@ -101,3 +101,29 @@ def test_diag_estado_sin_incidentes(monkeypatch):
         return []
     monkeypatch.setattr(diagnostico, "pendientes", _pend)
     assert "orden" in asyncio.run(diagnostico._t_estado({})).lower()
+
+
+# ───────────────────────── heartbeat (push al brief) ─────────────────────────
+
+def test_heartbeat_avisa_con_incidentes(monkeypatch):
+    async def _pend():
+        return [{"id": 7, "resumen": "rec_agregar tiró excepción", "frecuencia": 3},
+                {"id": 8, "resumen": "otra cosa", "frecuencia": 1}]
+    monkeypatch.setattr(diagnostico, "pendientes", _pend)
+    s = asyncio.run(diagnostico.senal_heartbeat())
+    assert "2 incidentes" in s and "rec_agregar tiró excepción" in s and "3x" in s
+    assert "Traceback" not in s          # nunca un stacktrace al brief
+
+
+def test_heartbeat_silencioso_sin_incidentes(monkeypatch):
+    async def _pend():
+        return []
+    monkeypatch.setattr(diagnostico, "pendientes", _pend)
+    assert asyncio.run(diagnostico.senal_heartbeat()) == ""   # no rellena el brief
+
+
+def test_heartbeat_degrada_si_supabase_cae(monkeypatch):
+    async def _boom():
+        raise RuntimeError("supabase down")
+    monkeypatch.setattr(diagnostico.memory, "_get_db", _boom)
+    assert asyncio.run(diagnostico.senal_heartbeat()) == ""   # pendientes() degrada → ''
