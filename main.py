@@ -171,7 +171,8 @@ async def _resolver_correccion_tx(update, context, payload: dict, texto: str, ec
         return False
     await eco()  # el eco de voz sale SOLO tras validar que este mensaje sí resuelve la espera
     await update.message.reply_text(await flows.aplicar_correccion_tx(payload["buffer_id"], texto))
-    await flows.enviar_digest(context.bot, update.effective_chat.id)  # re-muestra con "Aceptar todo"
+    # El digest vivo se re-dibuja EN SU LUGAR (no se apila otro digest en el chat).
+    await flows.refrescar_digest(context.bot, update.effective_chat.id)
     return True
 
 
@@ -183,9 +184,10 @@ async def _resolver_correccion_item_cat(update, context, payload: dict, texto: s
     it = await flows.corregir_categoria_item(buf, idx, texto) if buf is not None and idx is not None else None
     await eco()
     if it:
-        await update.message.reply_text(flows._texto_item(it), reply_markup=flows._teclado_item_editor(it))
+        await update.message.reply_text(f"«{it.get('item', '')}» → {it.get('categoria', '')}. Quedó.")
     else:
         await update.message.reply_text("No pude actualizar ese ítem.")
+    await flows.refrescar_digest(context.bot, update.effective_chat.id)
     return True
 
 
@@ -195,8 +197,9 @@ async def _resolver_desglose_cargo(update, context, payload: dict, texto: str, e
     cargo_id = payload["buffer_id"]
     await eco()
     await update.message.reply_text(await finanzas.desglosar_cargo(cargo_id, texto))
-    context.user_data["items_buffer"] = cargo_id
-    await flows.enviar_panel_items(context.bot, update.effective_chat.id, cargo_id)  # abre el editor por ítem
+    # El digest vuelve actualizado (la línea ya muestra sus ítems); si algún ítem quedó dudoso,
+    # el botón 📋 lo trae con su grilla de excepciones.
+    await flows.refrescar_digest(context.bot, update.effective_chat.id)
     return True
 
 
@@ -313,6 +316,9 @@ async def _procesar_entrada(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         espera.limpiar(context.user_data)
         await eco()
         await update.message.reply_text(_CANCELAR_MSGS.get(esp["tipo"], "Ok, lo dejamos."))
+        if esp["tipo"] in ("correccion_tx", "correccion_item_cat", "desglose_cargo"):
+            # El ancla del digest quedó mutada en modo pregunta → restaurarla a la vista normal.
+            await flows.refrescar_digest(context.bot, update.effective_chat.id)
         return True
     manejador = _MANEJADORES_ESPERA.get(esp["tipo"])
     if manejador is None:

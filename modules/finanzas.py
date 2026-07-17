@@ -451,6 +451,43 @@ async def _categorias_reales() -> dict:
     return _cache_categorias
 
 
+async def categorias_lista() -> list[str]:
+    """El catálogo real de categorías, en el orden de la hoja `Categorias` (el orden de Nico).
+    Es la fuente de los chips del digest: el callback lleva el ÍNDICE en esta lista (tope de
+    64 bytes de callback_data; un nombre con tilde no cabe con el uuid al lado)."""
+    return list((await _categorias_reales()).values())
+
+
+async def sugerencias_categoria(comercio: str, actual: str = "") -> list[str]:
+    """Top-3 de categorías para corregir una línea del digest, sin teclado. Prioridad:
+    (1) lo APRENDIDO de este comercio (tabla `comercios`, por frecuencia — cada corrección de
+    Nico la alimenta, así que esto acierta más con el uso), (2) el match por keywords,
+    (3) el catálogo en su orden. **Excluye la categoría actual**: si Nico está corrigiendo,
+    la actual es justo la equivocada."""
+    todas = await categorias_lista()
+    candidatas: list[str] = []
+    c = _norm(comercio)
+    if c:
+        try:
+            for r in await memory.get_comercios():
+                patron = _norm(r.get("patron", ""))
+                if patron and patron in c and r.get("categoria"):
+                    candidatas.append(str(r["categoria"]).strip())
+        except Exception:
+            logger.exception("sugerencias_categoria: no pude leer comercios (sigo sin aprendidas)")
+    candidatas.append(_categoria_de(comercio))
+    candidatas += todas
+    actual_n = _norm(actual)
+    out: list[str] = []
+    for cat in candidatas:
+        canon = (await _validar_categoria(cat))[0] if cat else ""
+        if canon and canon not in out and _norm(canon) != actual_n and canon in todas:
+            out.append(canon)
+        if len(out) == 3:
+            break
+    return out
+
+
 async def _validar_categoria(cat: str) -> tuple[str, bool]:
     """(categoria_canonica, era_valida). Match exacto contra Categorias (sin tildes/mayúsculas),
     luego sinónimos conocidos; si no calza, cae a 'Otro Gasto' con era_valida=False → el digest

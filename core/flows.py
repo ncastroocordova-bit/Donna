@@ -141,7 +141,27 @@ async def enviar_panel_cierre(bot, chat_id: int, intro: str) -> None:
     await bot.send_message(chat_id, intro, reply_markup=teclado_cierre(mits=mits, fecha=_hoy()))
 
 
-# ───────────────────────── Digest financiero ─────────────────────────
+# ───────────────────────── Digest financiero — el digest vivo ─────────────────────────
+# UN solo mensaje que muta en su lugar (el mismo patrón del panel del cierre): vista principal
+# ⇄ corregir una línea (chips de categoría) ⇄ ítems (solo excepciones). Regla de commit único:
+# NADA se escribe a la planilla hasta el único «Aceptar todo» — los cambios intermedios viven
+# en el buffer. Regla de microcopy: si un texto dice qué tocar, debía ser un botón.
+
+_digest_msg: dict[int, int] = {}   # chat_id → message_id del digest anclado (memoria del proceso)
+_revisados: set[str] = set()       # buffers cuyos ítems Nico ya revisó (marca ✓; muere al aceptar)
+
+
+def _item_dudoso(it: dict) -> bool:
+    """¿Este ítem necesita el ojo de Nico? Sin nombre, sin categoría, o precio ilegible. El
+    resto ya viene clasificado por el parseo: el flujo corrige EXCEPCIONES, no re-revisa todo
+    (de ~32 toques por boleta a 2-4)."""
+    nombre = str(it.get("item") or "").strip()
+    try:
+        precio = float(it.get("precio") or 0)
+    except (TypeError, ValueError):
+        precio = 0
+    return not nombre or nombre == "—" or precio <= 0 or not str(it.get("categoria") or "").strip()
+
 
 def _teclado_digest(d: dict) -> InlineKeyboardMarkup:
     filas = [[InlineKeyboardButton("✅ Aceptar todo", callback_data="digest:aceptar")]]
@@ -150,65 +170,68 @@ def _teclado_digest(d: dict) -> InlineKeyboardMarkup:
         fila = [InlineKeyboardButton(etiqueta, callback_data=f"digest:fix:{m['id']}")]
         if m.get("tipo", "Gasto") == "Gasto":
             if m.get("n_items"):  # ya detallado → revisar/corregir ítems
-                fila.append(InlineKeyboardButton(f"📋 {m['n_items']} ítems", callback_data=f"digest:items:{m['id']}"))
+                marca = "✓" if m["id"] in _revisados else str(m["n_items"])
+                fila.append(InlineKeyboardButton(f"📋 {marca} ítems", callback_data=f"digest:items:{m['id']}"))
             else:                 # sin detalle → ofrecer detallar (foto o dictado)
                 fila.append(InlineKeyboardButton("📝 Detallar", callback_data=f"digest:detallar:{m['id']}"))
         filas.append(fila)
     return InlineKeyboardMarkup(filas)
 
 
-# ───────────────────────── Editor de ítems (v3, mini-panel) ─────────────────────────
+# ───────────────────────── Ítems: grilla de excepciones (digest vivo) ─────────────────────────
+# Reemplaza al mini-panel entrar→editar→volver. El texto muestra TODOS los ítems con su marca
+# (✓ claro / ⚠️ por revisar); la grilla de botones trae SOLO los dudosos — cada fila es el ítem
+# con toggles que ciclan al toque (deseo, despensa/perecible) y su nombre abre chips de
+# categoría. «Ver todos» expande la grilla completa para auditar.
 
 _DESEOS = ["Necesario", "Inversion", "Deseo"]
 
 
-def _texto_panel_items(comercio: str, items: list[dict]) -> str:
+def _sig_deseo(actual: str) -> str:
+    """El deseo que sigue en el ciclo Necesario→Inversion→Deseo→Necesario (toggle de 1 toque)."""
+    try:
+        return _DESEOS[(_DESEOS.index(str(actual).strip()) + 1) % len(_DESEOS)]
+    except ValueError:
+        return _DESEOS[0]
+
+
+def _texto_items(m: dict, items: list[dict]) -> str:
+    dudosos = sum(1 for it in items if _item_dudoso(it))
     lineas = []
-    for i, it in enumerate(items, 1):
-        pred = "📦 despensa" if it.get("predecible") else "🥖 perecible"
-        lineas.append(f"{i}) {it.get('item', '') or '—'} · {finanzas.clp(it.get('precio', 0))} · "
-                      f"{it.get('categoria', '')} · {it.get('intencion', '')} · {pred}")
-    return (f"Detalle de {comercio or 'la compra'} — {len(items)} ítem(s). "
-            f"Toca uno para corregir su deseo, categoría o si es de despensa:\n\n" + "\n".join(lineas))
+    for it in items:
+        marca = "⚠️" if _item_dudoso(it) else "✓"
+        pred = "📦" if it.get("predecible") else "🥖"
+        lineas.append(f"{marca} {it.get('item') or '—'} · {finanzas.clp(it.get('precio', 0))} · "
+                      f"{it.get('categoria') or '¿?'} · {it.get('intencion') or '¿?'} {pred}")
+    cab = (f"«{m.get('comercio') or m.get('categoria', '')}» — {len(items)} ítem(s): "
+           f"{len(items) - dudosos} claros, {dudosos} por revisar.")
+    return cab + "\n\n" + "\n".join(lineas)
 
 
-def _teclado_panel_items(items: list[dict]) -> InlineKeyboardMarkup:
-    filas = [[InlineKeyboardButton(f"✏️ {i + 1}. {(it.get('item') or '—')[:24]}", callback_data=f"it:p:{i}")]
-             for i, it in enumerate(items[:12])]
-    filas.append([InlineKeyboardButton("✅ Listo", callback_data="it:ok")])
+def _teclado_items(mid: str, items: list[dict], ver_todos: bool) -> InlineKeyboardMarkup:
+    v = "a" if ver_todos else "e"
+    idxs = [i for i, it in enumerate(items) if ver_todos or _item_dudoso(it)][:10]
+    filas = []
+    for i in idxs:
+        it = items[i]
+        filas.append([
+            InlineKeyboardButton(f"✏️ {(str(it.get('item') or '—'))[:14]}", callback_data=f"dgi:c:{mid}:{i}:{v}"),
+            InlineKeyboardButton(f"{(it.get('intencion') or '¿?')[:9]}▸", callback_data=f"dgi:d:{mid}:{i}:{v}"),
+            InlineKeyboardButton("📦" if it.get("predecible") else "🥖", callback_data=f"dgi:p:{mid}:{i}:{v}"),
+        ])
+    if not ver_todos and len(idxs) < len(items):
+        filas.append([InlineKeyboardButton(f"👀 Ver los {len(items)}", callback_data=f"dgi:all:{mid}")])
+    filas.append([InlineKeyboardButton("✅ Listo", callback_data=f"dgi:ok:{mid}")])
     return InlineKeyboardMarkup(filas)
 
 
-def _teclado_item_editor(it: dict) -> InlineKeyboardMarkup:
-    d, p = it.get("intencion", ""), it.get("predecible")
-
-    def mk(label, on):
-        return ("✅ " + label) if on else label
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(mk(x, d == x), callback_data=f"it:d:{x}") for x in _DESEOS],
-        [InlineKeyboardButton(mk("📦 Despensa", p is True), callback_data="it:pr:1"),
-         InlineKeyboardButton(mk("🥖 Perecible", p is False), callback_data="it:pr:0")],
-        [InlineKeyboardButton("🏷️ Categoría", callback_data="it:cat"),
-         InlineKeyboardButton("⬅️ Volver", callback_data="it:back")],
-    ])
-
-
-def _texto_item(it: dict) -> str:
-    return (f"«{it.get('item', '') or '—'}» · {finanzas.clp(it.get('precio', 0))}\n"
-            f"Categoría: {it.get('categoria', '')} · Deseo: {it.get('intencion', '')} · "
-            f"{'despensa' if it.get('predecible') else 'perecible'}")
-
-
-async def enviar_panel_items(bot, chat_id: int, buffer_id: str) -> bool:
-    """Muestra el detalle ítem-a-ítem de un cargo para revisar/corregir. Devuelve si lo abrió."""
+async def _vista_items(buffer_id: str, ver_todos: bool):
+    """(texto, teclado) de la vista de ítems, o None si el buffer ya no tiene detalle."""
     b = await memory.get_buffer(buffer_id)
     items = (b or {}).get("items") or []
     if not items:
-        return False
-    await bot.send_message(chat_id, _texto_panel_items((b or {}).get("comercio", ""), items),
-                           reply_markup=_teclado_panel_items(items))
-    return True
+        return None
+    return _texto_items(b or {}, items), _teclado_items(buffer_id, items, ver_todos)
 
 
 async def corregir_categoria_item(buffer_id: str, idx: int, categoria: str) -> dict | None:
@@ -238,20 +261,97 @@ def _texto_digest(d: dict) -> str:
     for m in d["movimientos"]:
         marca = f"  ⚠️ {m['motivo_duda']}" if m["dudosa"] else ""
         intencion = f" · {m['intencion']}" if m.get("intencion") else ""
-        detalle = f" · {m['n_items']} ítems" if m.get("n_items") else ""
+        detalle = ""
+        if m.get("n_items"):
+            dudosos = sum(1 for it in (m.get("items") or []) if _item_dudoso(it))
+            estado = " ✓" if m["id"] in _revisados else (f" ({dudosos} por revisar)" if dudosos else "")
+            detalle = f" · {m['n_items']} ítems{estado}"
         lineas.append(f"• {m['comercio'] or m['categoria']}: {finanzas.clp(m['monto'])} → {m['categoria']}{intencion}{detalle}{marca}")
-    cab = f"Tienes {d['n']} movimiento(s) por confirmar ({finanzas.clp(d['total'])})."
+    cab = f"🧾 {d['n']} movimiento(s) por confirmar · {finanzas.clp(d['total'])}."
     if d["n_dudosas"]:
-        cab += f" Hay {d['n_dudosas']} que quiero confirmar contigo."
-    return cab + "\n\n" + "\n".join(lineas) + "\n\nToca «Aceptar todo» o la línea que esté mal."
+        cab += f" Los ⚠️ esperan lo tuyo."
+    # Sin párrafo de instrucciones: los botones son la instrucción (si un texto dice qué tocar,
+    # debía ser un botón).
+    return cab + "\n\n" + "\n".join(lineas)
+
+
+async def _vista_digest():
+    d = await finanzas.armar_digest()
+    return _texto_digest(d), (_teclado_digest(d) if d["n"] else None)
 
 
 async def enviar_digest(bot, chat_id: int) -> None:
+    """Manda el digest y lo deja ANCLADO: de aquí en adelante todo (corregir, ítems, detallar)
+    edita ESTE mensaje en su lugar — un solo digest en el chat, siempre el vigente."""
+    texto, teclado = await _vista_digest()
+    msg = await bot.send_message(chat_id, texto, reply_markup=teclado)
+    if teclado is not None:
+        _digest_msg[chat_id] = msg.message_id
+
+
+async def refrescar_digest(bot, chat_id: int) -> None:
+    """Re-dibuja el digest EN SU LUGAR tras una corrección que llegó por texto/voz/foto (las
+    esperas de main). Si el ancla ya no existe (deploy de por medio, chat limpiado), manda uno
+    nuevo y re-ancla — el camino normal es editar, no apilar copias."""
+    mid = _digest_msg.get(chat_id)
+    texto, teclado = await _vista_digest()
+    if mid:
+        try:
+            await bot.edit_message_text(texto, chat_id=chat_id, message_id=mid, reply_markup=teclado)
+            return
+        except Exception as e:
+            if "not modified" in str(e).lower():
+                return
+            logger.info("refrescar_digest: el ancla no se pudo editar; mando un digest nuevo")
+    if teclado is None:
+        return  # nada pendiente y sin ancla: no hay que mostrar nada
+    msg = await bot.send_message(chat_id, texto, reply_markup=teclado)
+    _digest_msg[chat_id] = msg.message_id
+
+
+async def _volver_al_digest(q) -> None:
+    texto, teclado = await _vista_digest()
+    await _edit_ok(q, texto, reply_markup=teclado)
+    _digest_msg[q.message.chat_id] = q.message.message_id
+
+
+# ───────────────────────── Corrección de una línea: chips, no teclado ─────────────────────────
+
+def _chips_categorias(prefijo: str, cats: list[str], todas: list[str]) -> list[list[InlineKeyboardButton]]:
+    """Chips de categoría en filas de 3. El callback lleva el ÍNDICE en el catálogo, no el
+    nombre: callback_data tope 64 bytes, y un nombre con tilde junto al uuid no cabe."""
+    botones = []
+    for c in cats:
+        try:
+            i = todas.index(c)
+        except ValueError:
+            continue
+        botones.append(InlineKeyboardButton(c[:18], callback_data=f"{prefijo}{i}"))
+    return [botones[i:i + 3] for i in range(0, len(botones), 3)]
+
+
+async def _mov_digest(buffer_id: str) -> dict | None:
     d = await finanzas.armar_digest()
-    if d["n"] == 0:
-        await bot.send_message(chat_id, _texto_digest(d))
-        return
-    await bot.send_message(chat_id, _texto_digest(d), reply_markup=_teclado_digest(d))
+    return next((m for m in d["movimientos"] if str(m["id"]) == str(buffer_id)), None)
+
+
+async def _vista_correccion_linea(m: dict, todo_el_catalogo: bool):
+    """(texto, teclado) del modo corrección de una línea: top-3 aprendido primero; «Más
+    categorías» abre el catálogo completo; «Escribirla» queda como último recurso."""
+    todas = await finanzas.categorias_lista()
+    cats = todas if todo_el_catalogo else await finanzas.sugerencias_categoria(
+        m.get("comercio", ""), m.get("categoria", ""))
+    filas = _chips_categorias(f"dgc:{m['id']}:", cats, todas)
+    if not todo_el_catalogo:
+        filas.append([InlineKeyboardButton("📚 Más categorías", callback_data=f"dgc:{m['id']}:mas")])
+    else:
+        filas.append([InlineKeyboardButton("⌨️ Escribirla", callback_data=f"dgc:{m['id']}:esc")])
+    filas.append([InlineKeyboardButton("🗑 Descartar", callback_data=f"dgc:{m['id']}:desc"),
+                  InlineKeyboardButton("⬅️ Volver", callback_data="digest:volver")])
+    duda = f"\n⚠️ {m['motivo_duda']}" if m.get("dudosa") and m.get("motivo_duda") else ""
+    texto = (f"«{m.get('comercio') or m.get('categoria', '')}» · {finanzas.clp(m.get('monto', 0))} "
+             f"→ {m.get('categoria', '')}{duda}\n\nElige la categoría:")
+    return texto, InlineKeyboardMarkup(filas)
 
 
 # ───────────────────────── Digest de spam ─────────────────────────
@@ -470,69 +570,133 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         res = await finanzas.confirmar_digest({})
         cola = f" ({res['duplicadas']} ya estaban, no las dupliqué)" if res.get("duplicadas") else ""
         await q.edit_message_text(f"Listo. Anoté {res['escritas']} movimiento(s) en tu planilla{cola}. Cerrado el día.")
+        _digest_msg.pop(q.message.chat_id, None)   # el ancla murió: el digest quedó confirmado
+        _revisados.clear()
+        return
+
+    if data == "digest:volver":
+        await _volver_al_digest(q)
         return
 
     if data.startswith("digest:fix:"):
-        buffer_id = data.split(":", 2)[2]
-        espera.iniciar(context.user_data, "correccion_tx", {"buffer_id": buffer_id})
-        await q.edit_message_text(
-            "Dime la categoría correcta para esa línea (o escribe «descartar» para botarla). "
-            "Después toca el cierre de nuevo para aceptar el resto. (Si te arrepentiste, escribe «cancelar»)."
-        )
+        # El digest NO se destruye: este mismo mensaje muta a modo corrección (chips top-3
+        # aprendidas) y vuelve a ser el digest al elegir. El teclado quedó como último recurso.
+        m = await _mov_digest(data.split(":", 2)[2])
+        if m is None:
+            await _volver_al_digest(q)
+            return
+        texto, teclado = await _vista_correccion_linea(m, todo_el_catalogo=False)
+        await _edit_ok(q, texto, reply_markup=teclado)
+        return
+
+    if data.startswith("dgc:"):  # corrección de línea: chip elegido / más / escribir / descartar
+        _, buffer_id, arg = data.split(":", 2)
+        if arg == "mas":
+            m = await _mov_digest(buffer_id)
+            if m is None:
+                await _volver_al_digest(q)
+                return
+            texto, teclado = await _vista_correccion_linea(m, todo_el_catalogo=True)
+            await _edit_ok(q, texto, reply_markup=teclado)
+            return
+        if arg == "esc":
+            espera.iniciar(context.user_data, "correccion_tx", {"buffer_id": buffer_id})
+            await _edit_ok(q, "Escríbeme la categoría (o «cancelar» y lo dejamos como estaba).")
+            return
+        if arg == "desc":
+            await memory.buffer_marcar(buffer_id, "descartada")
+            await q.answer("Descartada. No la anoto.")
+            await _volver_al_digest(q)
+            return
+        todas = await finanzas.categorias_lista()
+        try:
+            categoria = todas[int(arg)]
+        except (ValueError, IndexError):
+            await _volver_al_digest(q)
+            return
+        r = await aplicar_correccion_tx(buffer_id, categoria)
+        await q.answer(r[:190])                     # toast corto; el digest vuelve actualizado
+        await _volver_al_digest(q)
         return
 
     if data.startswith("digest:detallar:"):
         buffer_id = data.split(":", 2)[2]
-        await q.edit_message_text(
-            "¿Qué compraste en esta compra? Mándame la 📷 foto de la boleta o ✍️ desglósalo por texto "
-            "(«arroz 1290, leche 990»). Le pongo categoría y deseo a cada ítem.",
-            reply_markup=teclado_pregunta_compra(buffer_id),
+        filas = list(teclado_pregunta_compra(buffer_id).inline_keyboard)
+        filas.append([InlineKeyboardButton("⬅️ Volver", callback_data="digest:volver")])
+        await _edit_ok(
+            q,
+            "¿Qué compraste? 📷 foto de la boleta, o ✍️ desglose por texto («arroz 1290, leche 990»).",
+            reply_markup=InlineKeyboardMarkup(filas),
         )
         return
 
-    if data.startswith("digest:items:"):  # revisar el detalle de un gasto ya detallado
+    if data.startswith("digest:items:"):  # ítems: grilla de excepciones, en el MISMO mensaje
         buffer_id = data.split(":", 2)[2]
-        context.user_data["items_buffer"] = buffer_id
-        if not await enviar_panel_items(context.bot, q.message.chat_id, buffer_id):
+        v = await _vista_items(buffer_id, ver_todos=False)
+        if v is None:
             await q.answer("Ese gasto no tiene ítems detallados.")
+            return
+        await _edit_ok(q, v[0], reply_markup=v[1])
         return
 
-    if data.startswith("it:"):  # editor de ítems (mini-panel v3)
-        buffer_id = context.user_data.get("items_buffer")
-        b = await memory.get_buffer(buffer_id) if buffer_id else None
-        items = (b or {}).get("items") or []
-        if not items:
-            await q.answer("Esa lista ya no está activa.")
-            return
+    if data.startswith("dgi:"):  # grilla de ítems: toggles de 1 toque
         partes = data.split(":")
-        accion = partes[1]
+        accion, mid = partes[1], partes[2]
+        if accion == "all":
+            v = await _vista_items(mid, ver_todos=True)
+            if v:
+                await _edit_ok(q, v[0], reply_markup=v[1])
+            return
         if accion == "ok":
-            context.user_data.pop("items_buffer", None)
-            context.user_data.pop("item_idx", None)
-            await _edit_ok(q, f"Listo, {len(items)} ítem(s) guardados. Quedan en el digest para aceptar.")
+            _revisados.add(mid)
+            await _volver_al_digest(q)
             return
-        if accion == "back":
-            await _edit_ok(q, _texto_panel_items(b.get("comercio", ""), items), reply_markup=_teclado_panel_items(items))
+        b = await memory.get_buffer(mid)
+        items = (b or {}).get("items") or []
+        i = int(partes[3])
+        ver_todos = len(partes) > 4 and partes[4] == "a"
+        if i >= len(items):
+            await q.answer("Ese ítem ya no está.")
             return
-        if accion == "p":  # elegir ítem → abre su editor
-            idx = int(partes[2])
-            context.user_data["item_idx"] = idx
-            await _edit_ok(q, _texto_item(items[idx]), reply_markup=_teclado_item_editor(items[idx]))
-            return
-        idx = context.user_data.get("item_idx")
-        if idx is None or idx >= len(items):
-            await q.answer("Elegí el ítem de nuevo.")
-            return
-        if accion == "cat":
-            espera.iniciar(context.user_data, "correccion_item_cat")
-            await _edit_ok(q, f"¿Qué categoría para «{items[idx].get('item', '')}»? Escríbela (o «cancelar»).")
+        if accion == "c":   # el nombre abre chips de categoría para ese ítem
+            todas = await finanzas.categorias_lista()
+            sugeridas = await finanzas.sugerencias_categoria(items[i].get("item", ""), items[i].get("categoria", ""))
+            cats = sugeridas + [c for c in todas if c not in sugeridas]
+            filas = _chips_categorias(f"dic:{mid}:{i}:", cats[:9], todas)
+            filas.append([InlineKeyboardButton("⌨️ Escribirla", callback_data=f"dic:{mid}:{i}:esc"),
+                          InlineKeyboardButton("⬅️ Volver", callback_data=f"digest:items:{mid}")])
+            await _edit_ok(q, f"«{items[i].get('item') or '—'}» · {finanzas.clp(items[i].get('precio', 0))}\n\n"
+                              "Elige su categoría:", reply_markup=InlineKeyboardMarkup(filas))
             return
         if accion == "d":
-            items[idx]["intencion"] = partes[2]
-        elif accion == "pr":
-            items[idx]["predecible"] = (partes[2] == "1")
-        await memory.buffer_actualizar(buffer_id, {"items": items})
-        await _edit_ok(q, _texto_item(items[idx]), reply_markup=_teclado_item_editor(items[idx]))
+            items[i]["intencion"] = _sig_deseo(items[i].get("intencion", ""))
+        elif accion == "p":
+            items[i]["predecible"] = not items[i].get("predecible")
+        await memory.buffer_actualizar(mid, {"items": items})
+        await _edit_ok(q, _texto_items(b or {}, items), reply_markup=_teclado_items(mid, items, ver_todos))
+        return
+
+    if data.startswith("dic:"):  # categoría elegida para un ítem
+        _, mid, i_raw, arg = data.split(":", 3)
+        i = int(i_raw)
+        b = await memory.get_buffer(mid)
+        items = (b or {}).get("items") or []
+        if i >= len(items):
+            await q.answer("Ese ítem ya no está.")
+            return
+        if arg == "esc":
+            context.user_data["items_buffer"] = mid
+            context.user_data["item_idx"] = i
+            espera.iniciar(context.user_data, "correccion_item_cat")
+            await _edit_ok(q, f"Escríbeme la categoría para «{items[i].get('item', '')}» (o «cancelar»).")
+            return
+        todas = await finanzas.categorias_lista()
+        try:
+            items[i]["categoria"] = todas[int(arg)]
+        except (ValueError, IndexError):
+            pass
+        await memory.buffer_actualizar(mid, {"items": items})
+        await _edit_ok(q, _texto_items(b or {}, items), reply_markup=_teclado_items(mid, items, ver_todos=False))
         return
 
     if data.startswith("compra:"):
@@ -546,7 +710,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         elif accion == "foto":
             await q.edit_message_text("Mándame la foto de la boleta y la cruzo con este cargo. 📷")
         else:  # despues
-            await q.edit_message_text("Ok, lo dejamos para el cierre.")
+            if q.message.message_id == _digest_msg.get(q.message.chat_id):
+                await _volver_al_digest(q)   # venía del digest anclado → el digest vuelve, no un texto suelto
+            else:
+                await q.edit_message_text("Ok, lo dejamos para el cierre.")
         return
 
     if data == "spam:archivar":
