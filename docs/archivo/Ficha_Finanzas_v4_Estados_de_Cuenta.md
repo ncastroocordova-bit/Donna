@@ -1,5 +1,12 @@
 # Ficha — Finanzas v4: lectura de estados de cuenta del banco (PDF con contraseña) → faro de deuda vivo + reconciliación
 
+> ⚠️ **ARCHIVADO (histórico) — 2026-07-17. Construido y deployado.** `modules/estados_cuenta.py` +
+> `fin_progreso_deuda` + tab `Deuda_Mensual` viven en producción; validado contra los PDFs reales de Nico
+> (corrigió el faro a $2.297.966, encontró 11 compras sin registrar). 46/46 evals verdes. Ver
+> `Roadmap_Modular.md` ítem 1. Se conserva como referencia de diseño; ya no es trabajo pendiente.
+> *(El mapa de celdas cita el retirado `Donna_Canonico.xlsx`; la referencia viva es `setup_sheets.py` +
+> la planilla Louis en el Drive.)*
+
 **Fecha:** 2026-07-04 · **Para:** una sesión de Claude Code que lo ejecute después.
 **Módulo:** Finanzas (`fin_`) · extensión v4 (sobre v1 registro + v2 intención/metas + v3 detalle ítem-a-ítem).
 

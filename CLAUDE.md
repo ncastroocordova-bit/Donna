@@ -10,7 +10,7 @@ Python monolito · `python-telegram-bot` · Supabase + pgvector · Anthropic SDK
 
 ## Mapa del repo
 - `core/`: `brain` (carácter cacheado + inferencia validada), `memory` (Supabase), `sheets`, `scheduler` (brief/cierre), `voice` (Whisper), `agenda` (Calendar), `correo` + `email_gmail`, `flows`.
-- `modules/` (un prefijo por módulo): `salud` (`sal_`), `finanzas` (`fin_`), `compras` (`cmp_`), `recordatorios` (`rec_`), `correo`/`spam` (`cor_`), productividad/reconciliación (`prod_`), `aprendizaje` (`apr_`), `proactividad`, `familia` (`fam_`), `proyectos`. Dormidos: `tiempo` (`metas` puede despertar para las metas financieras de `fin_`).
+- `modules/` (un prefijo por módulo): `salud` (`sal_`), `finanzas` (`fin_`), `compras` (`cmp_`), `recordatorios` (`rec_`), `correo`/`spam` (`cor_`), productividad/reconciliación (`prod_`), `aprendizaje` (`apr_`), `proactividad`, `familia` (`fam_`), `proyectos`, `archivista` (`arc_`, F3-lite — ver abajo). Dormidos: `tiempo` (`metas` puede despertar para las metas financieras de `fin_`).
 - `migrations/` 001–011 · `prompts/` (constitution, anchors, capacidades) · `tests/` (evals.py, casos.yaml) · `setup_sheets.py`.
 
 ## Dos sombreros, dos planillas (canon v8)
@@ -22,7 +22,7 @@ En el código: todo lo de vida usa el id por defecto (`sheets.vida_id()`); finan
 
 ## Dos capas de datos (NO las mezcles)
 Ortogonal a los dos sombreros: cada planilla es "registros"; Supabase es "aprendizaje".
-- **Google Sheets = los registros (lo que pasó y lo que Nico ve/edita).** Repartidos en las dos planillas de arriba (Donna + Louis; ver `Donna_Canonico.xlsx` para el esquema). Estado y registros, legibles para Nico. El esquema lo fija `Donna_Canonico.xlsx`; `setup_sheets.py` debe calzar con él.
+- **Google Sheets = los registros (lo que pasó y lo que Nico ve/edita).** Repartidos en las dos planillas de arriba (Donna + Louis). Estado y registros, legibles para Nico. **La fuente de verdad del esquema es doble:** la planilla real en el Drive de Nico (viva) y, en el código, `setup_sheets.py` (`TABS_DONNA`/`TABS_LOUIS`) — que debe calzar con ella. *(El viejo `Donna_Canonico.xlsx` se retiró del repo el 2026-07-17 por estar desactualizado.)*
 - **Supabase = lo que Donna APRENDE de esos registros.** `perfil`, `memoria` episódica (+ embeddings Voyage/pgvector), `inferencias`, `compromisos`, `aprendizaje` (calibración, factor de optimismo, lookup de correcciones). No es legible para Nico ni reemplaza los registros.
 
 **Flujo (una sola dirección para aprender):** registros en Sheets → Donna lee → infiere/calibra → **guarda el aprendizaje en Supabase** → aconseja usando esa memoria. Regla dura: el aprendizaje (patrones, ratios, inferencias) **se persiste en Supabase, nunca en el Sheet**. El Sheet puede mostrar un *resultado* (p. ej. `Factor_Optimismo` en `Semanal` es una lectura), pero el modelo que lo produce vive en Supabase. Y al revés: los registros crudos viven en Sheets, no en Supabase.
@@ -32,6 +32,24 @@ Donna aprende de Nico cruzando dominios; la memoria NO es un módulo, es una esp
 - **Correlador:** se enciende con ≥2 módulos vivos. Propone cruces entre dominios (sueño↔ánimo↔gasto↔tiempo), **valida cada uno contra el dato**, descarta los espurios (N chico, semana atípica → usa mediana) y guarda los que aguantan. Guardia anti-patrones-falsos: ante la duda, no afirma.
 - **Vista editable `/perfil` ("lo que sé de ti"):** muestra perfil + inferencias top, cada una con su dato. Nico puede corregir ("eso no es así" baja/borra; "esto importa" fija); sus correcciones entran a la calibración.
 - **Cómo se muestra:** bajo demanda + resumen suave los domingos + **proactivo solo cuando un patrón es accionable ahora** (máx 1/día, vive en el módulo Proactividad). Siempre con el dato; nunca etiqueta de carácter ("planificas de más", no "eres desordenado"); patrones revisables, no permanentes.
+
+## Archivista (`arc_`, F3-lite — 2026-07-16)
+Donna escribe en Córtex (el segundo cerebro de Nico) con `arc_guardar`, importando
+`cortex_core` **vendorizado como copia** en `cortex_core/` (mismo patrón que sugiere
+`cortex/README.md` §4: "Agrega cortex_core/ al proyecto — submódulo git o copia del
+paquete"). Es la rebanada delgada de F3 del [[Roadmap-Holding]]: solo captura vía
+Telegram. **NO incluye** la síntesis matinal en el brief ni el cron del loop nocturno
+en Railway — eso sigue siendo F3 completo, semana 4.
+- **Local:** `CORTEX_VAULT` apunta directo al vault en disco (probado end-to-end
+  2026-07-16: escribe, hace pull/commit/push con el git ambiente de la máquina).
+- **Railway:** el contenedor es efímero. `scripts/start.sh` clona el repo completo de
+  Córtex (código + vault) al arrancar si `CORTEX_GITHUB_TOKEN` está seteado, y expone
+  `CORTEX_VAULT` apuntando al clon. Variables Railway nuevas: `CORTEX_GITHUB_TOKEN`
+  (PAT con scope `repo`), `CORTEX_AUTOR=donna`, `CORTEX_GIT_AUTO=1` (opcional:
+  `CORTEX_LOCAL_PATH` si no quieres `/app/_cortex`). **Pendiente de que Nico las
+  configure en Railway** — sin ellas, `arc_guardar` degrada solo (avisa, no rompe).
+- Si `cortex_core` no importa o el vault no está disponible, el tool degrada
+  (contrato de módulo #4): responde sin cortar la conversación, nunca truena a Donna.
 
 ## Contrato de módulo (no negociable)
 1. Un módulo **nunca toca el núcleo**; habla solo por su interfaz.
@@ -57,7 +75,7 @@ Donna aprende de Nico cruzando dominios; la memoria NO es un módulo, es una esp
 - **Compras (`cmp_`, módulo nuevo, posición 3):** lista del súper por voz/texto ("Donna falta X" / "dame la lista"). **Fase 1 = lista manual**; **Fase 2 (diferida)** = motor de frecuencia que infiere reposición ("puede que toque comprar arroz") vía Proactividad. La Fase 2 aprende de dos fuentes: la lista Fase 1 (ítems `comprado`) + las líneas `Predecible=sí` de `Compras_Detalle`. **Predicción solo para despensa/reposición** (arroz, atún, fideos, limpieza); **nunca lo cotidiano/perecible** (pan, chanchería) — fuera del predictor por diseño.
 - **Familia (`fam_`, módulo nuevo, último):** 3 toques en el cierre (Emilio / pareja / cena juntos) con inferencias y nudge propios; el correlador cruza familia↔ánimo↔sueño.
 - **Extras:** Aprendizaje ON · Proactividad 12:00 (máx 1/día) ON · Salud ON · **Compras Fase 1 ON / Fase 2 diferida** · **Familia ON** (al final del roadmap) · **Tiempo log OFF** (dormido) · **Outlook OFF**.
-- **Finanzas:** deuda real **incluye la línea**. Faro: Deuda total real **$2.028.091**, Intereses muertos **$48.236/mes**. **v2:** intención del gasto (Necesario/Inversión/Deseo en `Transacciones`, se confirma en el digest) + metas financieras con progreso (tab `Metas`, sin input diario). **No** se agregan cuentas con saldos auto / doble-entrada (rompe "registro sin fricción").
+- **Finanzas:** deuda real **incluye la línea**. Faro: Deuda total real ~**$2.297.966** (dato vivo de la planilla; Finanzas v4 corrigió el $2.028.091 histórico), Intereses muertos **$48.236/mes**. *(No hardcodear la cifra como assert de eval — es dato vivo; el eval verifica que el faro calce con `Tarjetas y Deuda` B4:B8.)* **v2:** intención del gasto (Necesario/Inversión/Deseo en `Transacciones`, se confirma en el digest) + metas financieras con progreso (tab `Metas`, sin input diario). **No** se agregan cuentas con saldos auto / doble-entrada (rompe "registro sin fricción").
 - **Captura de compras (Finanzas v3, alimenta a Compras):** la boleta se lee **ítem por ítem** (foto → ítem+precio+total) y va a `Compras_Detalle`. **Foto y correo del mismo gasto se correlacionan por monto+fecha(+comercio) → una sola transacción, jamás doble conteo** (el correo es el total canónico; la foto aporta los ítems). Para **comercios "de compras"** (súper, almacén, San Valentín) sin detalle, Donna pregunta **al momento** "¿qué compraste?" → foto o desglose por categoría ("2000 chanchería, resto pan", el resto cuadra al total); es prompt **transaccional**, no cuenta contra el tope 1/día. Cada línea se marca `Predecible` (sí = despensa/reposición; no = perecible/cotidiano) y **solo `Predecible=sí` alimenta el predictor de Compras Fase 2**.
 
 ## Reglas de trabajo

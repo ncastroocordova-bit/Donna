@@ -1,5 +1,14 @@
 # Ficha — Autodiagnóstico (solo diagnóstico) + Variedad de textos
 
+> ⚠️ **ARCHIVADO (histórico) — 2026-07-17. Construido en versión LEAN.** Lo entregado (2026-07-05):
+> `core/diagnostico.py` + tabla `incidentes` (migración 014), detección determinista de `tool_excepcion`
+> / `schema_sheets` / `verificacion_escritura`, dedup por firma, tool `diag_estado`, heartbeat al brief.
+> Parte 2 (variedad de textos, `core/frases.py`) también construida.
+> **Quedó FUERA del lean (esta ficha lo describe pero NO se construyó):** el diagnóstico con Haiku, el CLI
+> puente `scripts/incidentes.py`, el watchdog de jobs `job_no_corrio`, el detector `correccion_nico`, y
+> extender `append_row_verificado` al resto de escritores. Ver `Roadmap_Modular.md` §Fase 0. Ya no es
+> trabajo pendiente salvo que se decida subir la ambición.
+
 **Fecha:** 2026-07-03 · **Para:** una sesión de Claude Code que lo ejecute después.
 **Decisiones de Nico que fijan el alcance (no reabrir):**
 - Donna **NO se arregla sola**. Ni parches de código, ni retry con LLM, ni deploy. Solo: detectar → diagnosticar → contárselo a Nico en su voz → dejar el incidente empaquetado para arreglarlo fácil con Claude Code.

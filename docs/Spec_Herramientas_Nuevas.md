@@ -189,3 +189,37 @@ Detalle de implementación de las herramientas que el canon agrega o cambia. Aco
 **Borde:** llega la foto antes que el correo (o al revés) → se guarda y se correlaciona cuando aparezca el par; si el correo nunca llega, la foto sostiene la transacción. Foto cuyo total ≠ correo → marca `dudosa` para confirmar en el digest, no asume. Comercio no `es_compras` (Uber, Netflix, bencina) → **no** pregunta.
 
 **LISTO CUANDO:** una foto deja ítems con precio + total; foto + correo del mismo gasto = una sola transacción; un cargo de comercio "de compras" sin detalle dispara el prompt al momento; "2000 chanchería, resto pan" cuadra al total; arroz/atún `Predecible=sí`, pan/chanchería `no`.
+
+---
+
+## §arc_ — Archivista (captura a Córtex, F3-lite — fuera de los 8 módulos)
+
+**Propósito:** que Donna escriba en **Córtex** (el segundo cerebro de Nico) lo que vale la pena recordar
+más allá de la conversación y que **no** es perfil estable (`actualizar_perfil`) ni episodio personal
+(`guardar_memoria`): decisiones y su porqué, datos del mundo real (clientes, proveedores, negocios),
+juicios que solo viven en su cabeza. Pertenece al **Roadmap-Holding (F3)**, no a este roadmap; es la
+rebanada delgada: **solo captura vía Telegram** (sin síntesis matinal ni loop nocturno).
+
+**Firma:**
+- `arc_guardar(titulo, contenido, area?, tipo?, tags?)` — escribe una nota en el vault de Córtex.
+  `area` ∈ holding|personal|noomi|ncc|universidad|casa|recursos|meta · `tipo` ∈
+  concepto|proyecto|persona|decision|recurso|diario|reunion|meta. Solo `titulo` + `contenido` obligatorios.
+  Filosofía "captura todo ante la duda; el jardinero nocturno limpia después".
+
+**Datos:** vía `cortex_core` **vendorizado como copia** en `cortex_core/`. `CORTEX_VAULT` apunta al vault
+(local: disco directo; Railway: `scripts/start.sh` clona el repo de Córtex al arrancar si
+`CORTEX_GITHUB_TOKEN` está seteado). Env nuevas de Railway: `CORTEX_GITHUB_TOKEN` (PAT scope `repo`),
+`CORTEX_AUTOR=donna`, `CORTEX_GIT_AUTO=1` (opcional `CORTEX_LOCAL_PATH`).
+
+**Invariantes:** prefijo `arc_` sin solapamiento. **Degrada elegante (contrato #4):** si `cortex_core` no
+importa o el vault no está disponible, responde sin cortar la conversación, jamás truena a Donna.
+No pisa `actualizar_perfil` ni `guardar_memoria` (tres destinos distintos).
+
+**Borde:** sin las env de Railway, `arc_guardar` avisa y degrada (no rompe). Nota sin `area`/`tipo` →
+Córtex la clasifica con sus defaults.
+
+**LISTO CUANDO:** `arc_guardar` escribe la nota en el vault y hace commit/push (git ambiente); sin
+`cortex_core` o sin vault, responde degradado sin excepción.
+
+**Estado:** construido y probado end-to-end en local (2026-07-16); **pendiente commitear + setear las env
+de Railway.** Ver el anexo Archivista en `Roadmap_Modular.md`.

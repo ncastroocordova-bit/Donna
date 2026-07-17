@@ -1,5 +1,10 @@
 # Plan de Reparación — bugs activos del agente + problemas de datos del Sheets
 
+> ⚠️ **ARCHIVADO (histórico) — 2026-07-17. Ejecutado: Fase 0 completa.** Todos los ítems A1–A2, B1–B2 y
+> C1–C6 se cerraron y deployaron (ver `Roadmap_Modular.md` §Fase 0). Se conserva por trazabilidad del
+> razonamiento (2 opciones por ítem, output esperado). El estado real vive en el tablero del Roadmap;
+> este doc ya no es trabajo pendiente.
+
 **Fecha del diagnóstico:** 2026-07-01 (auditoría de código + planilla real de Drive).
 **Para quién:** una sesión de Claude Code (u otra IA) que ejecute los fixes más tarde.
 **Prerequisito del ejecutor:** leer `CLAUDE.md` completo antes de tocar nada. Este plan NO reemplaza el contrato del repo; lo aplica.

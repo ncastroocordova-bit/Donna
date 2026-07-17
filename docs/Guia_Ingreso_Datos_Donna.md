@@ -5,7 +5,7 @@
 - **Donna lo carga como su mapa de sí misma** — sabe exactamente qué preguntar, dónde guardar cada dato y cómo calcula cada métrica.
 - **Tú lo usas para interrogarla** — "¿qué datos recibes?", "¿cómo calculas la tasa de ahorro?", "¿de dónde sacas mi deuda real?". La Parte D trae el banco de preguntas con la respuesta que Donna debe dar.
 
-**Fuente de verdad:** un solo workbook **"Donna"** (esquema en `Donna_Canonico.xlsx`). Dos grupos de hojas: las de **vida** (Diario, Tareas, Proyectos, Recordatorios, Reconciliacion, Semanal, Ideas, Config) y las de **finanzas** (Transacciones, Categorias, Tarjetas y Deuda, Dashboard, Comparativo, Metas, Compras_Detalle). Donna lee y escribe ahí; tú casi no las tocas.
+**Fuente de verdad:** **dos planillas (canon v8)** — el sombrero **Donna (vida)** (`GOOGLE_SHEET_ID`: Diario, Tareas, Proyectos, Recordatorios, Reconciliacion, Semanal, Compras, Ideas, ⚙️ Config) y el sombrero **Louis (plata)** (`GOOGLE_SHEET_ID_LOUIS`: Transacciones, Categorias, Tarjetas y Deuda, Dashboard, Comparativo, Metas, Compras_Detalle, Deuda_Mensual). El esquema vive en el Drive de Nico + `setup_sheets.py` (`TABS_DONNA`/`TABS_LOUIS`). Donna lee y escribe ahí; tú casi no las tocas. *(Detalle de la separación: [`Sombreros_Donna_Louis.md`](Sombreros_Donna_Louis.md).)*
 
 **Principio que gobierna todo:** Donna **no afirma nada sin el dato que lo respalda** (inferencia validada). Si la pregunta no se puede contestar con las planillas, la respuesta honesta es "no lo mido".
 
@@ -18,7 +18,8 @@ Tres momentos: **Brief 8:00** (casi todo lectura), **Cierre 22:00** (acá entra 
 ### Brief 8:00 — solo lectura (~5s de input)
 | Dato | Cómo lo pregunta Donna | Método | Aterriza en | Tier |
 |---|---|---|---|---|
-| Sueño 7h+ / hora dormí | "¿Cuánto dormiste? ¿Más de 7h?" | 🔘 + chip de hora | `Diario!E,G` | A |
+| Hora dormí + hora desperté | "¿A qué hora te dormiste?" → chips → "¿y a qué hora despertaste?" | 🔘 chips de hora | `Diario` (hora dormí/desperté) | A |
+| Sueño 7h+ | (NO se pregunta: se **deriva sola** de la ventana dormí↔despertó) | ⚙️ | `Diario` (Sueño 7h+) | A |
 | Agenda del día | (la muestra, no pregunta) | ⚙️ Calendar | — | A |
 | MITs de hoy | (los recuerda de anoche) | — | `Diario!H` | A |
 | Recordatorios (T-2 y T-0) | (los muestra; el del día con botón ✅ Hecho) | ⚙️ + 🔘 | `Recordatorios!Estado` | A |
@@ -28,15 +29,16 @@ Tres momentos: **Brief 8:00** (casi todo lectura), **Cierre 22:00** (acá entra 
 ### Cierre 22:00 — panel único de toques + digest (~45–50s)
 | Dato | Cómo lo pregunta Donna | Método | Aterriza en | Tier |
 |---|---|---|---|---|
-| Ejercicio | "¿Te moviste hoy?" | 🔘 sí/no | `Diario!B` | A |
-| Última comida (ayuno) | "¿A qué hora comiste por última vez?" | 🔘 chips de hora | `Diario!D` | A |
-| Meditación | "¿Meditaste?" | 🔘 sí/no | `Diario!C` | B |
-| Ánimo | "¿Cómo andas hoy? 1 a 4" | 🔘 4 botones | `Diario!F` | A |
-| MIT avanzado | "¿Avanzaste alguno de tus MITs?" | 🔘 | `Diario` | A |
-| MITs de mañana (1-3) | "Dime tus 1 a 3 prioridades de mañana" | 🎙️ voz | `Diario!H` | A |
-| **Digest financiero** | "Hoy detecté N movimientos ($X). ✅ Aceptar todo, o toca el que esté mal." | 🔘 aceptar / tap por línea | `Transacciones` | A |
-| **Reconciliación (v7.2)** | "¿Hiciste lo de hoy? ✅ Hice todo, o marca los que no — y si tomó más/igual/menos." | 🔘 aceptar / tap por bloque | `Reconciliacion` | A |
-| Excepción (opcional) | "¿Hoy fue día de excepción?" | 🔘 / skip | `Diario!K` | B |
+| Ejercicio | "¿Te moviste hoy?" | 🔘 sí/no | `Diario` (Ejercicio) | A |
+| Primera comida | chips de hora (franja 6-12) | 🔘 chips | `Diario` (Primera comida) | A |
+| Última comida (ayuno) | chips de hora (franja 18-01) | 🔘 chips | `Diario` (Última comida) | A |
+| Meditación | "¿Meditaste?" | 🔘 sí/no | `Diario` (Meditación) | B |
+| Ánimo | "¿Cómo andas hoy? 1 a 4" | 🔘 4 botones | `Diario` (Ánimo) | A |
+| Peso (cada cierre) | "¿cuánto marcaste hoy en la pesa?" | 🎙️/texto | `Diario` (Peso kg) | A |
+| MITs de mañana (1-3) | "Dime tus 1 a 3 prioridades de mañana" | 🎙️ voz / texto | **`Tareas`** (Tipo=MIT) | A |
+| Evento contextual | "¿algo fuera de tu control hoy?" | 🎙️/texto / skip | Supabase `memoria` (tag `evento_externo`) | B |
+| **Digest financiero** | "Hoy detecté N movimientos ($X). ✅ Aceptar todo, o toca el que esté mal." | 🔘 aceptar / tap por línea | `Transacciones` (Louis) | A |
+| **Reconciliación** | "¿Hiciste lo de hoy? ✅ Hice todo, o marca los que no — y si tomó más/igual/menos." | 🔘 aceptar / tap por bloque | `Reconciliacion` | A |
 
 ### Durante el día — pasivo y ad-hoc
 | Dato | Cómo entra | Método | Aterriza en | Tier |
@@ -55,7 +57,7 @@ Tres momentos: **Brief 8:00** (casi todo lectura), **Cierre 22:00** (acá entra 
 ## PARTE B — Qué datos recibe Donna (diccionario)
 
 ### Hojas de vida (workbook Donna)
-- **Diario** (1 fila/día): Fecha · Ejercicio (sí/no) · Meditación (sí/no) · Última comida (hora) · Sueño 7h+ (sí/no) · Ánimo (1-4) · Hora dormí · MITs · Brief ✓ · Cierre ✓ · Excepción · Notas.
+- **Diario** (1 fila/día): Fecha · Ejercicio (sí/no) · Meditación (sí/no) · Primera comida (hora) · Última comida (hora) · Sueño 7h+ (derivado) · Ánimo (1-4) · Hora dormí · Hora desperté · Peso (kg) · Brief ✓ · Cierre ✓ · Excepción · Notas. *(Las columnas `MITs`, `Agua` y `Proteína` quedan como **legado sin capturar**: los MITs viven ahora en `Tareas` (Tipo=MIT); agua/proteína se retiraron del cierre.)*
 - **Tareas:** Creada · Descripción · Proyecto · Tipo · Fecha objetivo · Estado · Completada.
 - **Proyectos** (lo editas tú): Estado · Foco · Próxima acción · % Avance · Última act.
 - **Recordatorios:** Recordatorio · Tipo (mensual/anual/**única**) · Día / Fecha · Monto aprox · **Estado** (pendiente/hecho/pospuesto) · **Posposiciones** · **Última acción** · Activo. *(8 columnas, sin "Lead extra" — ese era del schema fantasma que arregló el fix A1.)*
@@ -99,7 +101,7 @@ Señales que usa (de la más barata a la más cara): header `List-Unsubscribe` y
 - **Total a pagar (por tarjeta)** = cuotas del mes + pago rotativo + mantención. *(`B44`/`B70`)*
 - **% Utilización** = deuda total ÷ cupo total. **Semáforo:** >70% 🔴 · >30% 🟡 · resto 🟢. *(`D9`/`G9` = 79% 🔴)*
 - **Tasa implícita de la línea** = interés mensual ÷ monto utilizado. *(`B79`: $30.000 ÷ $1.000.000 = 3%/mes)*
-- **Deuda total real** = deuda tarjetas + deuda línea. *(`B85` = $2.028.091)*
+- **Deuda total real** = deuda tarjetas + deuda línea. *(lee `Tarjetas y Deuda` B4:B8; cifra viva — ~$2.297.966 tras Finanzas v4. Los montos de esta sección son **ilustrativos**: la verdad está en la planilla.)*
 - **Intereses muertos del mes** = interés rotativo BCh + interés línea. *(`B86` = $18.236 + $30.000 = $48.236)* → "plata que pagas y no baja ninguna deuda".
 
 ### Vida (las calcula Donna, no la planilla)
@@ -140,7 +142,7 @@ Señales que usa (de la más barata a la más cara): header `List-Unsubscribe` y
 > "Balance dividido por ingresos. Pero te aviso cuando el número miente: este mes te da 81% porque tuviste un solo ingreso y el mes va a la mitad. No te lo creas todavía."
 
 **"¿Cuánto debo de verdad?"**
-> "$2.028.091. Un millón en la línea, topada al 100%, y el resto en tarjetas. Y ojo: $48.236 de este mes son solo interés — no bajaron ni un peso de la deuda."
+> "~$2.297.966 hoy (la leo de la planilla, no de memoria). Un millón en la línea, topada al 100%, y el resto en tarjetas. Y ojo: $48.236 de este mes son solo interés — no bajaron ni un peso de la deuda."
 
 **"¿Por qué me muestras siempre los $48.236?"**
 > "Porque es la fuga. La línea te cobra 3% al mes y el rotativo 2,73%. Mientras eso siga, pagar se siente como avanzar y no avanzas. Por eso te lo pongo antes de cada compra en cuotas."

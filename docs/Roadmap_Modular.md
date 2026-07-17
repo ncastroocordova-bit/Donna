@@ -2,13 +2,26 @@
 
 **Para:** Nico
 **Qué es:** la re-secuencia de la entrega. Un módulo a la vez, completo, probado 1 semana, antes del siguiente. La memoria de Donna (la espina) crece con cada módulo.
-**Acompaña a:** `CLAUDE.md` (contrato + invariantes), `Plan_Construccion_v7.md` (pasos de build por brecha), `Spec_Herramientas_Nuevas.md` (detalle de tools), `Donna_Canonico.xlsx` (esquema de datos). **Después de los 8 módulos:** la expansión a negocios/contenido está en `Vision_Donna_Ampliada.md` (fases N1–N5, escalera de autonomía).
+**Acompaña a:** `CLAUDE.md` (contrato + invariantes), `Plan_Construccion_v7.md` (pasos de build por brecha), `Spec_Herramientas_Nuevas.md` (detalle de tools). **Después de los 8 módulos:** la expansión a negocios/contenido está en `Vision_Donna_Ampliada.md` (fases N1–N5, escalera de autonomía).
+
+**Nota (2026-07-17):** `Donna_Canonico.xlsx` se borró del repo (estaba desactualizado). La versión
+vigente del esquema de datos vive en el Google Drive de Nico, fuera del repo — no hay copia local que
+mantener sincronizada.
 
 ---
 
 ## Regla madre
 Un solo Donna (un repo). Se construye y prueba **un módulo a la vez**. No empiezas el siguiente hasta que el actual pase su semana.
-**Gate de promoción:** deployado + corre estable 7 días + sus evals en verde.
+
+**Gate en dos estados (híbrido — decidido 2026-07-17):**
+- **🔨 construido** = scope de la ficha completo + deployado + **todos sus tests manuales de
+  `Tests_Aceptacion_Manual.md` en verde** (+ evals de `tests/` verdes). Esto es lo que habilita
+  empezar a *usarlo* de verdad.
+- **✅ promovido** = además **7 días corriendo estable** en producción. Recién ahí, módulo siguiente.
+
+(Mientras no haya telemetría real de producción, "construido" se apoya en los tests manuales; los
+"7 días estables" siguen siendo el sello final de "promovido". Los dos docs —este y
+`Tests_Aceptacion_Manual.md`— ahora usan esta misma definición.)
 
 ## Cadencia (cómo se trabaja cada módulo)
 1. Rama git `modulo/<nombre>`.
@@ -60,7 +73,7 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
   - **Filtro de predicción:** cada línea se marca `Predecible` = **sí solo para despensa/reposición** (arroz, atún, fideos, aceite, azúcar, papel, limpieza) y **no para lo cotidiano/perecible** (pan, chanchería, verdura, comida preparada). **Solo las `Predecible=sí` alimentan el predictor de Compras Fase 2.**
 - **Datos:** Sheets `Transacciones`/`Categorias`/`Tarjetas y Deuda`/`Dashboard`/`Metas`/`Compras_Detalle`; Supabase `inferencias`.
 - **Espina:** nace mínima. Siembra `perfil` con lo que ya sabemos de ti; escribe inferencias de gasto/deuda. **Se construye la vista `/perfil` (aún corta).** Sin correlación todavía.
-- **Eval:** foto→categoría correcta · "aceptar todo" escribe sin duplicar · faro da $2.028.091 y $48.236 · el freno muestra la deuda antes de una cuota · la intención se infiere y se corrige en el digest · una meta muestra su % de avance · foto+correo del mismo gasto = **una** transacción (no dos) · un desglose "2000 chanchería, resto pan" cuadra al total · arroz/atún quedan `Predecible=sí`, pan/chanchería `no`.
+- **Eval:** foto→categoría correcta · "aceptar todo" escribe sin duplicar · faro **calza con `Tarjetas y Deuda` B4:B8** (cifra viva, no hardcodeada; ~$2.297.966 tras v4) e intereses muertos $48.236 · el freno muestra la deuda antes de una cuota · la intención se infiere y se corrige en el digest · una meta muestra su % de avance · foto+correo del mismo gasto = **una** transacción (no dos) · un desglose "2000 chanchería, resto pan" cuadra al total · arroz/atún quedan `Predecible=sí`, pan/chanchería `no`.
 - **Semana:** 7 días registrando gastos reales, estable, evals verdes.
 
 ### 2. Salud `sal_`
@@ -134,8 +147,10 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 ## Tablero (una línea por módulo)
 **Actualizado 2026-07-02 por auditoría de código** (qué existe y está enganchado en `brain`/`scheduler`/`flows`,
 no telemetría de producción — el repo no dice si algo lleva sus 7 días estables en Railway).
-**Addendum 2026-07-16:** canon v8 (dos sombreros/dos planillas) + Tanda 1 (esperas unificadas) — ver el
-bloque "Trabajo transversal reciente" bajo el tablero.
+**Addendum 2026-07-16/17:** canon v8 (dos sombreros/dos planillas) + Tanda 1 (esperas unificadas) + fixes
+del brief (heartbeat de diagnóstico, `/brief` a demanda, fecha determinista) + cierre rediseñado (peso
+cada noche, franjas de comida, MITs/evento por voz) + digest vivo (mensaje anclado, chips top-3, commit
+único) — ver los ítems 1 y 2 del tablero y el bloque "Trabajo transversal reciente" abajo.
 
 Estados: ⬜ pendiente · 🔨 construido (scope de la ficha completo) · 🔶 parcial (falta scope de la ficha) ·
 🧪 prueba sem X/7 · ✅ promovido · ⚠️ riesgo (viola un invariante duro de `CLAUDE.md`, o el código
@@ -155,8 +170,13 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    Job diario 9:30 (dedup interno → solo actúa ~mensual). Validado end-to-end contra los PDFs reales de
    Nico: corrigió el faro de $2.028.091 (desactualizado) a **$2.297.966** (real) y encontró 11 compras de
    junio sin registrar (ya agregadas con categoría, con nueva categoría `Regalo` creada de paso).
-   46/46 evals unitarios verdes (`test_finanzas.py` + `test_estados_cuenta.py`). Semana de 7 días estable:
-   **sin confirmar**.
+   46/46 evals unitarios verdes (`test_finanzas.py` + `test_estados_cuenta.py`). **+ digest vivo
+   (2026-07-17):** el digest nocturno pasa de una serie de mensajes sueltos a **un solo mensaje anclado**
+   que se edita en el lugar (`core/flows.py`) — deja de inundar el chat. Muestra **chips top-3 aprendidos**
+   (categorías/comercios que Donna ya infirió con confianza, para confirmar con un toque en vez de
+   tipear) e **ítems por excepción** (solo lo que no pudo clasificar solo). Escribe todo en **un commit
+   único** a Sheets al cerrar, no fila por fila. 177 líneas de test nuevas (`tests/test_digest_vivo.py`).
+   Semana de 7 días estable: **sin confirmar**.
 2. **Salud** `sal_` — 🔨 completo (base + v2/E8: nutrición, ventanas, peso, score, eventos). El correlador
    ya está **encendido** (`core/correlador.py`, cruza sueño↔ánimo↔gasto en el cierre) y ahora respeta la
    guardia de eventos contextuales (un día con evento_externo no ensucia el patrón). MITs rediseñados:
@@ -167,6 +187,12 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    interactúa con un MIT a través de `tarea_listar`/`tarea_completar` (no del panel del cierre), pisa el
    bug de columnas de Productividad (ver ítem 6 abajo) y puede no encontrarlo o mostrarlo mal. 35 evals
    unitarios verdes (`tests/test_salud.py`) + `Semanal` se genera por primera vez (job domingo 22:30).
+   **+ cierre rediseñado (2026-07-16):** peso ahora se pide **cada cierre** (antes solo domingo);
+   horas de comida capturadas en dos franjas fijas (`6-12` / `18-01`, antes una sola ventana ambigua);
+   MITs y evento contextual del día ahora se capturan **por texto o por voz** indistintamente (antes solo
+   por chip); y el panel completo pasó a **cadena de una pregunta a la vez** en vez de un formulario con
+   todo junto — corta el abandono a mitad de cierre. `core/scheduler.py` + `core/frases.py` tocados;
+   35+ tests nuevos entre `test_salud.py`/`test_scheduler.py`/`test_frases.py`/`test_ux_fase0.py`.
    Semana de 7 días estable: **sin confirmar**.
 3. **Compras** `cmp_` — 🔨 **Fase 1 construida (2026-07-05).** `modules/compras.py`: lista manual del
    súper. `cmp_agregar` ("falta arroz", "queda poco atún, anótalo" → parser determinista, sin LLM, dedup
@@ -210,7 +236,24 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
 decay, guardia anti-patrones-falsos) y el correlador ya corre con 2 dominios vivos (Finanzas + Salud), antes
 de lo que sugiere la secuencia del roadmap.
 
-## Trabajo transversal reciente (2026-07-16 — cableado, aún sin commitear al abrir la sesión)
+## Trabajo transversal reciente
+
+### El brief mismo (touchpoint, no un módulo) — 2026-07-16
+
+Tres commits seguidos sobre `core/scheduler.py`, ninguno es un módulo del roadmap: arreglan y amplían el
+touchpoint de las 8:00 en sí.
+- **Heartbeat de diagnóstico en el brief (F1):** `core/diagnostico.py` ahora empuja al brief si algo se
+  rompió en las últimas 24h (antes solo se consultaba bajo demanda con `diag_estado`) — Donna avisa sola
+  en vez de que Nico tenga que preguntar. 26 líneas de test nuevas.
+- **Comando `/brief` a demanda (F1):** Nico puede pedir el brief en cualquier momento, de solo lectura —
+  **no consume** el brief programado de las 8:00 (si lo pide a las 10:00, igual llega el de las 8:00 al
+  día siguiente sin saltarse). `main.py` + `core/scheduler.py`.
+- **Fix día/fecha deterministas + domingo silencioso:** el brief calculaba día de semana y fecha con
+  lógica que podía desincronizarse; ahora es determinista. La revisión dominical (Módulo 2, ítem "Salud")
+  **fallaba en silencio** si Railway estaba caído a las 22:30 — ahora, si no corrió, se detecta y no se
+  pierde muda (mismo espíritu que `jobs_log`/`check_pendientes` ya documentado en el ítem 2 del tablero).
+
+### Canon v8 + Tanda 1 (2026-07-16 — cableado, aún sin commitear al abrir la sesión)
 
 Dos piezas que cruzan módulos, no son un módulo del roadmap. Ambas con tests verdes (204/204 en total).
 
@@ -241,6 +284,24 @@ tras validar). El gasto sin monto legible es la excepción de forma (vive en un 
 porque el tool corre sin contexto de Telegram) pero sigue las mismas tres reglas: `parece_monto` rechaza
 "recuérdame pagar el agua el 15" / "dormí 7 horas", cancelable y con TTL propio. 12 tests nuevos
 (`tests/test_espera.py`) + 5 en `tests/test_finanzas.py`.
+
+### Archivista (`arc_`) — fuera de los 8 módulos (F3-lite del [[Roadmap-Holding]])
+
+**No es un módulo de este roadmap:** es la rebanada delgada de F3 del proyecto **Córtex** (el segundo
+cerebro de Nico), que vive en el Roadmap-Holding, no en los 8 módulos personales. Se registra aquí solo
+para no perderle la pista. **Estado (2026-07-17): construido, sin commitear al abrir la sesión.**
+- **Qué hace:** Donna escribe en Córtex con `arc_guardar`, importando `cortex_core` vendorizado como copia
+  en `cortex_core/`. Solo **captura vía Telegram**. **NO incluye** la síntesis matinal en el brief ni el
+  cron del loop nocturno — eso es F3 completo (semana 4 del Holding).
+- **Cableado:** `modules/archivista.py` (nuevo), `cortex_core/` (vendor), cambios en `core/brain.py`,
+  `Procfile`, `scripts/start.sh` (clona el repo de Córtex al arrancar en Railway), `CLAUDE.md` (sección
+  Archivista) y `prompts/capacidades.md`. Probado end-to-end en local 2026-07-16.
+- **Degrada elegante:** si `cortex_core` no importa o el vault no está disponible, el tool responde sin
+  cortar la conversación (contrato de módulo #4).
+- **Pendiente (manual de Nico):** setear en Railway `CORTEX_GITHUB_TOKEN` (PAT scope `repo`),
+  `CORTEX_AUTOR=donna`, `CORTEX_GIT_AUTO=1`. Sin ellas, `arc_guardar` degrada solo. **Y commitear el
+  trabajo** (hoy está solo en el working tree).
+- **Ficha de tool:** `Spec_Herramientas_Nuevas.md` §arc_.
 
 ## Auditoría contra la planilla real (2026-07-01, actualizada 2026-07-02)
 

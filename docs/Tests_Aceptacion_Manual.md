@@ -10,6 +10,16 @@ comprobar que cada función y cada herramienta de un módulo hace lo que promete
 > están cableados en el bot pero no estaban aquí (Recordatorios, Correo/Spam, Proyectos/Tareas,
 > Diagnóstico). El mismo día se sacó agua/proteína del cierre (quedan como columnas legado) y el
 > peso pasó de preguntarse solo el domingo a preguntarse cada cierre.
+>
+> **Addendum 2026-07-17** (aún sin re-verificar test por test contra el código nuevo): el **digest
+> nocturno es ahora "vivo"** — un solo mensaje anclado que se edita en el lugar, con **chips top-3
+> aprendidos** (confirmar categoría/comercio de un toque) e ítems por excepción, y escribe en **un commit
+> único** al cerrar (ver sección 1.G, que puede necesitar ajuste). El **cierre se reorganizó** a una
+> **cadena de una pregunta a la vez** y ahora acepta MITs y evento contextual **por voz o por texto**
+> indistintamente; las **horas de comida** se capturan en dos franjas (mañana 6-12 / noche 18-01), así que
+> los valores exactos de los chips en 2.A4/A5 pueden diferir. Se agregó el comando **`/brief`** (brief a
+> demanda, solo lectura, no consume el de las 8:00). Canon de datos: **dos planillas** (Donna vida / Louis
+> plata) — las finanzas viven en Louis.
 
 ## Cómo usarlo
 - Marca `- [x]` cuando lo probaste y salió bien. Anota la fecha y, si algo falló, qué pasó
@@ -17,11 +27,14 @@ comprobar que cada función y cada herramienta de un módulo hace lo que promete
 - No hace falta hacerlos todos el mismo día — de hecho varios necesitan que pase tiempo real
   (un cargo real del banco, una boleta real, un par de días para ver si algo se duplica).
 - Commitea este archivo a medida que avanzas, así queda el historial de cuándo se probó cada cosa.
-- **Un módulo se da por completo (gate del roadmap) cuando todos sus tests están en verde**, no
-  antes — eso reemplaza al "7 días estable" mientras no tengamos telemetría real de producción.
+- **Gate híbrido (alineado con `Roadmap_Modular.md`):** todos los tests de un módulo en verde =
+  **🔨 construido** (habilita usarlo en serio); **7 días corriendo estable** en producción =
+  **✅ promovido** (recién ahí, el módulo siguiente). Los tests manuales son el sustituto de la
+  telemetría que aún no tenemos, no un reemplazo del sello de estabilidad.
 
 ## Atajos por comando (te ahorran esperar el reloj)
 - `/cierre` — abre el panel del cierre a mano (hábitos + ánimo + MIT + digest), sin esperar las 22:00.
+- `/brief` — muestra el brief a demanda (solo lectura; **no** consume el brief programado de las 8:00).
 - `/digest` — muestra el digest financiero del día en cualquier momento.
 - `/correos` — fuerza la sincronización de correos de gasto ahora (si no, corre solo cada 3h).
 - `/lista` — manda la lista del súper tocable (un ✅ por producto).

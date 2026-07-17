@@ -10,11 +10,11 @@ Python monolito · `python-telegram-bot` · Supabase + pgvector · Anthropic SDK
 
 ## Mapa del repo
 - `core/`: `brain` (carácter cacheado + inferencia validada), `memory` (Supabase), `sheets`, `scheduler` (brief/cierre), `voice` (Whisper), `agenda` (Calendar), `correo` + `email_gmail`, `flows`.
-- `modules/` (un prefijo por módulo): `salud` (`sal_`), `finanzas` (`fin_`), `compras` (`cmp_`), `recordatorios` (`rec_`), `correo`/`spam` (`cor_`), productividad/reconciliación (`prod_`), `aprendizaje` (`apr_`), `proactividad`, `familia` (`fam_`), `proyectos`. Dormidos: `tiempo` (`metas` puede despertar para las metas financieras de `fin_`).
+- `modules/` (un prefijo por módulo): `salud` (`sal_`), `finanzas` (`fin_`), `compras` (`cmp_`), `recordatorios` (`rec_`), `correo`/`spam` (`cor_`), productividad/reconciliación (`prod_`), `aprendizaje` (`apr_`), `proactividad`, `familia` (`fam_`), `proyectos`, `archivista` (`arc_` — escribe en Córtex vía `cortex_core` vendorizado; ver `CLAUDE.md` raíz §Archivista). Dormidos: `tiempo` (`metas` puede despertar para las metas financieras de `fin_`).
 - `migrations/` 001–011 · `prompts/` (constitution, anchors, capacidades) · `tests/` (evals.py, casos.yaml) · `setup_sheets.py`.
 
 ## Fuentes de verdad de datos
-Un workbook **Donna** (ver `Donna_Canonico.xlsx`): hojas de vida (Diario, Tareas, Proyectos, Recordatorios, Reconciliacion, Semanal, Compras, Config) + finanzas (Transacciones, Categorias, Tarjetas y Deuda, Dashboard, Comparativo, Metas, Compras_Detalle). Donna lee/escribe ahí; Nico casi no la toca. El esquema canónico lo fija `Donna_Canonico.xlsx`; `setup_sheets.py` debe calzar con él.
+**Dos sombreros, dos planillas (canon v8):** **Donna (vida)** `GOOGLE_SHEET_ID` — Diario, Tareas, Proyectos, Recordatorios, Reconciliacion, Semanal, Compras, Ideas, ⚙️ Config; **Louis (plata)** `GOOGLE_SHEET_ID_LOUIS` — Transacciones, Categorias, Tarjetas y Deuda, Dashboard, Comparativo, Metas, Compras_Detalle, Deuda_Mensual. Donna lee/escribe ahí; Nico casi no las toca. **Fuente de verdad del esquema:** la planilla real en el Drive de Nico + `setup_sheets.py` (`TABS_DONNA`/`TABS_LOUIS`) en código. *(El `Donna_Canonico.xlsx` se retiró del repo el 2026-07-17.)* Ver [`docs/Sombreros_Donna_Louis.md`](../docs/Sombreros_Donna_Louis.md).
 
 ## Contrato de módulo (no negociable)
 1. Un módulo **nunca toca el núcleo**; habla solo por su interfaz.

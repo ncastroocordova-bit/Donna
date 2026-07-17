@@ -6,8 +6,13 @@ contenido · salud/hábitos/parámetros personales · y a futuro lo tedioso de l
 clientes, cobranza; llamadas al final).
 
 Este documento NO reemplaza el `Roadmap_Modular.md` (que manda en la secuencia corta: Fase 0 →
-harness → autodiagnóstico → Compras → Familia). Define hacia dónde apunta todo eso y qué decisiones
+autodiagnóstico → Compras → Familia). Define hacia dónde apunta todo eso y qué decisiones
 de arquitectura conviene tomar HOY para no tener que demoler después.
+
+> **Nota (2026-07-17):** el **harness propio completo se descartó** el 2026-07-04 (se hizo una versión
+> *lean* del autodiagnóstico; ver `Roadmap_Modular.md` §Fase 0). Donde este documento lo lista como
+> paso de la secuencia (§6), léase "autodiagnóstico lean". Su valor real —la escalera de autonomía
+> hacia terceros— sigue vigente como visión, pero no como paso inmediato.
 
 ---
 
@@ -155,7 +160,7 @@ de aprobación posible en tiempo real.
 ## 6. Secuencia recomendada (extiende el roadmap, no lo reemplaza)
 
 ```
-Fase 0 (bugs)  →  Harness (con clase_accion desde el día 1)  →  Autodiagnóstico + variedad
+Fase 0 (bugs)  →  Autodiagnóstico lean + variedad   [harness completo descartado 2026-07-04]
   →  Compras F1 · Familia (cierra el roadmap personal comprometido)
   →  N1: Finanzas de negocio — separación personal/negocio + toque de dominio en el digest
   →  N2: Clientes/cobranza — CRM liviano + seguimientos nivel 2 (borrador+toque)
