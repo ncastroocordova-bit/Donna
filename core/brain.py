@@ -12,7 +12,7 @@ from anthropic import AsyncAnthropic
 
 from config import settings
 from core import agenda, diagnostico, memory
-from modules import aprendizaje, compras, estados_cuenta, finanzas, proyectos, recordatorios, salud, spam
+from modules import archivista, aprendizaje, compras, estados_cuenta, finanzas, proyectos, recordatorios, salud, spam
 
 logger = logging.getLogger(__name__)
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -169,17 +169,19 @@ WRITE_TOOLS = {
     "sal_set_hora", "sal_peso", "sal_evento_contextual",
     "rec_agregar",
     "proy_crear", "proy_actualizar", "proy_cerrar", "tarea_crear", "tarea_completar",
+    "arc_guardar",
 }
 
 # Tools del núcleo + módulos (con prefijo, sin solapamiento).
 ALL_TOOLS = (
     CORE_TOOLS + finanzas.TOOLS + salud.TOOLS + recordatorios.TOOLS
     + proyectos.TOOLS + spam.TOOLS + estados_cuenta.TOOLS + diagnostico.TOOLS + compras.TOOLS
+    + archivista.TOOLS
 )
 _HANDLERS = {
     **_CORE_HANDLERS, **finanzas.HANDLERS, **salud.HANDLERS, **recordatorios.HANDLERS,
     **proyectos.HANDLERS, **spam.HANDLERS, **estados_cuenta.HANDLERS, **diagnostico.HANDLERS,
-    **compras.HANDLERS,
+    **compras.HANDLERS, **archivista.HANDLERS,
 }
 
 
