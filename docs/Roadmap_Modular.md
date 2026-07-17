@@ -289,7 +289,8 @@ porque el tool corre sin contexto de Telegram) pero sigue las mismas tres reglas
 
 **No es un módulo de este roadmap:** es la rebanada delgada de F3 del proyecto **Córtex** (el segundo
 cerebro de Nico), que vive en el Roadmap-Holding, no en los 8 módulos personales. Se registra aquí solo
-para no perderle la pista. **Estado (2026-07-17): construido, sin commitear al abrir la sesión.**
+para no perderle la pista. **Estado (2026-07-17): construido, commiteado (`4e537aa` docs + `54e3259`
+código) y pusheado a `origin/main`; token ya seteado en Railway — falta verificar el primer guardado real.**
 - **Qué hace:** Donna escribe en Córtex con `arc_guardar`, importando `cortex_core` vendorizado como copia
   en `cortex_core/`. Solo **captura vía Telegram**. **NO incluye** la síntesis matinal en el brief ni el
   cron del loop nocturno — eso es F3 completo (semana 4 del Holding).
@@ -297,10 +298,17 @@ para no perderle la pista. **Estado (2026-07-17): construido, sin commitear al a
   `Procfile`, `scripts/start.sh` (clona el repo de Córtex al arrancar en Railway), `CLAUDE.md` (sección
   Archivista) y `prompts/capacidades.md`. Probado end-to-end en local 2026-07-16.
 - **Degrada elegante:** si `cortex_core` no importa o el vault no está disponible, el tool responde sin
-  cortar la conversación (contrato de módulo #4).
-- **Pendiente (manual de Nico):** setear en Railway `CORTEX_GITHUB_TOKEN` (PAT scope `repo`),
-  `CORTEX_AUTOR=donna`, `CORTEX_GIT_AUTO=1`. Sin ellas, `arc_guardar` degrada solo. **Y commitear el
-  trabajo** (hoy está solo en el working tree).
+  cortar la conversación (contrato de módulo #4). Dos mensajes distinguen la causa: *"Todavía no tengo el
+  cerebro (Córtex) conectado…"* = token/clone falló (se evalúa al importar); *"No pude escribirlo en el
+  cerebro ahora…"* = conectado pero la escritura/push falló.
+- **Config de Railway:** ✅ **`CORTEX_GITHUB_TOKEN` seteado por Nico (2026-07-17).** `CORTEX_AUTOR` y
+  `CORTEX_GIT_AUTO` ya traen default en `start.sh` (`donna` / `1`), así que el token era lo único
+  imprescindible.
+- **Pendiente de verificación (Nico):** (1) confirmar en los logs de Railway del deploy el mensaje
+  `[start.sh] Clonando Córtex…`; (2) mandar una nota real por Telegram (*"anota en el cerebro: …"*) y ver
+  que responde *"Guardado en el cerebro…"*; (3) confirmar el commit nuevo firmado por "Donna" en el repo
+  `ncastroocordova-bit/cortex` (carpeta `vault/00-Inbox/`). **Prerrequisito a chequear:** que ese repo de
+  Córtex exista en GitHub (el test local usó un vault en disco, no el clone).
 - **Ficha de tool:** `Spec_Herramientas_Nuevas.md` §arc_.
 
 ## Auditoría contra la planilla real (2026-07-01, actualizada 2026-07-02)
