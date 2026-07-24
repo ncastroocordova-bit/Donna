@@ -245,16 +245,35 @@ async def _registrar_faltantes(diffs: list[dict]) -> int:
     return n
 
 
+# Abonos que ENTRAN a la cuenta pero NO son ingreso real (2026-07-23, contra cartolas reales):
+#   · "línea de crédito" → es deuda que sacas, no plata que ganas (infla tasa de ahorro con préstamo)
+#   · "reembolso"/"reverso"/"devolución"/"anulación" → devuelven un GASTO, no generan ingreso nuevo
+# Análogo a `_NO_COMPRA` para los cargos.
+_NO_INGRESO = ("linea de credi", "línea de credi", "linea de créd", "reembolso", "reverso",
+               "devolucion", "devolución", "anulacion", "anulación")
+
+# Bajo este monto, un abono es ruido (cashback, intereses de ahorro, vueltos) — no entra al digest.
+# Decidido con Nico el 2026-07-23; ajustable.
+_INGRESO_MINIMO = 1000
+
+
 async def _registrar_abonos(banco: str, abonos: list[dict], dueno_rut: str) -> int:
-    """F5.7: los abonos de una cartola → candidatos de Ingreso. Regla del RUT propio (D12): un
-    abono desde una cuenta de Nico es traslado, no ingreso — se descarta sin registrar nada."""
+    """F5.7: los abonos de una cartola → candidatos de Ingreso. Tres filtros:
+      1. Regla del RUT propio (D12): un abono desde una cuenta de Nico es traslado, no ingreso.
+      2. `_NO_INGRESO`: plata de la línea de crédito (deuda) o reembolsos (devuelven un gasto).
+      3. Umbral `_INGRESO_MINIMO`: los abonos triviales (cashback de $4) son ruido, no ingreso.
+    Lo que pasa los tres entra al buffer como candidato de Ingreso, a confirmar en el digest."""
     n = 0
     propios = finanzas._dueno_nombres()
     medio = {"bch": "Banco de Chile", "mach": "Mach"}.get(banco, banco)
     for a in abonos:
         desc = str(a.get("descripcion", "")).strip()
         rut = str(a.get("rut_contraparte") or "")
+        if a["monto"] < _INGRESO_MINIMO:
+            continue
         if finanzas.es_contraparte_propia(desc, rut, dueno_rut, propios):
+            continue
+        if any(k in desc.lower() for k in _NO_INGRESO):
             continue
         datos = {
             "fecha": str(a.get("fecha", "")) or _hoy(), "tipo": "Ingreso", "categoria": "Otro Ingreso",
@@ -293,23 +312,40 @@ def _bucket_cobro(descripcion: str) -> str:
     return "otros cobros"
 
 
-def _clasificar_movimientos(movimientos: list[dict] | None) -> tuple[list[dict], list[dict], list[dict]]:
-    """Los `movimientos` crudos del extractor → (compras, cobros_banco, abonos). Determinista, sin
-    LLM: el modelo solo extrae fecha/descripción/monto/tipo; la clasificación de QUÉ es cada cargo
-    la hace `_NO_COMPRA` (ya probado, ya usado en la reconciliación desde Finanzas v4)."""
-    compras, cobros, abonos = [], [], []
+def _es_propio(dueno_rut: str, dueno_nombres: list[str]):
+    """Predicado (descripcion, rut) → ¿la contraparte es el propio Nico? Cierra sobre la config
+    para pasarlo a `_clasificar_movimientos`/`diferencial` sin que esos tengan que conocerla."""
+    def _p(descripcion, rut) -> bool:
+        return finanzas.es_contraparte_propia(str(descripcion or ""), str(rut or ""),
+                                              dueno_rut, dueno_nombres)
+    return _p
+
+
+def _clasificar_movimientos(movimientos: list[dict] | None, es_propio=None
+                            ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """Los `movimientos` crudos del extractor → (compras, cobros_banco, abonos, traslados).
+    Determinista, sin LLM: el modelo solo extrae fecha/descripción/monto/tipo; la clasificación de
+    QUÉ es cada cargo la hace `_NO_COMPRA` (ya probado desde Finanzas v4).
+
+    `es_propio(desc, rut)` (opcional): un movimiento entre cuentas de Nico —salga o entre plata— es
+    **traslado**, ni gasto ni ingreso (regla del RUT propio, D1+D12). Va a `traslados`, fuera del
+    diferencial. Sin este filtro, los 'TRASPASO A:/DE: Nicolas Castro' de la cartola se contaban
+    como compra faltante o como ingreso (encontrado con datos reales 2026-07-23)."""
+    compras, cobros, abonos, traslados = [], [], [], []
     for m in movimientos or []:
         monto = int(finanzas._num(m.get("monto", 0)))
         if monto <= 0:
             continue
         fila = {**m, "monto": monto}
-        if str(m.get("tipo", "")).strip().lower() == "abono":
+        if es_propio and es_propio(m.get("descripcion", ""), m.get("rut_contraparte")):
+            traslados.append(fila)
+        elif str(m.get("tipo", "")).strip().lower() == "abono":
             abonos.append(fila)
         elif any(k in str(m.get("descripcion", "")).lower() for k in _NO_COMPRA):
             cobros.append(fila)
         else:
             compras.append(fila)
-    return compras, cobros, abonos
+    return compras, cobros, abonos, traslados
 
 
 def _cerca(f1: str, f2: str, dias: int = 5) -> bool:
@@ -329,20 +365,22 @@ def _en_rango(fecha: str, desde, hasta) -> bool:
     return desde <= d <= hasta
 
 
-def diferencial(doc: dict, planilla: list[dict], hoy=None) -> dict:
+def diferencial(doc: dict, planilla: list[dict], hoy=None, es_propio=None) -> dict:
     """F5.2 + F5.3: el diferencial en plata de UN documento (un estado/cartola). Puro — no toca red,
     no escribe nada — para poder testearlo sin mocks de Sheets/Gmail/LLM.
 
     `doc` = lo que devuelve `_extraer` (+ banco/producto/fecha ya anotados por `procesar`).
     `planilla` = filas de `Transacciones` ya leídas (UNFORMATTED_VALUE), UNA sola vez por corrida —
     no por documento, para no releer la hoja N veces.
+    `es_propio` (opcional): predicado que excluye los traslados entre cuentas de Nico de las compras
+    (regla del RUT propio) — sin él, un 'TRASPASO A:Nicolas Castro' se reportaría como compra faltante.
 
-    Compara SOLO compras (nunca cobros del banco, nunca abonos — F5.1.5) contra la planilla, en el
-    RANGO del propio documento (`periodo_desde`/`periodo_hasta`); si el documento no trae período
-    legible, cae a una ventana de respaldo de 45 días y lo marca `periodo_estimado` — nunca presenta
-    un cuadre como exacto cuando el rango se adivinó."""
+    Compara SOLO compras (nunca cobros del banco, nunca abonos, nunca traslados propios) contra la
+    planilla, en el RANGO del propio documento (`periodo_desde`/`periodo_hasta`); si el documento no
+    trae período legible, cae a una ventana de respaldo de 45 días y lo marca `periodo_estimado` —
+    nunca presenta un cuadre como exacto cuando el rango se adivinó."""
     hoy = hoy or datetime.now(settings.tz).date()
-    compras, cobros, _ = _clasificar_movimientos(doc.get("movimientos"))
+    compras, cobros, _, _ = _clasificar_movimientos(doc.get("movimientos"), es_propio)
     desde_raw, hasta_raw = doc.get("periodo_desde"), doc.get("periodo_hasta")
     estimado = not (desde_raw and hasta_raw)
     if estimado:
@@ -441,6 +479,7 @@ async def procesar(max_n: int = 40, reconciliar: bool = True, forzar: bool = Fal
             dueno_rut = (await memory.get_perfil()).get("rut", "")
         except Exception:
             pass
+    es_propio = _es_propio(dueno_rut, finanzas._dueno_nombres())  # regla del RUT propio (D1+D12)
     for m in msgs:
         banco = _banco(m["remitente"], m["asunto"])
         if banco == "otro":
@@ -487,7 +526,7 @@ async def procesar(max_n: int = 40, reconciliar: bool = True, forzar: bool = Fal
             # comparables contra Transacciones; una línea de crédito no tiene "compras".
             if reconciliar and producto in ("tarjeta_credito", "cartola_cuenta_corriente"):
                 try:
-                    diff = diferencial(datos, planilla)
+                    diff = diferencial(datos, planilla, es_propio=es_propio)
                     resumen["reconciliaciones"].append(diff)
                     resumen["faltantes_agregados"] += await _registrar_faltantes([diff])
                 except Exception:
@@ -495,7 +534,7 @@ async def procesar(max_n: int = 40, reconciliar: bool = True, forzar: bool = Fal
             # F5.7: ingresos + saldo, solo cartola (única fuente con abonos/saldo de cuenta).
             if producto == "cartola_cuenta_corriente":
                 try:
-                    _, _, abonos = _clasificar_movimientos(datos.get("movimientos"))
+                    _, _, abonos, _ = _clasificar_movimientos(datos.get("movimientos"), es_propio)
                     resumen["ingresos_agregados"] += await _registrar_abonos(banco, abonos, dueno_rut)
                 except Exception:
                     logger.exception("estados_cuenta: no pude registrar los abonos")

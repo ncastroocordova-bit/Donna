@@ -719,9 +719,13 @@ def _dueno_nombres() -> list[str]:
 
 
 def _nombre_norm(n: str) -> str:
-    """Nombre comparable: sin tildes, sin dobles espacios, en minúsculas."""
+    """Nombre comparable, tokenizable: sin tildes, en minúsculas, y con la PUNTUACIÓN convertida a
+    espacio. Ese último paso importa: las cartolas escriben la contraparte pegada al conector —
+    'TRASPASO A:Nicolas Castro', 'TRASPASO DE:NICOLAS EMILIO CASTRO' — y sin separar el ':' el token
+    queda 'a:nicolas'/'de:nicolas', que no coincide con 'nicolas' y hace que la regla del RUT propio
+    NO reconozca los traslados de Nico entre sus cuentas (encontrado con datos reales 2026-07-23)."""
     s = unicodedata.normalize("NFKD", str(n or "")).encode("ascii", "ignore").decode()
-    return re.sub(r"\s+", " ", s).strip().lower()
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
 def es_contraparte_propia(nombre: str, rut: str, dueno_rut: str = "",

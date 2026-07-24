@@ -133,10 +133,41 @@ def test_clasificar_movimientos_compra_cobro_abono():
         {"descripcion": "Sueldo julio", "monto": 900000, "tipo": "abono"},
         {"descripcion": "monto en cero, se descarta", "monto": 0, "tipo": "cargo"},
     ]
-    compras, cobros, abonos = ec._clasificar_movimientos(movs)
+    compras, cobros, abonos, traslados = ec._clasificar_movimientos(movs)
     assert [c["descripcion"] for c in compras] == ["UNIMARC BELLAVIST"]
     assert {c["descripcion"] for c in cobros} == {"COBRO DE MANTENCIÓN MENSUAL", "INTERÉS ACUMULADO"}
     assert [a["descripcion"] for a in abonos] == ["Sueldo julio"]
+    assert traslados == []   # sin es_propio, nada es traslado
+
+
+def test_clasificar_movimientos_traslados_propios_con_glosa_del_banco():
+    """El caso real (cartola 2026-07-23): 'TRASPASO A:/DE:' pega el conector al nombre. Con la regla
+    del RUT propio activada, un traspaso entre cuentas de Nico —salga o entre plata— es traslado, ni
+    gasto ni ingreso. Un traspaso a/de un TERCERO sí cuenta (gasto si sale, ingreso si entra)."""
+    es_propio = ec._es_propio("", ["Nicolas Castro"])
+    movs = [
+        {"descripcion": "TRASPASO A:Nicolas Castro INTERNET", "monto": 70000, "tipo": "cargo"},
+        {"descripcion": "TRASPASO DE:NICOLAS EMILIO CASTRO INTERNET", "monto": 35000, "tipo": "abono"},
+        {"descripcion": "TRASPASO A:Patricio Araneda INTERNET", "monto": 20000, "tipo": "cargo"},
+        {"descripcion": "TRASPASO DE:MAURICIO ALEJANDRO CAS INTERNET", "monto": 300000, "tipo": "abono"},
+    ]
+    compras, _, abonos, traslados = ec._clasificar_movimientos(movs, es_propio)
+    assert {t["descripcion"] for t in traslados} == {
+        "TRASPASO A:Nicolas Castro INTERNET", "TRASPASO DE:NICOLAS EMILIO CASTRO INTERNET"}
+    assert [c["descripcion"] for c in compras] == ["TRASPASO A:Patricio Araneda INTERNET"]  # tercero → gasto
+    assert [a["descripcion"] for a in abonos] == ["TRASPASO DE:MAURICIO ALEJANDRO CAS INTERNET"]  # tercero → ingreso
+
+
+def test_diferencial_excluye_traslados_propios_de_las_faltantes():
+    """Un 'TRASPASO A:Nicolas Castro' NO debe aparecer como compra faltante — no es gasto."""
+    es_propio = ec._es_propio("", ["Nicolas Castro"])
+    doc = _doc(movimientos=[
+        {"fecha": "2026-06-01", "descripcion": "TRASPASO A:Nicolas Castro INTERNET", "monto": 70000, "tipo": "cargo"},
+        {"fecha": "2026-06-05", "descripcion": "SHELL", "monto": 10000, "tipo": "cargo"},
+    ])
+    d = ec.diferencial(doc, [], es_propio=es_propio)
+    assert [f["comercio"] for f in d["faltantes"]] == ["SHELL"]     # el traslado propio no está
+    assert d["compras_total"] == 10000
 
 
 def test_bucket_cobro_agrupa_por_palabra_clave():
@@ -259,6 +290,21 @@ def test_registrar_abonos_descarta_traspaso_propio(monkeypatch):
     assert n == 1
     assert llamadas[0]["tipo"] == "Ingreso" and llamadas[0]["monto"] == 900000
     assert llamadas[0]["categoria"] == "Otro Ingreso"
+
+
+def test_registrar_abonos_filtra_deuda_reembolso_y_ruido(monkeypatch):
+    """Tres cosas que ENTRAN a la cuenta pero NO son ingreso real (contra cartolas reales 2026-07-23):
+    plata de la línea de crédito (deuda), reembolsos (devuelven un gasto), y montos ínfimos (cashback)."""
+    llamadas = _mock_bufferizar(monkeypatch)
+    abonos = [
+        {"fecha": "2026-06-01", "descripcion": "TRANSFERENCIA DESDE LINEA DE CREDI OF. BAN", "monto": 65000},
+        {"fecha": "2026-06-07", "descripcion": "Reembolso compra con tarjeta virtual - GRAN ASIA", "monto": 3200},
+        {"fecha": "2026-06-17", "descripcion": "Abono cashback de openai - BciPlus+", "monto": 28},
+        {"fecha": "2026-06-08", "descripcion": "TRASPASO DE:MAURICIO ALEJANDRO CAS INTERNET", "monto": 150000},
+    ]
+    n = asyncio.run(ec._registrar_abonos("bch", abonos, dueno_rut=""))
+    assert n == 1                                        # solo Mauricio (tercero, > $1.000, ingreso real)
+    assert llamadas[0]["monto"] == 150000
 
 
 # ───────────────────────── Ola 5 · F5.7: saldo mensual (hoja propia) ─────────────────────────

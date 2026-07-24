@@ -527,6 +527,15 @@ def test_contraparte_propia_con_glosa_del_banco_y_segundo_nombre():
     assert finanzas.es_contraparte_propia("TRASPASO DE: NICOLAS EMILIO CASTRO INTERNET", "", "", propios)
 
 
+def test_contraparte_propia_con_conector_pegado_al_nombre():
+    """El formato REAL de la cartola pega el conector: 'TRASPASO A:Nicolas Castro' (sin espacio tras
+    los dos puntos). Sin separar la puntuación, el token queda 'a:nicolas' y NO matchea — así se
+    colaban ~15 traspasos propios como gasto y ~5 como ingreso (encontrado 2026-07-23)."""
+    propios = ["Nicolas Castro"]
+    assert finanzas.es_contraparte_propia("TRASPASO A:Nicolas Castro INTERNET", "", "", propios)
+    assert finanzas.es_contraparte_propia("TRASPASO DE:NICOLAS EMILIO CASTRO INTERNET", "", "", propios)
+
+
 def test_contraparte_propia_no_matchea_por_una_sola_palabra():
     """Exige nombre Y apellido — un tercero que comparte solo el primer nombre no debe colarse."""
     propios = ["Nicolas Castro"]
