@@ -35,7 +35,11 @@ class Settings(BaseSettings):
     gmail_refresh_token: str = ""
     outlook_client_id: str = ""
     outlook_refresh_token: str = ""
-    correo_dias: int = 2            # ventana de antigüedad para correos de gasto
+    # Ventana de antigüedad para correos de gasto. Era 2 y eso PERDÍA plata: si Donna no corría
+    # durante más de 2 días, esos gastos no se recuperaban nunca (auditoría 2026-07-23 — 3 movimientos
+    # quedaron fuera de Transacciones por esto). El dedup por ID_Único ya evita reprocesar, así que
+    # una ventana ancha no duplica; solo cuesta unas llamadas más a Gmail.
+    correo_dias: int = 14
     spam_hora: int = 9             # hora del digest de spam diario
     spam_max: int = 25             # tope de correos de spam a listar por digest
 

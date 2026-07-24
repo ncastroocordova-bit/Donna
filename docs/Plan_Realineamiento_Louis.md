@@ -305,9 +305,48 @@ columnas H e I (mismo patrón que ya usa `Transacciones!A`).
 
 ---
 
-# OLA 1 — El faro (bloqueada por: verificación con Nico)
+# OLA 1 — El faro — ✅ **EJECUTADA 2026-07-23**
 
-> Rama `fix/louis-faro`. Toca la cifra que Donna usa como verdad de tu deuda.
+> **Resultado: intereses muertos $57.256 → $63.908 (el real). 239 tests verdes.**
+> Rama `fix/louis-realineamiento`.
+
+| Ítem | Estado | Qué se hizo |
+|---|---|---|
+| F1.1 | ✅ | Celdas-input `C25`/`C37` con el interés **reportado por el estado**; `B25`/`B37` pasan a `=IF(N(Cxx)>0;Cxx;tasa×rotativa)` → el banco manda, el cálculo queda de respaldo. `_celdas_faro` devuelve `(fila, col, valor)` y escribe el interés |
+| F1.2 | ✅ | `procedencia()` + `texto_procedencia()`: Donna dice de qué mes es cada cifra y qué estado falta |
+| F1.3 | ✅ | Alerta de cupo excedido en `A11:B11`, viva: *"🚨 BCh +$30.608"* |
+| F1.4 | ✅ | `correo_dias` **2 → 14** ([config.py](../config.py)) |
+| F1.5 | ✅ | Sobregiro: verificado ($26) y descartado, sin cambios |
+
+**Lo que Donna dice ahora, contra la planilla real:**
+> *Cifras de: BCh línea de junio · BCh interés línea de julio · BCh tarjeta de junio · Mach tarjeta de
+> julio. **Aún no llega el estado de este mes de: BCh línea, BCh tarjeta.***
+
+**La sospecha sobre Mach se verificó y era infundada** — pero destapó dos cosas. El estado de Mach de
+julio dice:
+```
+3. CARGOS, COMISIONES, IMPUESTOS Y ABONOS      $ 10.738
+   IMPUESTO DECRETO LEY 3475        $ 109
+   INTERESES MORATORIOS             $ 9
+   INTERÉS ACUMULADO                $ 5.310   ← interés real
+   COBRO DE MANTENCIÓN MENSUAL      $ 5.310   ← misma cifra, pura coincidencia
+```
+Son **dos cargos distintos que dan el mismo monto**. El interés es real y ya entra al faro.
+
+**Dos hallazgos nuevos, NO corregidos (van a la Ola 5, que ya lee estos documentos):**
+1. **La mantención del faro está desactualizada:** `B35` dice **$5.257**, el estado dice **$5.310**.
+   `_celdas_faro` no escribe mantención, así que quedó congelada. Δ $53/mes.
+2. **Hubo intereses moratorios ($9) que nadie captura** — monto trivial, pero *señal de un pago
+   atrasado*, que sí importa. El extractor no los pide.
+
+Ambos se resuelven ampliando el esquema del extractor (pedir `mantencion` y `interes_moratorio`), que es
+justo lo que hay que tocar en la Ola 5 para leer las cartolas. Hacerlo dos veces sería trabajo perdido.
+
+---
+
+### (Plan original de la Ola 1, conservado para trazabilidad)
+
+Rama `fix/louis-faro`. Toca la cifra que Donna usa como verdad de tu deuda.
 
 ## F1.1 🟠 El faro calcula el interés en vez de usar el del estado de cuenta
 
