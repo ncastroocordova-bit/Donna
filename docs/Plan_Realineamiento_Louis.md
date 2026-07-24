@@ -714,29 +714,67 @@ dejarlo como celda visible en el Dashboard.
 
 ---
 
-# OLA 4 — Deuda de fondo (no bloquea nada, pero no desaparece sola)
+# OLA 4 — Deuda de fondo — ✅ **EJECUTADA 2026-07-23**
+
+> **251 tests verdes (+2, y 1 test corregido por un efecto colateral real de la Ola 3).**
 
 ## F4.1 ✅ Cero ingresos registrados — **resuelto por D12, se construye en F5.7**
-Las 69 filas son `Gasto`. **Ninguna `Ingreso`.** Por eso `Tasa de ahorro` da `-` y `¿Llego a fin de mes?`
-dice "negativo" siempre. `Categorias` tiene 4 categorías de Ingreso (`Freelance`, `Ayuda Familiar`,
-`Uber Eats`, `Clases`), ninguna usada.
+Sin cambios respecto al plan: sigue esperando F5.7 (Ola 5). Las 68 filas restantes son `Gasto`, ninguna
+`Ingreso`.
 
-**Ya tiene solución:** los abonos de las cartolas de cuenta corriente (F5.7), filtrados por la regla del
-RUT propio (D12). Este ítem deja de ser una decisión abierta y pasa a ser una consecuencia de la Ola 5.
+## F4.2 ✅ `Metas` cargada — 2 metas, con un bug de fórmula descubierto y evitado
 
-## F4.2 🟡 `Metas` vacío
-Solo el header. Finanzas v2 pedía 2-3 metas (fondo de emergencia, pagar TC) y el `Semanal`/digest las
-leen. Sin filas, `fin_metas` no tiene qué mostrar. Requiere que Nico las defina — no es código.
+Nico eligió cargar **ambas**: fondo de emergencia y pagar la deuda de tarjeta.
 
-## F4.3 🔵 `Subcategoría`: dos escritores, dos semánticas
-Filas de `correo` meten ahí el identificador de tarjeta (`****1969`, `Rut 78247927-K`,
-`Tarjeta ****5502`); las de `estado_cuenta` la dejan vacía. La columna no sirve para analizar nada.
-Decidir: columna `Tarjeta`/`Medio_Detalle` propia, o aceptar que `Subcategoría` es eso y renombrarla.
+**Bug encontrado antes de escribir:** `_progreso()` ([finanzas.py:532](../modules/finanzas.py:532)) es
+`actual / objetivo` — pensado para metas que **crecen** hacia un objetivo positivo. Con
+`Objetivo = 0` (lo obvio para "deuda en cero") la división es indefinida; el código lo sabe y devuelve
+`None` a propósito, así que el `%` habría quedado en blanco **para siempre**, ni siquiera al llegar a
+$0 de deuda.
 
-## F4.4 🔵 El mismo comercio bajo 3 nombres
-`negocio San Vale` (truncado) / `MERCADOPAGO*SANVA` / `MERCADOPAGO*SANVALEN`. Rompe el análisis por
-comercio y **debilita el matcher de F2.3**, que empareja por monto+fecha+comercio. Evaluar una tabla de
-alias de comercio (ya existen `_aplicar_reglas_comercio`) y normalizar al escribir.
+**Modelo que sí funciona con el código tal como está, confirmado con Nico:**
+
+| Meta | Objetivo | Actual (arranca en) | Semántica de Actual |
+|---|---|---|---|
+| Fondo de emergencia | $1.500.000 | $0 | cuánto has ahorrado |
+| Pagar deuda tarjeta | $2.299.639 (deuda REAL del faro, snapshot 2026-07-23) | $0 | cuánto **has bajado** — NO la deuda que queda |
+
+Para la deuda, `Objetivo` es la foto congelada de hoy y `Actual` crece con cada pago — el % sube hacia
+100% a medida que la deuda baja a cero. Es lo inverso de cómo se lee "Actual" en la meta de ahorro, así
+que la nota de la fila lo deja explícito para no confundir en 3 meses.
+
+⚠️ **Es 100% manual por ahora** (`fin_aportar_meta`, "aboné 50k a la deuda") — **no se sincroniza sola**
+con el faro cuando la deuda baja por el pago normal de la tarjeta. Conectarla al faro automáticamente
+queda fuera de esta ola; lo aporta el propio Nico, mismo patrón que el fondo de emergencia.
+
+## F4.3 ✅ `Subcategoría` → `Detalle_Medio`
+
+Ninguna fila la usó nunca como subcategoría real: siempre fue dígitos de tarjeta o RUT del destinatario
+(`modules/finanzas.py`, campo `subcategoria` del dict de transacción). Se renombró el header en la
+planilla real y en `setup_sheets.py` (fuente de verdad del esquema). **Cero cambios de código**: nada
+lee la columna por el literal `"Subcategoría"` — las escrituras son posicionales.
+
+## F4.4 ✅ Comercios normalizados — parcial a propósito
+
+Ya existía una regla aprendida (`sanva → negocio San Vale` en la tabla `comercios` de Supabase) que
+normaliza automáticamente **toda transacción nueva**. El problema era solo el pasado: una fila del
+2026-06-20 se escribió **antes** de que esa regla existiera y quedó con el nombre crudo
+`MERCADOPAGO*SANVA`. Se corrigió esa fila (+ su línea en `Compras_Detalle`) y `PUNTO CLAVE`/
+`Punto Clave` (mismo comercio, dos fuentes con distinto caso).
+
+**Deliberadamente NO se tocó:** `Unimarc` / `UNIMARC BELLAVIST` / `UNIMARC LOMAS DE SAN A`, y
+`STA ISABEL LOMAS` / `STA ISABEL LOMAS DE SA`. Son **sucursales distintas** (nombres de local
+distintos), no el mismo comercio mal escrito — fusionarlas habría perdido información real por una
+limpieza cosmética. Si en algún momento Nico quiere verlos agregados como una sola cadena, es una
+decisión de análisis, no una corrección de datos.
+
+## Efecto colateral real (no un bug): `DUENO_NOMBRES` cambia una regla de detección
+
+Al correr los tests después de setear `DUENO_NOMBRES=Nicolas Castro` en `.env`, un test que asumía
+*"sin RUT, Donna no puede saber que es interna"* falló — porque ahora **sí puede**: el nombre solo
+(que BCh también manda en el mismo correo) ya alcanza. Es exactamente el comportamiento que la Ola 3
+construyó a propósito. El test se dividió en dos, cada uno con su señal aislada por monkeypatch:
+sin RUT y sin nombre configurado (sigue sin poder saberlo) vs. sin RUT pero con nombre (ya reconoce).
 
 ---
 

@@ -72,7 +72,11 @@ TABS_DONNA = {
 # Deuda') no aparecen acá: viven en la planilla Louis y el código solo las lee por celda.
 TABS_LOUIS = {
     # Headers EXACTOS de la planilla real. Intención (v2): se infiere y se confirma en el digest.
-    "Transacciones": ["Fecha", "Tipo", "Categoría", "Subcategoría", "Comercio", "Monto",
+    # Ola 4 (2026-07-23): "Subcategoría" se renombró a "Detalle_Medio" — nunca guardó una
+    # subcategoría real, solo el nº de tarjeta o el RUT del destinatario de una transferencia
+    # (código en modules/finanzas.py, campo "subcategoria" del dict de transacción). El nombre
+    # viejo prometía algo que la columna nunca hizo.
+    "Transacciones": ["Fecha", "Tipo", "Categoría", "Detalle_Medio", "Comercio", "Monto",
                       "Medio", "Fuente", "ID_Único", "Intención"],
     "Categorias": ["Categoría", "Tipo", "Presupuesto Mensual", "Notas"],
     # NUEVO (v2): metas financieras con progreso. Sin input diario; Nico fija el Objetivo

@@ -448,10 +448,22 @@ def test_bch_transferencia_a_tercero_es_gasto():
     assert "12524337-1" in d["subcategoria"]
 
 
-def test_transferencia_interna_sin_rut_no_la_marca():
-    # Sin RUT del dueño configurado, no puede saber que es interna → la trata como gasto (se corrige en digest).
+def test_transferencia_interna_sin_ninguna_senal_no_la_marca(monkeypatch):
+    """Sin RUT Y sin DUENO_NOMBRES configurado, Donna no tiene ninguna señal → la trata como
+    gasto (se corrige en el digest). Desde que DUENO_NOMBRES existe (Ola 3), el nombre solo ya
+    basta para reconocerla aunque falte el RUT — por eso este test limpia también el nombre; si
+    solo se quitara el RUT, el nombre igual la reconocería (ver el test siguiente)."""
+    monkeypatch.setattr(finanzas, "_dueno_nombres", lambda: [])
     d = finanzas._parsear_determinista(FROM_BCH_TEF, "Transferencia a Terceros", BCH_TEF_INTERNA, "")
     assert not d.get("_interno")
+
+
+def test_transferencia_interna_el_nombre_solo_ya_basta(monkeypatch):
+    """Con DUENO_NOMBRES configurado (caso real desde la Ola 3), el nombre reconoce la
+    transferencia interna aunque no se pase el RUT — BCh manda ambos en el mismo correo."""
+    monkeypatch.setattr(finanzas, "_dueno_nombres", lambda: ["Nicolas Castro"])
+    d = finanzas._parsear_determinista(FROM_BCH_TEF, "Transferencia a Terceros", BCH_TEF_INTERNA, "")
+    assert d.get("_interno") is True
 
 
 # ── Ola 3 · D1/D12: la regla del RUT propio ──
