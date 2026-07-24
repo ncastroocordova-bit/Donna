@@ -581,7 +581,63 @@ de `Compras_Detalle` por `ID_Tx` **siempre** cuadra con el monto de `Transaccion
 
 ---
 
-# OLA 3 — Limpieza de datos (decisiones tomadas, lista para ejecutar)
+# OLA 3 — Limpieza de datos — ✅ **EJECUTADA 2026-07-23**
+
+> **250 tests verdes (+4).** Respaldo previo en `scratchpad/louis_bak_ola3.json`.
+
+| Ítem | Estado | Resultado |
+|---|---|---|
+| F3.3 | ✅ | 2 transacciones duplicadas + sus 2 líneas de detalle borradas (**−$72.340**) |
+| F3.1 | ✅ | `chancheria`→`Chanchería` · `Droga`→`Entretenimiento` · pago tarjeta→`Tarjeta Crédito` |
+| F3.2 | ✅ | 5 traspasos propios → `Tipo=Transferencia` (**−$40.500** del gasto) **+ el código que lo mantiene** |
+| F3.4 | ✅ | Intención vacía: **se dejan como están** (rellenarlas con una inferencia no confirmada contradice "se confirma en el digest") |
+| F3.5 | ✅ | Backfill de 59 líneas · 6 categorías fantasma corregidas · Dashboard cambia de fuente |
+
+**Cuadre final, verificado celda a celda:**
+```
+SUM(Compras_Detalle por ID_Tx) == Monto   →  68/68 transacciones ✓
+Categorías fuera del catálogo             →  NINGUNA ✓
+Bloque por categoría vs "Gastos del mes"  →  $415.152 == $415.152  ✓ cuadra
+```
+El **gasto de julio pasó de $514.992 a $415.152**: salieron $72.340 de duplicados y $27.500 de
+traspasos propios del mes.
+
+## 🔴 Error cometido durante la ejecución (y corregido)
+
+Al escribir la celda de control usé el rango `A41:D41` **sin prefijo de hoja**. La API de Sheets lo
+resuelve contra la **primera** hoja del libro — `Transacciones`, no `Dashboard` — y sobrescribió las
+columnas A-D de la fila 41 (un traspaso de $7.000). Se detectó en la verificación inmediata y se
+restauró desde el respaldo; las columnas E-J nunca se tocaron. **Lección para el resto del plan:
+todo rango va siempre con `Hoja!` explícito.** Es exactamente el tipo de fallo que justifica la regla
+"nada se escribe sin respaldo".
+
+## F3.5: dos hallazgos que solo aparecieron al cambiar la fuente
+
+**1. `Compras_Detalle` no puede filtrar por `Tipo`.** El `Tipo` vive en `Transacciones`, así que al
+sumar categorías desde el detalle los traspasos volvían a contar ($27.500). **Se corrigió la regla**:
+solo los **gastos** dejan línea de detalle — un traspaso o un ingreso no son compras. Es la garantía 0
+de `_filas_detalle`, y hace que el cuadre contra `Gastos del mes` sea exacto por construcción.
+
+**2. Faltaba el código que mantiene D1.** Los datos quedaron limpios, pero el próximo traspaso habría
+entrado como `Gasto` otra vez: `_parse_bch_transferencia` solo detectaba cuentas propias **por RUT**, y
+**Mach no manda RUT** en sus avisos — solo el nombre. Por eso los 5 traspasos de Mach pasaron. Se
+construyó `es_contraparte_propia(nombre, rut, dueno_rut, dueno_nombres)`, que compara por RUT cuando
+existe y por **nombre normalizado** (sin tildes, sin dobles espacios) cuando no.
+
+Además, el traspaso propio **ya no se descarta en silencio**: antes `procesar_correo` devolvía `None` y
+el movimiento desaparecía. Ahora se registra con `Tipo=Transferencia` — visible en la hoja, fuera del
+conteo de gasto.
+
+⚠️ **Pendiente de Nico (1 minuto, sin esto la regla no aplica a Mach):** agregar a `.env` y Railway
+```
+DUENO_NOMBRES=Nicolas Castro
+```
+(coma-separado si usa más de una forma del nombre). Sin esa variable, `es_contraparte_propia` solo
+puede resolver por RUT y los traspasos de Mach volverían a contarse como gasto.
+
+---
+
+### (Plan original de la Ola 3, conservado para trazabilidad)
 
 > Rama `fix/louis-datos`. **Dry-run obligatorio + respaldo de `Transacciones` antes de escribir.**
 > Ejecutar **después** de la Ola 2, para que lo que se limpie no se vuelva a ensuciar.

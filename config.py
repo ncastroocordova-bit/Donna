@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     # quedaron fuera de Transacciones por esto). El dedup por ID_Único ya evita reprocesar, así que
     # una ventana ancha no duplica; solo cuesta unas llamadas más a Gmail.
     correo_dias: int = 14
+    # Identidades propias de Nico, separadas por coma (ej. "Nicolas Castro,Nicolás E. Castro").
+    # Se usan junto al RUT del perfil para la REGLA DEL RUT PROPIO: un movimiento entre cuentas
+    # propias no es gasto ni ingreso, es traslado. Hace falta el nombre porque Mach no manda RUT
+    # en sus avisos de transferencia — solo el nombre del destinatario.
+    dueno_nombres: str = ""
     spam_hora: int = 9             # hora del digest de spam diario
     spam_max: int = 25             # tope de correos de spam a listar por digest
 

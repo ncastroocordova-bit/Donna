@@ -713,6 +713,33 @@ def _rut_norm(r: str) -> str:
     return re.sub(r"[.\-\s]", "", str(r or "")).lower()
 
 
+def _dueno_nombres() -> list[str]:
+    """Identidades propias de Nico desde la config (coma-separadas)."""
+    return [x.strip() for x in str(getattr(settings, "dueno_nombres", "") or "").split(",") if x.strip()]
+
+
+def _nombre_norm(n: str) -> str:
+    """Nombre comparable: sin tildes, sin dobles espacios, en minúsculas."""
+    s = unicodedata.normalize("NFKD", str(n or "")).encode("ascii", "ignore").decode()
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def es_contraparte_propia(nombre: str, rut: str, dueno_rut: str = "",
+                          dueno_nombres: list[str] | None = None) -> bool:
+    """¿La contraparte del movimiento es el propio Nico?
+
+    **Regla del RUT propio (D1 + D12 del realineamiento):** un movimiento entre cuentas de Nico no
+    es gasto ni es ingreso — es traslado. Solo cuenta lo que cruza hacia (o desde) un tercero.
+
+    Se compara por RUT cuando el banco lo trae (BCh) y por NOMBRE cuando no (Mach solo manda
+    'Nicolas Castro'). Por eso los 5 traspasos de Mach entraron como Gasto e inflaron julio en
+    $40.500 hasta la auditoría del 2026-07-23."""
+    if dueno_rut and rut and _rut_norm(rut) == _rut_norm(dueno_rut):
+        return True
+    n = _nombre_norm(nombre)
+    return bool(n) and n in {_nombre_norm(x) for x in (dueno_nombres or []) if str(x).strip()}
+
+
 TIPO_CAMBIO_USD = 1000  # estimación CLP/US$ (el correo solo trae US$); la compra se marca dudosa para confirmar.
 
 
@@ -774,8 +801,14 @@ def _parse_bch_transferencia(texto: str, dueno_rut: str) -> dict | None:
     rut_dest = mrut.group(1) if mrut else ""
     mfh = re.search(r"Fecha y Hora:\s*(.+?)\s+Transacci", texto)
     fecha = _fecha_iso(mfh.group(1)) if mfh else _hoy()
-    if dueno_rut and rut_dest and _rut_norm(rut_dest) == _rut_norm(dueno_rut):
-        return {"_interno": True, "comercio": nombre, "monto": monto}  # entre tus cuentas
+    if es_contraparte_propia(nombre, rut_dest, dueno_rut, _dueno_nombres()):
+        # Entre cuentas propias: NO es gasto, pero sí se registra (Tipo=Transferencia) para que el
+        # movimiento sea visible. El Dashboard filtra por Tipo="Gasto", así que queda fuera solo.
+        return {
+            "_interno": True, "tipo": "Transferencia", "monto": monto, "categoria": "Transferencias",
+            "subcategoria": f"Rut {rut_dest}" if rut_dest else "", "comercio": nombre or "Traspaso propio",
+            "medio": "Banco de Chile transferencia", "fecha": fecha,
+        }
     return {
         "tipo": "Gasto", "monto": monto, "categoria": "Transferencia",
         "subcategoria": f"Rut {rut_dest}" if rut_dest else "",
@@ -871,9 +904,10 @@ async def procesar_correo(raw: str, remitente: str = "", asunto: str = "", dueno
     det = _parsear_determinista(remitente, asunto, raw, dueno_rut)
     if det is not None:
         if det.get("_interno"):
-            logger.info("Transferencia interna detectada (no es gasto): %s $%s",
+            # Traspaso entre cuentas propias: se REGISTRA con Tipo=Transferencia (queda visible)
+            # pero no cuenta como gasto. Antes se descartaba en silencio y el movimiento se perdía.
+            logger.info("Traspaso propio detectado (no es gasto, se registra): %s $%s",
                         det.get("comercio", ""), det.get("monto", 0))
-            return None
         return await _bufferizar(det, "correo", reglas)
     # Residuo: formato no reconocido → LLM (con la pista del remitente).
     sender = _detectar_sender(remitente)
@@ -1041,10 +1075,13 @@ async def _filas_detalle(p: dict, items: list[dict], categoria_padre: str = "",
                          intencion_padre: str = "") -> list[list]:
     """Filas de `Compras_Detalle` para una transacción confirmada (ID_Tx = id_unico).
 
-    Tres garantías (Ola 2 del realineamiento, 2026-07-23) — de ellas depende que las métricas de
-    gasto por categoría, que salen de ESTA hoja, no mientan:
+    Cuatro garantías (Olas 2-3 del realineamiento, 2026-07-23) — de ellas depende que las métricas
+    de gasto por categoría, que salen de ESTA hoja, no mientan:
 
-    1. **Toda transacción deja al menos una línea** (D10). Un cargo sin ítems (bencina, la revisión
+    0. **Solo los GASTOS dejan detalle.** Un traspaso entre cuentas propias o un ingreso no son
+       compras; si dejaran línea, sumarían en el gasto por categoría (el SUMIFS de esta hoja no
+       puede filtrar por `Tipo`, que vive en `Transacciones`).
+    1. **Todo gasto deja al menos una línea** (D10). Un cargo sin ítems (bencina, la revisión
        técnica) escribe UNA línea por el monto completo heredando categoría e intención del padre.
        Lo que no esté en esta hoja es invisible para las métricas.
     2. **Ninguna categoría fuera del catálogo** (F2.2). Cada línea pasa por `_validar_categoria`,
@@ -1054,6 +1091,8 @@ async def _filas_detalle(p: dict, items: list[dict], categoria_padre: str = "",
        dejar plata fuera. Sin esto, `SUM(detalle por ID_Tx) == Monto` no se cumple y el Dashboard
        pierde plata en silencio cuando cambie de fuente (F3.5).
     """
+    if str(p.get("tipo", "Gasto")).strip().lower() not in ("", "gasto"):
+        return []       # traspasos e ingresos no son compras: no van a la hoja de detalle de gasto
     fecha, comercio = p.get("fecha") or _hoy(), p.get("comercio", "")
     idu, fuente = p.get("id_unico", ""), p.get("fuente", "")
     total = int(_num(p.get("monto")))

@@ -428,9 +428,14 @@ def test_bch_cargo():
     assert d["subcategoria"] == "****5502"
 
 
-def test_bch_transferencia_interna_se_ignora():
+def test_bch_transferencia_interna_se_registra_pero_no_es_gasto():
+    """Ola 3 (D1): el traspaso propio ya NO se descarta en silencio — se registra con
+    Tipo=Transferencia para que el movimiento sea visible, y el Dashboard (que filtra por
+    Tipo="Gasto") lo deja fuera del conteo solo."""
     d = finanzas._parsear_determinista(FROM_BCH_TEF, "Transferencia a Terceros", BCH_TEF_INTERNA, RUT)
-    assert d["_interno"] is True            # mismo RUT → entre cuentas propias, no es gasto
+    assert d["_interno"] is True            # mismo RUT → entre cuentas propias
+    assert d["tipo"] == "Transferencia"     # ...pero NO es gasto
+    assert d["categoria"] == "Transferencias"
     assert d["monto"] == 30000
 
 
@@ -447,6 +452,39 @@ def test_transferencia_interna_sin_rut_no_la_marca():
     # Sin RUT del dueño configurado, no puede saber que es interna → la trata como gasto (se corrige en digest).
     d = finanzas._parsear_determinista(FROM_BCH_TEF, "Transferencia a Terceros", BCH_TEF_INTERNA, "")
     assert not d.get("_interno")
+
+
+# ── Ola 3 · D1/D12: la regla del RUT propio ──
+# Un movimiento entre cuentas de Nico no es gasto NI ingreso: es traslado. Mach no manda RUT en
+# sus avisos, solo el nombre — por eso los 5 traspasos entraron como Gasto e inflaron julio en
+# $40.500 hasta la auditoría del 2026-07-23.
+
+def test_contraparte_propia_por_rut():
+    assert finanzas.es_contraparte_propia("Quien Sea", "12.345.678-9", "12345678-9")
+    assert not finanzas.es_contraparte_propia("Otro", "9.876.543-2", "12345678-9")
+
+
+def test_contraparte_propia_por_nombre_cuando_no_hay_rut():
+    """El caso Mach: sin RUT, hay que reconocerlo por nombre (con o sin tilde)."""
+    propios = ["Nicolas Castro"]
+    assert finanzas.es_contraparte_propia("Nicolás  Castro", "", "", propios)
+    assert finanzas.es_contraparte_propia("nicolas castro", "", "", propios)
+    assert not finanzas.es_contraparte_propia("Maria Baez", "", "", propios)
+
+
+def test_contraparte_propia_sin_config_no_adivina():
+    """Sin RUT ni nombres configurados no puede saberlo → lo trata como tercero (gasto)."""
+    assert not finanzas.es_contraparte_propia("Nicolas Castro", "", "", [])
+
+
+def test_traspaso_propio_no_deja_linea_de_detalle(_cat_real):
+    """Un traspaso no es una compra. Si dejara línea, sumaría en el gasto por categoría: el
+    SUMIFS de Compras_Detalle no puede filtrar por Tipo, que vive en Transacciones."""
+    p = {"fecha": "2026-07-05", "comercio": "Nicolas Castro", "id_unico": "ID4",
+         "fuente": "correo", "monto": 7000, "tipo": "Transferencia"}
+    assert asyncio.run(finanzas._filas_detalle(p, [], "Transferencias")) == []
+    p["tipo"] = "Gasto"
+    assert len(asyncio.run(finanzas._filas_detalle(p, [], "Transferencias"))) == 1
 
 
 def test_mach_credito():
