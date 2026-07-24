@@ -67,7 +67,7 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 - **Scope completo:** foto + manual + categorización + faro de deuda (con línea) + dashboard + digest nocturno en el cierre. **Correo NO** (va en Módulo 5).
 - **Scope v2 (añadido):** **intención del gasto** — columna `Intencion` (Necesario/Inversión/Deseo) en `Transacciones`, la infiere el extractor y la confirmas en el digest (sin fricción nueva); resumen mensual por intención. **Metas financieras con progreso** — tab `Metas` (`Meta · Objetivo · Actual · Progreso`), 2-3 metas (fondo de emergencia, pagar TC), leídas en el `Semanal`/digest. **Sin input diario.** *(No entra: cuentas con saldos auto / doble-entrada — rompe "registro sin fricción".)*
 - **Scope v3 (detalle de compra — alimenta la predicción de Compras):** la boleta deja de ser un solo total y se vuelve **ítem por ítem**.
-  - **Foto ítem-a-ítem:** `procesar_foto` lee cada ítem + precio + total → escribe el detalle en la hoja nueva `Compras_Detalle` (`Fecha · Comercio · Item · Cantidad · Precio · Categoria · Predecible · ID_Tx · Fuente`).
+  - **Foto ítem-a-ítem:** `procesar_foto` lee cada ítem + precio + total → escribe el detalle en la hoja nueva `Compras_Detalle` (`Fecha · Comercio · Item · Precio · Categoria · Predecible · ID_Tx` — 7 columnas desde la auditoría del 2026-07-24; ver el tablero).
   - **Correlación foto↔correo (jamás doble conteo):** el correo del banco es el **total canónico** (medio + monto confirmado); la foto aporta los **ítems**. Se aparean por **monto total + fecha (±1-2 días) + comercio** (fuzzy / vía reglas de comercio) → **una** transacción en `Transacciones` + sus líneas en `Compras_Detalle`. Hoy se contarían dos veces porque la foto lee "ALMACEN SAN VALENTIN" y el correo "MERCADOPAGO*SANVA"; el matcher lo resuelve por monto+fecha.
   - **Captura al momento:** cuando entra un cargo de un **comercio marcado "de compras"** (súper, almacén, San Valentín) **sin detalle**, Donna pregunta en el momento *"vi $X en San Valentín — ¿qué compraste?"* → respondes con **foto** (→ ítems) o con **desglose por categoría** ("2000 en chanchería, el resto pan" → 2000 Chanchería + resto Pan, el "resto" cuadra al total). Es un prompt **transaccional**, no cuenta contra el tope 1/día de Proactividad.
   - **Filtro de predicción:** cada línea se marca `Predecible` = **sí solo para despensa/reposición** (arroz, atún, fideos, aceite, azúcar, papel, limpieza) y **no para lo cotidiano/perecible** (pan, chanchería, verdura, comida preparada). **Solo las `Predecible=sí` alimentan el predictor de Compras Fase 2.**
@@ -388,6 +388,45 @@ datos en vivo:** [`docs/Plan_Realineamiento_Louis.md`](Plan_Realineamiento_Louis
 
 **Pendiente de Nico:** confirmar `DUENO_NOMBRES` en Railway (además de local) y revisar el primer
 digest real con candidatos de la Ola 5 (compras faltantes + ingresos detectados).
+
+## Auditoría de columnas de `Transacciones` y `Compras_Detalle` (2026-07-24) — ejecutada
+
+Pedida por Nico ("siento que algunas columnas no sirven para nada"). Se leyeron las dos hojas en
+vivo (68 transacciones, 65 líneas de detalle) y se cruzó cada columna contra el código que la
+escribe y la lee, y contra las fórmulas del Dashboard y el Comparativo.
+
+**La integridad estaba impecable** (0 líneas huérfanas, 0 descuadres, 0 celdas en error): el
+problema eran las columnas, no los datos.
+
+- **`Transacciones` 10 → 9.** Se borró `Detalle_Medio`: **write-only en todo el código** y
+  guardaba tres cosas en la misma celda (nº de tarjeta `****5502`, RUT del destino
+  `Rut 19986903-5`, glosa libre `Transferencia a terceros`). Lo único que aportaba —distinguir
+  débito de crédito— se rescató **normalizando `Medio`**, que tenía 8 valores mezclando tres ejes
+  (`Banco de Chile` x18 sin decir el producto, `Tarjeta crédito` x11 sin decir el banco, `Mach`
+  x8 que eran transferencias). Ahora son **5 valores de un solo eje** —de qué cuenta salió la
+  plata— garantizados por `finanzas.normalizar_medio()`, que corre **al escribir**, no en cada
+  parser: un parser nuevo ya no puede reintroducir una etiqueta suelta.
+- **`Compras_Detalle` 10 → 7.** Se borraron `Cantidad` (**0 de 65 filas llenas**), `Intención` y
+  `Fuente` (copias exactas del padre, recuperables por `ID_Tx`). **`Predecible` se mantuvo** pese
+  a estar en `no` al 100%: está vacía por la misma causa que `Cantidad`, no por inútil.
+- **La causa raíz de las tres columnas vacías:** `Fuente` solo tiene `correo` (57) y
+  `estado_cuenta` (11). **Cero fotos, cero dictados** — la captura ítem-a-ítem de Finanzas v3
+  nunca se ha usado en producción, y es la única vía que llena `Cantidad` y marca `Predecible=sí`.
+  Solo 2 de 68 transacciones tienen desglose real. **El predictor de Compras Fase 2 nacería sin
+  un solo dato**; mientras no entre una boleta por foto, esa fase no tiene insumo.
+- **Bug latente cerrado de paso:** `_ids_transacciones` leía el rango `A:I` y ubicaba `ID_Único`
+  por header — pero `ID_Único` estaba justo en la columna I. Una sola columna agregada a su
+  izquierda lo empujaba a J, fuera del rango: la guardia anti-duplicados devolvía un set vacío,
+  se apagaba sola y el digest habría escrito transacciones repetidas sin avisar. Ahora `A:Z`.
+- **Verificación:** respaldo completo de las 9 hojas antes de tocar nada; las fórmulas del
+  Dashboard y el Comparativo se reengancharon solas (`Transacciones!F`→`E`,
+  `Compras_Detalle!E`→`D`, `!F`→`E`); **ningún número del Dashboard se movió** y las 9 hojas
+  siguen con 0 errores. 276 tests verdes (3 nuevos sobre el vocabulario de `Medio`).
+- **Inferencia a confirmar por Nico:** las 11 filas que decían `Tarjeta crédito` sin banco ni nº
+  de tarjeta quedaron como **`BCh crédito`**. Evidencia: van del 21-may al 17-jun y el estado de
+  BCh cierra el 18-jun (`Deuda_Mensual`); es además la única tarjeta que no manda correo por
+  compra en pesos, que es justo por lo que faltaban y las trajo el estado de cuenta. Si eran de
+  Mach, se corrigen con un reemplazo en la columna F.
 
 ## Auditoría contra la planilla real (2026-07-01, actualizada 2026-07-02)
 

@@ -67,7 +67,7 @@ Tres momentos: **Brief 8:00** (casi todo lectura), **Cierre 22:00** (acá entra 
 - **Config:** horas brief/cierre, hábitos, meta hora dormir (23:00).
 
 ### Hojas de finanzas (workbook Donna)
-- **Transacciones** (base): Fecha · Tipo · Categoría · Detalle_Medio (nº de tarjeta o RUT destino, no una subcategoría) · Comercio · Monto · Medio · Fuente · ID_Único.
+- **Transacciones** (base): Fecha · Tipo · Categoría · Comercio · Monto · Medio · Fuente · ID_Único · Intención. `Medio` tiene un vocabulario cerrado de 5 valores (`Mach débito` · `Mach crédito` · `BCh débito` · `BCh crédito` · `Transferencia`): un solo eje, de qué cuenta salió la plata. *(`Detalle_Medio` se borró el 2026-07-24 — guardaba el nº de tarjeta o el RUT del destino y no la leía nadie; el dato crudo sigue en Supabase.)*
 - **Categorias:** Categoría · Tipo · Presupuesto Mensual · Notas.
 - **Tarjetas de Crédito + Línea:** cupos, deuda rotativa, tasa mensual, mantención, cuotas (valor/totales/restantes), línea (utilizado, interés).
 

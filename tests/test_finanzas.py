@@ -227,13 +227,45 @@ def _cat_real(monkeypatch):
     monkeypatch.setattr(finanzas, "_categorias_reales", fake)
 
 
+# ── Auditoría de columnas 2026-07-24: el vocabulario canónico de `Medio` ──
+# La hoja tenía OCHO valores mezclando banco, producto y operación ('Banco de Chile' x18 sin
+# decir débito o crédito, 'Tarjeta crédito' x11 sin decir de qué banco, 'Mach' x8 que en realidad
+# eran transferencias). Ahora un solo eje: de qué cuenta salió la plata.
+
+def test_normalizar_medio_desambigua_con_el_detalle():
+    """El caso que motivó todo: 'Mach' a secas era débito O transferencia según el detalle —
+    el dato que lo resolvía vivía en `Detalle_Medio`, la columna que nadie leía."""
+    assert finanzas.normalizar_medio("Mach", "Transferencia a terceros") == "Transferencia"
+    assert finanzas.normalizar_medio("Mach", "****1969") == "Mach débito"
+    assert finanzas.normalizar_medio("Banco de Chile", "****5502") == "BCh débito"
+    assert finanzas.normalizar_medio("Banco de Chile crédito (USD)", "****9371") == "BCh crédito"
+
+
+def test_normalizar_medio_la_operacion_gana_al_banco():
+    """'Banco de Chile transferencia' calza con banco Y con transferencia: manda la operación."""
+    assert finanzas.normalizar_medio("Banco de Chile transferencia", "Rut 19986903-5") == "Transferencia"
+    assert finanzas.normalizar_medio("Transferencia", "Pago de Tarjeta de Crédito") == "Transferencia"
+    assert finanzas.normalizar_medio("Transferencia recibida (Itaú)") == "Transferencia"
+
+
+def test_normalizar_medio_nunca_devuelve_algo_fuera_del_catalogo():
+    """La garantía dura: pase lo que pase, a la planilla llega uno de los seis. Un parser nuevo
+    no puede reintroducir una etiqueta suelta."""
+    for entrada in ("Mach débito", "Copec Pay", "MercadoPago", "", "cualquier cosa rara", None):
+        assert finanzas.normalizar_medio(entrada or "") in finanzas.MEDIOS_CANON
+
+
+# Layout de Compras_Detalle desde 2026-07-24 (7 columnas, antes 10):
+#   [0] Fecha · [1] Comercio · [2] Item · [3] Precio · [4] Categoría · [5] Predecible · [6] ID_Tx
+# Se fueron Cantidad (nunca se llenó), Intención y Fuente (copias del padre por ID_Tx).
+
 def test_filas_detalle_shape(_cat_real):
     p = {"fecha": "2026-06-20", "comercio": "Súper", "id_unico": "ID1", "fuente": "foto",
          "monto": 1290}
     items = [{"item": "arroz", "cantidad": 1, "precio": 1290, "categoria": "Alimentación",
               "intencion": "Necesario", "predecible": True}]
     assert asyncio.run(finanzas._filas_detalle(p, items))[0] == [
-        "2026-06-20", "Súper", "arroz", 1, 1290, "Alimentación", "Necesario", "sí", "ID1", "foto"]
+        "2026-06-20", "Súper", "arroz", 1290, "Alimentación", "sí", "ID1"]
 
 
 # ── Ola 2 · F2.1/F2.2: Compras_Detalle nunca guarda una categoría fuera del catálogo ──
@@ -254,7 +286,7 @@ def test_filas_detalle_valida_contra_el_catalogo(_cat_real):
     items = [{"item": "compota", "precio": 1000, "categoria": "Compota"},      # inventada
              {"item": "chancheria", "precio": 2109, "categoria": "Chanchería"}]
     filas = asyncio.run(finanzas._filas_detalle(p, items, "Alimentación", "Necesario"))
-    assert [f[5] for f in filas] == ["Otro Gasto", "Chanchería"]   # la fantasma cae al cajón
+    assert [f[4] for f in filas] == ["Otro Gasto", "Chanchería"]   # la fantasma cae al cajón
 
 
 # ── Ola 2 · F2.5/D10: TODA transacción deja al menos una línea de detalle ──
@@ -266,7 +298,7 @@ def test_sin_items_igual_escribe_una_linea(_cat_real):
          "monto": 15000}
     filas = asyncio.run(finanzas._filas_detalle(p, [], "Transporte", "Necesario"))
     assert len(filas) == 1
-    assert filas[0][4] == 15000 and filas[0][5] == "Transporte" and filas[0][8] == "ID2"
+    assert filas[0][3] == 15000 and filas[0][4] == "Transporte" and filas[0][6] == "ID2"
 
 
 def test_detalle_incompleto_se_cuadra_con_linea_sin_detallar(_cat_real):
@@ -276,8 +308,8 @@ def test_detalle_incompleto_se_cuadra_con_linea_sin_detallar(_cat_real):
          "monto": 4340}
     filas = asyncio.run(finanzas._filas_detalle(p, [{"item": "chanchería", "precio": 1840,
                                                      "categoria": "Chanchería"}], "Alimentación"))
-    assert sum(f[4] for f in filas) == 4340
-    assert filas[-1][2] == "(sin detallar)" and filas[-1][4] == 2500
+    assert sum(f[3] for f in filas) == 4340
+    assert filas[-1][2] == "(sin detallar)" and filas[-1][3] == 2500
 
 
 # ── Ola 2 · F2.3: el doble conteo contra lo YA escrito en la planilla ──

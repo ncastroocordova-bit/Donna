@@ -72,11 +72,13 @@ TABS_DONNA = {
 # Deuda') no aparecen acá: viven en la planilla Louis y el código solo las lee por celda.
 TABS_LOUIS = {
     # Headers EXACTOS de la planilla real. Intención (v2): se infiere y se confirma en el digest.
-    # Ola 4 (2026-07-23): "Subcategoría" se renombró a "Detalle_Medio" — nunca guardó una
-    # subcategoría real, solo el nº de tarjeta o el RUT del destinatario de una transferencia
-    # (código en modules/finanzas.py, campo "subcategoria" del dict de transacción). El nombre
-    # viejo prometía algo que la columna nunca hizo.
-    "Transacciones": ["Fecha", "Tipo", "Categoría", "Detalle_Medio", "Comercio", "Monto",
+    # 2026-07-24 (auditoría de columnas): se BORRÓ `Detalle_Medio` (ex "Subcategoría"). Nunca la
+    # leyó nadie —write-only en todo el código— y guardaba tres cosas distintas en la misma celda:
+    # el nº de tarjeta ('****5502'), el RUT del destinatario ('Rut 19986903-5') y glosa libre
+    # ('Transferencia a terceros'). Lo único que aportaba —distinguir débito de crédito— se
+    # rescató normalizando `Medio` a un vocabulario de un solo eje (finanzas.MEDIOS_CANON); el
+    # dato crudo sigue en `subcategoria` dentro del buffer/Supabase.
+    "Transacciones": ["Fecha", "Tipo", "Categoría", "Comercio", "Monto",
                       "Medio", "Fuente", "ID_Único", "Intención"],
     "Categorias": ["Categoría", "Tipo", "Presupuesto Mensual", "Notas"],
     # NUEVO (v2): metas financieras con progreso. Sin input diario; Nico fija el Objetivo
@@ -85,8 +87,13 @@ TABS_LOUIS = {
     "Metas": ["Meta", "Objetivo", "Actual", "Progreso", "Notas"],
     # Detalle de compra ítem-a-ítem (v3). Una transacción de Transacciones puede tener N líneas
     # acá (ID_Tx = ID_Único del padre). Headers EXACTOS de la planilla real.
-    "Compras_Detalle": ["Fecha", "Comercio", "Item", "Cantidad", "Precio", "Categoría",
-                        "Intención", "Predecible", "ID_Tx", "Fuente"],
+    # 2026-07-24 (auditoría de columnas): se borraron `Cantidad` (0 de 65 filas llenas — solo la
+    # llena la foto ítem-a-ítem, que nunca se ha usado en producción: `Fuente` solo tenía 'correo'
+    # y 'estado_cuenta'), `Intención` y `Fuente` (copias exactas del padre, recuperables por
+    # ID_Tx). `Predecible` SE MANTIENE: está en 'no' al 100% por la misma falta de fotos, no por
+    # inútil, y es el insumo del predictor de Compras Fase 2 (canon).
+    "Compras_Detalle": ["Fecha", "Comercio", "Item", "Precio", "Categoría",
+                        "Predecible", "ID_Tx"],
     # Historial mes a mes de deuda (Finanzas v4). Una fila por (Mes, Banco, Producto); lo escribe
     # modules/estados_cuenta.py al leer los estados de cuenta del banco. Registro visible.
     "Deuda_Mensual": ["Mes", "Banco", "Producto", "Deuda", "Cupo", "Interés mes", "Pago mínimo",

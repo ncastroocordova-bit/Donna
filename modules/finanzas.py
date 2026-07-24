@@ -529,6 +529,40 @@ def _intencion_de(categoria: str) -> str:
     return "Necesario"
 
 
+# ───────────────────────── Vocabulario canónico de `Medio` (2026-07-24) ─────────────────────────
+# Antes cada parser escribía su propia etiqueta y la hoja terminó con OCHO valores que mezclaban
+# tres ejes: banco ('Banco de Chile'), producto ('Tarjeta crédito' — sin decir de qué banco) y
+# operación ('Mach' a secas eran las transferencias). Con ese vocabulario era imposible cortar el
+# gasto por medio de pago: 'Banco de Chile' x18 no distinguía débito de crédito, y el único dato
+# que lo desambiguaba (el nº de tarjeta) vivía en `Detalle_Medio`, una columna que nadie leía.
+#
+# Ahora hay UN eje —de qué cuenta salió la plata— y la normalización corre en UN solo lugar (al
+# escribir a la planilla), no repartida entre los seis parsers. Así un parser nuevo no puede
+# reintroducir un valor suelto: pase lo que pase, a la hoja llega uno de estos seis.
+MEDIOS_CANON = ("Mach débito", "Mach crédito", "BCh débito", "BCh crédito", "Transferencia", "Otro")
+
+
+def normalizar_medio(medio: str, detalle: str = "") -> str:
+    """Cualquier etiqueta de medio de pago → el vocabulario canónico. `detalle` es el antiguo
+    `subcategoria` (nº de tarjeta o glosa): sigue llegando en el dict de la transacción aunque ya
+    no se escriba a la planilla, y es lo que desambigua los casos que el medio solo no resuelve
+    (ej. medio='Mach' + detalle='Transferencia a terceros' → Transferencia, no Mach débito).
+
+    El orden de los chequeos importa: 'Banco de Chile transferencia' calza con banco Y con
+    transferencia — manda la operación, porque la plata sale de la cuenta corriente igual."""
+    blob = _norm(f"{medio} {detalle}")
+    if not blob.strip():
+        return "Otro"
+    if "transferencia" in blob or "traspaso" in blob:
+        return "Transferencia"
+    es_credito = "credito" in blob
+    if "mach" in blob:
+        return "Mach crédito" if es_credito else "Mach débito"
+    if "banco de chile" in blob or "bch" in blob or "edwards" in blob:
+        return "BCh crédito" if es_credito else "BCh débito"
+    return "Otro"       # Copec Pay, MercadoPago y cualquier rail nuevo: no son una cuenta
+
+
 def _progreso(actual, objetivo) -> int | None:
     """% de avance de una meta (0-100, con tope). None si el objetivo no es positivo."""
     o = _num(objetivo)
@@ -1032,9 +1066,14 @@ async def _ids_transacciones() -> set[str]:
 
     La hoja canónica trae un banner en la fila 1 y los headers en la 2, y la columna
     se llama 'ID_Único' (con tilde). Por eso ubicamos la columna por su header en vez de
-    asumir que está en la fila 1."""
+    asumir que está en la fila 1.
+
+    El rango es `A:Z`, no `A:I`: con `A:I` la guardia dependía de que `ID_Único` no pasara de la
+    columna I, donde estaba justo al borde. Agregar UNA columna a su izquierda la empujaba a J,
+    fuera del rango leído → la función devolvía un set vacío, el anti-duplicado se apagaba solo
+    y el digest empezaba a escribir transacciones repetidas sin que nada avisara."""
     try:
-        filas = await sheets.get_rows(HOJA_TX, "A:I", sheet_id=sheets.fin_id())
+        filas = await sheets.get_rows(HOJA_TX, "A:Z", sheet_id=sheets.fin_id())
     except Exception:
         logger.exception("_ids_transacciones: no pude leer Transacciones")
         return set()
@@ -1109,11 +1148,17 @@ async def _filas_detalle(p: dict, items: list[dict], categoria_padre: str = "",
        parte y no dijo "el resto"), se agrega una línea `(sin detallar)` por la diferencia en vez de
        dejar plata fuera. Sin esto, `SUM(detalle por ID_Tx) == Monto` no se cumple y el Dashboard
        pierde plata en silencio cuando cambie de fuente (F3.5).
+
+    7 columnas (antes 10). El 2026-07-24 se retiraron `Cantidad` (0 de 65 filas llenas: solo la
+    llenaba la foto ítem-a-ítem, que nunca se usó), `Intención` y `Fuente` (copias exactas del
+    padre, recuperables con un lookup por `ID_Tx`). `Predecible` se mantiene aunque hoy sea 'no'
+    en el 100% de las filas: está vacía por la misma razón que `Cantidad` —falta la foto—, y es
+    el insumo de Compras Fase 2 por canon.
     """
     if str(p.get("tipo", "Gasto")).strip().lower() not in ("", "gasto"):
         return []       # traspasos e ingresos no son compras: no van a la hoja de detalle de gasto
     fecha, comercio = p.get("fecha") or _hoy(), p.get("comercio", "")
-    idu, fuente = p.get("id_unico", ""), p.get("fuente", "")
+    idu = p.get("id_unico", "")
     total = int(_num(p.get("monto")))
     lineas = list(items or [])
     if not lineas:                                    # (1) sin desglose → una línea por el total
@@ -1128,9 +1173,8 @@ async def _filas_detalle(p: dict, items: list[dict], categoria_padre: str = "",
     for l in lineas:
         cat, _ = await _validar_categoria(l.get("categoria") or categoria_padre)   # (2)
         filas.append([
-            fecha, comercio, l.get("item", ""), l.get("cantidad", ""), int(_num(l.get("precio"))),
-            cat, l.get("intencion") or intencion_padre, "sí" if l.get("predecible") else "no",
-            idu, fuente,
+            fecha, comercio, l.get("item", ""), int(_num(l.get("precio"))), cat,
+            "sí" if l.get("predecible") else "no", idu,
         ])
     return filas
 
@@ -1152,11 +1196,15 @@ async def confirmar_digest(correcciones: dict | None = None) -> dict:
     for item in plan["a_escribir"]:
         p = item["p"]
         try:
+            # 9 columnas (antes 10): `Detalle_Medio` se retiró de la planilla el 2026-07-24 —
+            # nadie la leía y mezclaba nº de tarjeta, RUT y glosa en la misma celda. El dato
+            # sigue viviendo en `subcategoria` dentro del buffer/Supabase, y acá se usa para
+            # desambiguar el medio antes de descartarlo.
             await sheets.append_row(HOJA_TX, [
                 p.get("fecha") or _hoy(), p.get("tipo", "Gasto"), item["categoria"],
-                p.get("subcategoria", ""), p.get("comercio", ""), int(_num(item["monto"])),
-                p.get("medio", ""), p.get("fuente", ""), p.get("id_unico", ""),
-                item["intencion"],
+                p.get("comercio", ""), int(_num(item["monto"])),
+                normalizar_medio(p.get("medio", ""), p.get("subcategoria", "")),
+                p.get("fuente", ""), p.get("id_unico", ""), item["intencion"],
             ], sheet_id=sheets.fin_id())
             # Detalle a Compras_Detalle, ligado por ID_Tx = id_unico. SIEMPRE ≥1 línea (D10): las
             # métricas de gasto por categoría salen de esa hoja, no de esta.

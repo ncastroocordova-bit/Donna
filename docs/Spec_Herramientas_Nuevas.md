@@ -175,7 +175,7 @@ Detalle de implementación de las herramientas que el canon agrega o cambia. Aco
 
 **Propósito:** que la boleta deje de ser un solo total y se vuelva ítem-a-ítem, **sin doble conteo** entre la foto y el correo, y que Donna pregunte qué compraste cuando el cargo no trae detalle. Es el insumo que la **predicción de Compras (Fase 2)** necesita. **Finanzas escribe el detalle; Compras solo lo lee** (sin solapar tools).
 
-**Esquema:** tab nuevo `Compras_Detalle` (`Fecha · Comercio · Item · Cantidad · Precio · Categoria · Predecible(si|no) · ID_Tx · Fuente(foto|desglose|lista)`). `ID_Tx` = `ID_Unico` de la transacción padre en `Transacciones`. La suma de `Precio` por `ID_Tx` **cuadra al total** de la transacción (línea "resto/varios" si falta). Flag `es_compras` en las reglas de comercio (Supabase).
+**Esquema:** tab nuevo `Compras_Detalle` (`Fecha · Comercio · Item · Precio · Categoria · Predecible(si|no) · ID_Tx`). `ID_Tx` = `ID_Unico` de la transacción padre en `Transacciones`. *(Auditoría 2026-07-24: se borraron `Cantidad` —0 de 65 filas llenas—, `Intención` y `Fuente` —copias exactas del padre, recuperables por `ID_Tx`.)* La suma de `Precio` por `ID_Tx` **cuadra al total** de la transacción (línea "resto/varios" si falta). Flag `es_compras` en las reglas de comercio (Supabase).
 
 **Firmas:**
 - `procesar_foto(img) -> {items:[{item,cantidad,precio}], total, comercio, fecha}` — Vision aislada; **lee cada ítem** (hoy devuelve un solo total). Escribe 1 fila en `Transacciones` (total) + N en `Compras_Detalle`.
