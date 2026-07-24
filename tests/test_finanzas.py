@@ -218,12 +218,98 @@ def test_digest_intencion_mixta_con_detalle():
     assert plan["a_escribir"][0]["items"] == items
 
 
-def test_filas_detalle_shape():
-    p = {"fecha": "2026-06-20", "comercio": "Súper", "id_unico": "ID1", "fuente": "foto"}
-    items = [{"item": "arroz", "cantidad": 1, "precio": 1290, "categoria": "Arroz",
+@pytest.fixture
+def _cat_real(monkeypatch):
+    """Catálogo de `Categorias` como el real, para que `_validar_categoria` valide de verdad."""
+    async def fake():
+        return {finanzas._norm(c): c for c in
+                ["Alimentación", "Chanchería", "Transporte", "Hogar", "Ropa", "Otro Gasto"]}
+    monkeypatch.setattr(finanzas, "_categorias_reales", fake)
+
+
+def test_filas_detalle_shape(_cat_real):
+    p = {"fecha": "2026-06-20", "comercio": "Súper", "id_unico": "ID1", "fuente": "foto",
+         "monto": 1290}
+    items = [{"item": "arroz", "cantidad": 1, "precio": 1290, "categoria": "Alimentación",
               "intencion": "Necesario", "predecible": True}]
-    assert finanzas._filas_detalle(p, items)[0] == [
-        "2026-06-20", "Súper", "arroz", 1, 1290, "Arroz", "Necesario", "sí", "ID1", "foto"]
+    assert asyncio.run(finanzas._filas_detalle(p, items))[0] == [
+        "2026-06-20", "Súper", "arroz", 1, 1290, "Alimentación", "Necesario", "sí", "ID1", "foto"]
+
+
+# ── Ola 2 · F2.1/F2.2: Compras_Detalle nunca guarda una categoría fuera del catálogo ──
+# Regresión de la auditoría 2026-07-23: `_categoria_item` capitalizaba el nombre del ítem como
+# categoría y metió 'Compota', 'Pan', 'Pago movida', 'Calzado', 'Bebidas' — ninguna existe en
+# `Categorias`, así que sumaban $0 en toda métrica por categoría.
+
+def test_categoria_item_no_inventa_categorias():
+    assert finanzas._categoria_item("compota") == "Otro Gasto"          # antes: "Compota"
+    assert finanzas._categoria_item("zapatos emi") == "Otro Gasto"      # antes: "Zapatos emi"
+    assert finanzas._categoria_item("compota", "Alimentación") == "Alimentación"  # hereda del padre
+    assert finanzas._categoria_item("chanchería") == "Chanchería"       # lo que sí mapea, mapea
+
+
+def test_filas_detalle_valida_contra_el_catalogo(_cat_real):
+    p = {"fecha": "2026-07-06", "comercio": "SUPER GANGA", "id_unico": "ID9", "fuente": "correo",
+         "monto": 3109}
+    items = [{"item": "compota", "precio": 1000, "categoria": "Compota"},      # inventada
+             {"item": "chancheria", "precio": 2109, "categoria": "Chanchería"}]
+    filas = asyncio.run(finanzas._filas_detalle(p, items, "Alimentación", "Necesario"))
+    assert [f[5] for f in filas] == ["Otro Gasto", "Chanchería"]   # la fantasma cae al cajón
+
+
+# ── Ola 2 · F2.5/D10: TODA transacción deja al menos una línea de detalle ──
+
+def test_sin_items_igual_escribe_una_linea(_cat_real):
+    """Un cargo suelto (bencina) también debe aparecer en Compras_Detalle: las métricas de gasto
+    salen de esa hoja, así que lo que no esté ahí es invisible."""
+    p = {"fecha": "2026-07-08", "comercio": "SHELL", "id_unico": "ID2", "fuente": "correo",
+         "monto": 15000}
+    filas = asyncio.run(finanzas._filas_detalle(p, [], "Transporte", "Necesario"))
+    assert len(filas) == 1
+    assert filas[0][4] == 15000 and filas[0][5] == "Transporte" and filas[0][8] == "ID2"
+
+
+def test_detalle_incompleto_se_cuadra_con_linea_sin_detallar(_cat_real):
+    """Si Nico detalla parte y no dice 'el resto', la diferencia NO puede quedar fuera: si no,
+    SUM(detalle) != Monto y el Dashboard pierde plata en silencio al cambiar de fuente (F3.5)."""
+    p = {"fecha": "2026-07-15", "comercio": "San Vale", "id_unico": "ID3", "fuente": "dictado",
+         "monto": 4340}
+    filas = asyncio.run(finanzas._filas_detalle(p, [{"item": "chanchería", "precio": 1840,
+                                                     "categoria": "Chanchería"}], "Alimentación"))
+    assert sum(f[4] for f in filas) == 4340
+    assert filas[-1][2] == "(sin detallar)" and filas[-1][4] == 2500
+
+
+# ── Ola 2 · F2.3: el doble conteo contra lo YA escrito en la planilla ──
+# El caso real: correo el 15/07 por $4.340 (ya en la planilla) + dictado el 16/07 por lo mismo.
+# `fin_correlacionar` solo mira el buffer, que se vacía en el digest de cada noche.
+
+def _reg(idu, fecha, monto, detalle=False):
+    return {"id": idu, "fecha": fecha, "monto": monto, "tiene_detalle": detalle}
+
+
+def test_correlaciona_dictado_contra_transaccion_ya_escrita():
+    pend = [_pend("b1", "2026-07-16_4340_SanVale", monto=4340, fecha="2026-07-16",
+                  items=[{"item": "pan", "precio": 2340}], fuente="dictado")]
+    regs = [_reg("2026-07-15_4340_MERCADOPAGO*SANVA", "2026-07-15", 4340)]
+    out = finanzas.fin_correlacionar_registradas(pend, regs)
+    assert len(out) == 1
+    assert out[0]["drop"] == "b1"
+    assert out[0]["adjuntar_a"] == "2026-07-15_4340_MERCADOPAGO*SANVA"
+
+
+def test_no_correlaciona_si_la_transaccion_ya_tiene_detalle():
+    """Si ya está itemizada, un dictado del mismo monto es otra compra, no la misma."""
+    pend = [_pend("b1", "x", monto=4340, fecha="2026-07-16", items=[{"item": "pan", "precio": 4340}])]
+    regs = [_reg("ID-viejo", "2026-07-15", 4340, detalle=True)]
+    assert finanzas.fin_correlacionar_registradas(pend, regs) == []
+
+
+def test_no_correlaciona_fuera_de_ventana_ni_por_monto_distinto():
+    pend = [_pend("b1", "x", monto=4340, fecha="2026-07-25", items=[{"item": "pan", "precio": 4340}])]
+    assert finanzas.fin_correlacionar_registradas(pend, [_reg("A", "2026-07-15", 4340)]) == []
+    pend2 = [_pend("b2", "y", monto=9999, fecha="2026-07-16", items=[{"item": "pan", "precio": 9999}])]
+    assert finanzas.fin_correlacionar_registradas(pend2, [_reg("A", "2026-07-15", 4340)]) == []
 
 
 # ───────────────────────── Foto → categoría (procesar_foto, Vision mockeada) ─────────────────────────

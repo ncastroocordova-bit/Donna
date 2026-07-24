@@ -442,9 +442,63 @@ que se la pregunten.
 
 ---
 
-# OLA 2 — El código que ensucia (bloqueada por: D3)
+# OLA 2 — El código que ensucia — ✅ **EJECUTADA 2026-07-23**
 
-> Rama `fix/finanzas-categorias`. Sin esto, la Ola 3 se vuelve a ensuciar sola.
+> **246 tests verdes (+7).** Rama `fix/louis-realineamiento`.
+
+| Ítem | Estado | Qué se hizo |
+|---|---|---|
+| F2.1 | ✅ | `_categoria_item` ya no inventa: mapea → hereda del padre → `Otro Gasto`. Nunca `nombre.capitalize()` |
+| F2.2 | ✅ | `_filas_detalle` pasa **toda** línea por `_validar_categoria`, igual que `Transacciones` |
+| F2.3 | ✅ | `fin_correlacionar_registradas` + 2ª pasada contra la planilla |
+| F2.4 | ✅ | **Medido, sin tocar código** — ver abajo |
+| F2.5 | ✅ | Toda transacción escribe ≥1 línea de detalle, y las líneas **siempre suman el total** |
+
+## ⚠️ F2.3: el diagnóstico de este plan estaba equivocado
+
+La versión anterior decía *"el matcher no cubre `dictado`, hay que incluirlo"*. **Falso.**
+`fin_correlacionar` ([finanzas.py:643](../modules/finanzas.py:643)) ya toma cualquier entrada con
+`items`, venga de foto o de dictado.
+
+**La causa real:** la correlación corre **solo sobre el buffer de pendientes**, y el buffer se vacía en
+el digest de cada noche. El cargo de San Valentín llegó por correo el **15/07** y se escribió a la
+planilla esa noche; cuando Nico dictó la misma compra el **16/07**, ya no quedaba nada en el buffer
+contra qué aparear → segunda transacción por el mismo gasto.
+
+**Solución construida:** `fin_correlacionar_registradas(pendientes, registradas)` — 2ª pasada que
+aparea el detalle contra transacciones **ya escritas** (monto exacto + fecha ±2d), adjunta los ítems al
+`ID_Tx` existente y descarta la entrada del buffer. Salta las que ya tienen detalle: si una compra ya
+está itemizada, un dictado del mismo monto es otra compra, no la misma.
+
+## F2.5: garantía extra sobre lo planeado — el detalle **siempre** cuadra
+
+El plan decía que si el desglose no suma el total, se escriba una sola línea por el total. **Se hizo
+algo mejor:** se agrega una línea `(sin detallar)` por la diferencia, conservando lo que Nico sí
+detalló. Descartar su desglose para "arreglar" el cuadre habría sido perder información real.
+
+Esto garantiza `SUM(Compras_Detalle por ID_Tx) == Monto` **siempre**, que es la precondición de F3.5
+(cuando el Dashboard cambie de fuente). Sin esa garantía, el cambio de fuente perdería plata en silencio.
+
+## F2.4: medido, y el clasificador **no se toca**
+
+Se corrió `_predecible` sobre las 12 líneas reales:
+
+| Ítem | ¿`no` correcto? |
+|---|---|
+| chanchería ×4, pan ×2 | ✅ excluidos **por diseño** (perecible/cotidiano) |
+| cervezas, Wombat, zapatos emi, Pago movida, canelar | ✅ no son despensa |
+| **compota** | ⚠️ discutible — es reposición (para Emilio) |
+
+**11 de 12 correctos.** El clasificador funciona; la muestra simplemente casi no tiene despensa. Con
+n=12 y un solo caso dudoso, cambiar `_PREDECIBLE_KW` sería sobreajustar. **Se revisa a las ~30 líneas**,
+como decía el gate. *(Las categorías sucias que se ven ahí — `Compota`, `Pan`, `Pago movida` — son las
+que ya existían; F2.1/F2.2 impiden nuevas, y F3.x limpia las viejas.)*
+
+---
+
+### (Plan original de la Ola 2, conservado para trazabilidad)
+
+Rama `fix/finanzas-categorias`. Sin esto, la Ola 3 se vuelve a ensuciar sola.
 
 ## F2.1 🟡 `_categoria_item` inventa categorías
 

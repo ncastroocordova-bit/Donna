@@ -571,17 +571,26 @@ def _intencion_resumen(items: list[dict] | None) -> str:
     return next(iter(ints)) if len(ints) == 1 else "Mixto"
 
 
-def _categoria_item(nombre: str) -> str:
-    """Categoría de una línea de detalle a partir del nombre del ítem. Usa el mapa de comercios
-    si calza (ej. 'chanchería'→Chanchería); si no, capitaliza el nombre como categoría suelta."""
+def _categoria_item(nombre: str, categoria_padre: str = "") -> str:
+    """Categoría de una línea de detalle. Usa el mapa de comercios si calza ('chanchería'→Chanchería);
+    si no, hereda la de la transacción padre; si tampoco hay, 'Otro Gasto'.
+
+    NUNCA inventa una categoría con el nombre del ítem. Hasta la auditoría del 2026-07-23 hacía
+    `nombre.capitalize()`, y eso metió 6 categorías fantasma en `Compras_Detalle` ('Compota', 'Pan',
+    'Pago movida', 'Calzado', 'Bebidas', 'entretenimiento') que no existen en `Categorias` — y por lo
+    tanto suman $0 en cualquier métrica por categoría."""
     cat = _categoria_de(nombre)
-    return cat if cat != "Otro Gasto" else (nombre.strip().capitalize() or "Otro Gasto")
+    if cat != "Otro Gasto":
+        return cat
+    return str(categoria_padre or "").strip() or "Otro Gasto"
 
 
-def _linea_detalle(raw: dict, comercio: str = "") -> dict:
-    """Normaliza una línea de detalle (de foto o desglose) con categoría/intención/predecible."""
+def _linea_detalle(raw: dict, comercio: str = "", categoria_padre: str = "") -> dict:
+    """Normaliza una línea de detalle (de foto o desglose) con categoría/intención/predecible.
+    La categoría acá es la MEJOR APUESTA; la validación contra `Categorias` ocurre al escribir,
+    en `_filas_detalle` (que es async y sí puede leer el catálogo)."""
     nombre = str(raw.get("item") or raw.get("nombre") or "").strip()
-    categoria = str(raw.get("categoria") or "").strip() or _categoria_item(nombre)
+    categoria = str(raw.get("categoria") or "").strip() or _categoria_item(nombre, categoria_padre)
     blob = f"{nombre} {categoria}"
     return {
         "item": nombre,
@@ -655,6 +664,38 @@ def fin_correlacionar(pendientes: list[dict]) -> list[dict]:
             usados.add(match["id"])
             merges.append({"keep": match["id"], "drop": d["id"], "items": d.get("items")})
     return merges
+
+
+def fin_correlacionar_registradas(pendientes: list[dict], registradas: list[dict]) -> list[dict]:
+    """Segunda pasada de la correlación: aparea una entrada CON detalle (foto/dictado) contra una
+    transacción **ya escrita** en `Transacciones`.
+
+    Por qué hace falta: `fin_correlacionar` solo mira el buffer, y el buffer se vacía en el digest
+    de cada noche. Si el cargo llega por correo el día 15 y Nico dicta la misma compra el 16, el
+    correo YA está en la planilla y no queda contra qué aparear → se cuenta DOS VECES. Es
+    exactamente el caso de los $4.340 de San Valentín (auditoría 2026-07-23), que el canon prohíbe.
+
+    Aparea por monto exacto + fecha ±2 días, igual que la primera pasada. Salta las transacciones
+    que YA tienen detalle: si una compra ya está itemizada, un dictado posterior es una compra
+    distinta que casualmente costó lo mismo, no la misma.
+
+    Devuelve `{drop, adjuntar_a, items}`: `drop` = la entrada del buffer (no crea transacción
+    nueva); `adjuntar_a` = el `ID_Único` de la transacción registrada, que se queda con los ítems.
+    Puro y testeable (no toca red)."""
+    usados = set()
+    out = []
+    for d in [p for p in pendientes if p.get("items")]:
+        match = next(
+            (t for t in registradas
+             if t.get("id") and t["id"] not in usados and not t.get("tiene_detalle")
+             and int(_num(t.get("monto"))) == int(_num(d.get("monto")))
+             and _fecha_cerca(str(t.get("fecha", "")), str(d.get("fecha", "")))),
+            None,
+        )
+        if match:
+            usados.add(match["id"])
+            out.append({"drop": d["id"], "adjuntar_a": match["id"], "items": d.get("items")})
+    return out
 
 
 def _fecha_iso(s: str) -> str:
@@ -996,15 +1037,44 @@ def _planificar_digest(pendientes: list[dict], correcciones: dict, ya_en_planill
     return {"a_escribir": a_escribir, "a_descartar": a_descartar, "duplicadas": duplicadas}
 
 
-def _filas_detalle(p: dict, items: list[dict]) -> list[list]:
-    """Construye las filas de Compras_Detalle para una transacción confirmada (ID_Tx = id_unico)."""
+async def _filas_detalle(p: dict, items: list[dict], categoria_padre: str = "",
+                         intencion_padre: str = "") -> list[list]:
+    """Filas de `Compras_Detalle` para una transacción confirmada (ID_Tx = id_unico).
+
+    Tres garantías (Ola 2 del realineamiento, 2026-07-23) — de ellas depende que las métricas de
+    gasto por categoría, que salen de ESTA hoja, no mientan:
+
+    1. **Toda transacción deja al menos una línea** (D10). Un cargo sin ítems (bencina, la revisión
+       técnica) escribe UNA línea por el monto completo heredando categoría e intención del padre.
+       Lo que no esté en esta hoja es invisible para las métricas.
+    2. **Ninguna categoría fuera del catálogo** (F2.2). Cada línea pasa por `_validar_categoria`,
+       igual que `Transacciones`. Antes no lo hacía: por ahí entraron las 6 categorías fantasma.
+    3. **Las líneas SIEMPRE suman el total del padre.** Si el desglose viene corto (Nico detalló
+       parte y no dijo "el resto"), se agrega una línea `(sin detallar)` por la diferencia en vez de
+       dejar plata fuera. Sin esto, `SUM(detalle por ID_Tx) == Monto` no se cumple y el Dashboard
+       pierde plata en silencio cuando cambie de fuente (F3.5).
+    """
     fecha, comercio = p.get("fecha") or _hoy(), p.get("comercio", "")
     idu, fuente = p.get("id_unico", ""), p.get("fuente", "")
-    return [[
-        fecha, comercio, l.get("item", ""), l.get("cantidad", ""), int(_num(l.get("precio"))),
-        l.get("categoria", ""), l.get("intencion", ""), "sí" if l.get("predecible") else "no",
-        idu, fuente,
-    ] for l in items]
+    total = int(_num(p.get("monto")))
+    lineas = list(items or [])
+    if not lineas:                                    # (1) sin desglose → una línea por el total
+        lineas = [{"item": comercio or "(sin detalle)", "precio": total,
+                   "categoria": categoria_padre, "intencion": intencion_padre}]
+    elif total > 0:                                   # (3) el desglose debe cuadrar con el total
+        resto = total - sum(int(_num(l.get("precio"))) for l in lineas)
+        if resto > 0:
+            lineas.append({"item": "(sin detallar)", "precio": resto,
+                           "categoria": categoria_padre, "intencion": intencion_padre})
+    filas = []
+    for l in lineas:
+        cat, _ = await _validar_categoria(l.get("categoria") or categoria_padre)   # (2)
+        filas.append([
+            fecha, comercio, l.get("item", ""), l.get("cantidad", ""), int(_num(l.get("precio"))),
+            cat, l.get("intencion") or intencion_padre, "sí" if l.get("predecible") else "no",
+            idu, fuente,
+        ])
+    return filas
 
 
 async def confirmar_digest(correcciones: dict | None = None) -> dict:
@@ -1030,8 +1100,10 @@ async def confirmar_digest(correcciones: dict | None = None) -> dict:
                 p.get("medio", ""), p.get("fuente", ""), p.get("id_unico", ""),
                 item["intencion"],
             ], sheet_id=sheets.fin_id())
-            # Detalle ítem-a-ítem (v3): N líneas a Compras_Detalle, ligadas por ID_Tx = id_unico.
-            for fila in _filas_detalle(p, item.get("items") or []):
+            # Detalle a Compras_Detalle, ligado por ID_Tx = id_unico. SIEMPRE ≥1 línea (D10): las
+            # métricas de gasto por categoría salen de esa hoja, no de esta.
+            for fila in await _filas_detalle(p, item.get("items") or [],
+                                             item["categoria"], item["intencion"]):
                 try:
                     await sheets.append_row(HOJA_DETALLE, fila, sheet_id=sheets.fin_id())
                 except Exception:
@@ -1119,6 +1191,67 @@ async def fin_aplicar_correlacion() -> int:
             logger.exception("fin_aplicar_correlacion: no pude aplicar un merge")
     if n:
         logger.info("Correlación: %d gasto(s) foto/dictado cruzados con su cargo del correo.", n)
+    n += await _correlacionar_contra_planilla()
+    return n
+
+
+async def _transacciones_registradas() -> list[dict]:
+    """`Transacciones` como {id, fecha, monto, tiene_detalle} para la 2ª pasada de correlación.
+    `tiene_detalle` sale de los ID_Tx presentes en `Compras_Detalle`. Degrada a [] si no puede leer:
+    sin esto la correlación se salta, no rompe la ingesta."""
+    fid = sheets.fin_id()
+    try:
+        tx = await sheets.get_dicts(HOJA_TX, sheet_id=fid, value_render="UNFORMATTED_VALUE")
+    except Exception:
+        logger.exception("_transacciones_registradas: no pude leer Transacciones")
+        return []
+    try:
+        det = await sheets.get_dicts(HOJA_DETALLE, sheet_id=fid, value_render="UNFORMATTED_VALUE")
+        con_detalle = {str(d.get("ID_Tx", "")).strip() for d in det}
+    except Exception:
+        logger.exception("_transacciones_registradas: no pude leer Compras_Detalle")
+        con_detalle = set()
+    out = []
+    for t in tx:
+        idu = str(t.get("ID_Único", "")).strip()
+        if not idu:
+            continue
+        out.append({"id": idu, "fecha": str(t.get("Fecha", "")).strip(),
+                    "monto": _num(t.get("Monto", 0)), "tiene_detalle": idu in con_detalle})
+    return out
+
+
+async def _correlacionar_contra_planilla() -> int:
+    """Aplica `fin_correlacionar_registradas`: adjunta los ítems a la transacción YA registrada y
+    descarta la entrada del buffer, en vez de escribir una segunda transacción por el mismo gasto."""
+    try:
+        pend = await memory.buffer_pendientes()
+    except Exception:
+        return 0
+    if not any(p.get("items") for p in pend):
+        return 0
+    registradas = await _transacciones_registradas()
+    if not registradas:
+        return 0
+    por_id = {t["id"]: t for t in registradas}
+    n = 0
+    for m in fin_correlacionar_registradas(pend, registradas):
+        t = por_id[m["adjuntar_a"]]
+        p = next((x for x in pend if x["id"] == m["drop"]), {})
+        try:
+            filas = await _filas_detalle(
+                {"fecha": t["fecha"], "comercio": p.get("comercio", ""), "id_unico": t["id"],
+                 "fuente": p.get("fuente", ""), "monto": t["monto"]},
+                m["items"], p.get("categoria", ""), p.get("intencion", ""))
+            for fila in filas:
+                await sheets.append_row(HOJA_DETALLE, fila, sheet_id=sheets.fin_id())
+            await memory.buffer_marcar(m["drop"], "descartada")
+            n += 1
+        except Exception:
+            logger.exception("_correlacionar_contra_planilla: no pude adjuntar el detalle")
+    if n:
+        logger.info("Correlación 2ª pasada: %d detalle(s) adjuntados a transacciones ya escritas "
+                    "(evita el doble conteo del canon).", n)
     return n
 
 
