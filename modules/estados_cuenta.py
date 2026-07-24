@@ -33,20 +33,30 @@ HIST_COLS = ["Mes", "Banco", "Producto", "Deuda", "Cupo", "Interés mes", "Pago 
 
 QUERY = "from:bancochile.cl OR from:machbank.cl OR from:mach.cl OR subject:(estado de cuenta OR cartola)"
 
-# (banco, producto) → celdas-input de 'Tarjetas y Deuda' (col B = índice 1). Las fórmulas del
-# faro (B4:B8) NO se tocan: se recalculan de estas.
-def _celdas_faro(banco: str, producto: str, d: dict) -> list[tuple[int, float]]:
+# (banco, producto) → celdas-input de 'Tarjetas y Deuda'. Devuelve (fila_1based, col_0based, valor).
+# Las fórmulas del faro (B4:B8) NO se tocan: se recalculan de estas.
+#   col B = inputs de siempre (deuda, cupo, interés de la línea).
+#   col C = interés REPORTADO por el estado de cuenta de la tarjeta. B25/B37 son
+#           =IF(N(Cxx)>0;Cxx;tasa*rotativa), así que el dato del banco MANDA y el cálculo
+#           queda solo de respaldo. Sin esto el faro subreportaba: Mach declara $5.310 de
+#           interés y el faro calculaba $0 porque su tasa-input es 0 (auditoría 2026-07-23).
+_COL_B, _COL_C = 1, 2
+
+
+def _celdas_faro(banco: str, producto: str, d: dict) -> list[tuple[int, int, float]]:
     out = []
     if producto == "tarjeta_credito":
-        f_deuda, f_cupo = (29, 28) if banco == "bch" else (40, 39)
+        f_deuda, f_cupo, f_interes = (29, 28, 25) if banco == "bch" else (40, 39, 37)
         if d.get("deuda_total"):
-            out.append((f_deuda, int(d["deuda_total"])))
+            out.append((f_deuda, _COL_B, int(d["deuda_total"])))
         if d.get("cupo"):
-            out.append((f_cupo, int(d["cupo"])))
+            out.append((f_cupo, _COL_B, int(d["cupo"])))
+        if d.get("interes_mes"):
+            out.append((f_interes, _COL_C, int(d["interes_mes"])))
     elif producto == "linea_credito" and d.get("deuda_total"):
-        out.append((44, int(d["deuda_total"])))       # monto utilizado de la línea
+        out.append((44, _COL_B, int(d["deuda_total"])))   # monto utilizado de la línea
     elif producto == "linea_interes" and d.get("interes_mes"):
-        out.append((45, int(d["interes_mes"])))
+        out.append((45, _COL_B, int(d["interes_mes"])))
     return out
 
 
@@ -204,7 +214,8 @@ async def procesar(max_n: int = 40, reconciliar: bool = True, forzar: bool = Fal
     """Baja los estados nuevos, extrae, actualiza faro + historial, reconcilia. Devuelve el
     resumen para el reporte. Cada (correo+adjunto) se procesa una sola vez (dedup en memoria);
     `forzar=True` reprocesa todo (para backfill/validación)."""
-    resumen = {"nuevos": 0, "bancos": set(), "registros": [], "faltantes": [], "deuda_actual": 0, "delta": None}
+    resumen = {"nuevos": 0, "bancos": set(), "registros": [], "faltantes": [], "deuda_actual": 0,
+               "delta": None, "procedencia": []}
     if not gmail.disponible():
         return resumen
     msgs = await gmail.buscar_estados(QUERY, max_n)
@@ -245,8 +256,8 @@ async def procesar(max_n: int = 40, reconciliar: bool = True, forzar: bool = Fal
             # historial + faro
             try:
                 await _upsert_historial(datos)
-                for fila, val in _celdas_faro(banco, producto, datos):
-                    await sheets.set_cell(HOJA_TARJETAS, fila, 1, val, sheet_id=sheets.fin_id())
+                for fila, col, val in _celdas_faro(banco, producto, datos):
+                    await sheets.set_cell(HOJA_TARJETAS, fila, col, val, sheet_id=sheets.fin_id())
             except Exception:
                 logger.exception("estados_cuenta: no pude actualizar faro/historial")
             if producto == "tarjeta_credito":
@@ -255,13 +266,19 @@ async def procesar(max_n: int = 40, reconciliar: bool = True, forzar: bool = Fal
                 await memory.marcar_correo_visto("estadocta", clave_dedup, "estado_cuenta")
             except Exception:
                 pass
-    # faro recalculado + delta vs mes anterior
+    # faro recalculado + delta vs mes anterior + de qué mes es cada cifra
     try:
         faro = await finanzas.estado_deuda()
         resumen["deuda_actual"] = faro["deuda_total_real"]
         resumen["delta"] = await _delta_mes_anterior(faro["deuda_total_real"])
     except Exception:
         logger.exception("estados_cuenta: no pude leer el faro")
+    try:
+        resumen["procedencia"] = procedencia(
+            await sheets.get_dicts(HOJA_HIST, sheet_id=sheets.fin_id(), value_render="UNFORMATTED_VALUE"))
+    except Exception:
+        logger.exception("estados_cuenta: no pude leer la procedencia")
+        resumen["procedencia"] = []
     if reconciliar and tx_para_reconciliar:
         resumen["faltantes"] = await _reconciliar(tx_para_reconciliar)
     return resumen
@@ -292,6 +309,57 @@ async def _delta_mes_anterior(deuda_actual: float) -> float | None:
     return deuda_actual - por_mes[meses[-2]]
 
 
+# ───────────────────────── Procedencia de las cifras del faro ─────────────────────────
+
+_MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+          "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+
+
+def _mes_nombre(mes: str) -> str:
+    try:
+        return _MESES[int(str(mes)[5:7]) - 1]
+    except (ValueError, IndexError):
+        return str(mes)
+
+
+def procedencia(filas: list[dict]) -> list[dict]:
+    """De qué mes es cada cifra que suma el faro. El faro mezcla productos cuyos estados llegan en
+    fechas distintas (p. ej. BCh de junio + Mach de julio, porque el de BCh todavía no sale).
+    Presentar el total con fecha implícita sería afirmar sin mostrar el dato — va contra el
+    invariante de inferencia validada. Devuelve una entrada por (banco, producto) con su mes más
+    reciente y si quedó atrás del mes en curso."""
+    mes_actual = _hoy()[:7]
+    ultimo: dict[tuple[str, str], str] = {}
+    for f in filas or []:
+        banco = str(f.get("Banco", "")).strip()
+        producto = str(f.get("Producto", "")).strip()
+        mes = str(f.get("Mes", "")).strip()
+        if not (banco and producto and mes):
+            continue
+        k = (banco, producto)
+        if mes > ultimo.get(k, ""):          # 'YYYY-MM' ordena bien como texto
+            ultimo[k] = mes
+    return [{"banco": b, "producto": p, "mes": m, "atrasado": m < mes_actual}
+            for (b, p), m in sorted(ultimo.items())]
+
+
+def texto_procedencia(procs: list[dict]) -> str:
+    """Una línea que dice de cuándo es cada cifra y nombra lo que aún no llega."""
+    if not procs:
+        return ""
+    nb = {"bch": "BCh", "mach": "Mach"}
+    np_ = {"tarjeta_credito": "tarjeta", "linea_credito": "línea", "linea_interes": "interés línea"}
+    partes = [f"{nb.get(p['banco'], p['banco'])} {np_.get(p['producto'], p['producto'])} de "
+              f"{_mes_nombre(p['mes'])}" for p in procs]
+    linea = "Cifras de: " + " · ".join(partes) + "."
+    atras = [p for p in procs if p["atrasado"]]
+    if atras:
+        q = ", ".join(f"{nb.get(p['banco'], p['banco'])} {np_.get(p['producto'], p['producto'])}"
+                      for p in atras)
+        linea += f" Aún no llega el estado de este mes de: {q}."
+    return linea
+
+
 # ───────────────────────── Reporte + progreso ─────────────────────────
 
 def texto_reporte(r: dict) -> str:
@@ -318,6 +386,9 @@ def texto_reporte(r: dict) -> str:
             det.append(f"{banco} {nom} {finanzas.clp(val)}")
     if det:
         l.append("Detalle: " + " · ".join(det) + ".")
+    proc = texto_procedencia(r.get("procedencia") or [])
+    if proc:
+        l.append(proc)
     if r.get("faltantes"):
         n = len(r["faltantes"])
         muestra = "; ".join(f"{finanzas.clp(x['monto'])} en {x['comercio']}" for x in r["faltantes"][:3])

@@ -100,13 +100,39 @@ No es un módulo: es una espina que cruza todo. Cada módulo, como parte de "com
 - **Eval:** "falta X" agrega sin duplicar · "dame la lista" devuelve solo lo pendiente · marcar comprado lo saca y registra la fecha.
 - **Semana:** 7 días usándolo de verdad (agregar al vuelo + pedir la lista antes de ir al súper).
 
-### 4. Recordatorios / Calendario `rec_`
-- **Objetivo:** que no se te olvide nada y que el calendario esté a la vista.
-- **Scope completo:** escalera (domingo + T-2 + T-0 con ✅ Hecho + vencido-insiste) + estados (pendiente/hecho/pospuesto) + tipos (mensual/anual/única) + posponer con fecha; lectura del Google Calendar en el brief.
-- **Datos:** Sheets `Recordatorios`; Calendar (lectura).
-- **Espina:** inferencias de cumplimiento ("pospones el IVA seguido") → un "contra" con dato.
-- **Eval:** T-2/T-0/vencido disparan cuando deben · posponer sin fecha se rechaza · tras 3 posposiciones, nombra el patrón.
-- **Semana:** idem.
+### 4. Recordatorios + Calendario `rec_`  ⟵ **REDECIDIDO 2026-07-23: fusión real, es el siguiente en construirse**
+- **Objetivo:** que no se te olvide nada, sin importar si vive en la hoja `Recordatorios` o en tu Google
+  Calendar — una sola escalera que mira ambas fuentes.
+- **Por qué se redecide ahora:** la ficha original ya traía "lectura del Google Calendar en el brief"
+  como scope menor de Recordatorios. Se decidió subirlo de rango: **antes** de cerrar el scope pendiente
+  de la escalera, se construye el módulo de Calendario en serio y se **fusionan** — no van a quedar como
+  dos cosas separadas que Nico tiene que revisar por separado.
+- **Scope completo (ampliado):**
+  - Escalera (domingo + T-2 + T-0 con ✅ Hecho + vencido-insiste) + estados (pendiente/hecho/pospuesto) +
+    tipos (mensual/anual/única) + posponer con fecha — **ya construido** (Fase 0, ver auditoría abajo).
+  - **Lectura ampliada de Calendar:** `core/agenda.py` hoy solo tiene `eventos_de_hoy()` (usado por
+    `leer_agenda`, solo hoy). Se extiende a un rango (próximos N días) para que la escalera pueda ver
+    eventos con fecha próxima igual que ve filas de `Recordatorios`.
+  - **Escritura real:** `agenda.crear_evento()` ya existe en el código (SCOPES ya en modo escritura) pero
+    **no está conectado a ningún tool** — se cablea como tool real (ej. `rec_agendar`) para que "agéndame
+    la reunión con X el jueves a las 5" cree el evento de verdad.
+  - **Fusión (la pieza nueva):** un recordatorio con fecha (`rec_agregar`) también genera su evento en
+    Calendar; un evento de Calendar que matchee el patrón de compromiso entra a la misma escalera de
+    avisos T-2/T-0. Una sola fuente de "qué se viene" — no dos paneles que revisar por separado.
+- **Prefijo:** `rec_` (agenda sigue siendo servicio `core/`, como `sheets`/`memory` — no es un módulo con
+  prefijo propio, es infraestructura que este módulo consume).
+- **Datos:** Sheets `Recordatorios`; Google Calendar (lectura ampliada + escritura vía service account).
+- **Espina:** inferencias de cumplimiento ("pospones el IVA seguido") → un "contra" con dato; ahora
+  también sobre eventos de calendario pospuestos/reagendados, no solo filas de `Recordatorios`.
+- **Eval:** T-2/T-0/vencido disparan cuando deben (ya verde) · posponer sin fecha se rechaza (ya verde) ·
+  tras 3 posposiciones, nombra el patrón (ya verde) · **nuevo:** un evento de Calendar con fecha próxima
+  aparece en la escalera junto a los recordatorios de Sheets · crear un recordatorio con fecha genera el
+  evento correspondiente en Calendar · "agéndame X el jueves a las 5" crea el evento real y devuelve el
+  link.
+- **Semana:** 7 días con la escalera fusionada corriendo (recordatorios + eventos en un solo lugar).
+
+**Después de este módulo, el siguiente es Correo `cor_`** (cerrar el bucket "importante→resumen brief"
+que falta — ver ficha 5). Productividad, Proactividad-ampliado y Familia quedan después de Correo.
 
 ### 5. Correo `cor_`
 - **Objetivo:** triage del inbox sin que tengas que mirarlo, y que **jamás borre**.
@@ -202,6 +228,8 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    end-to-end contra la planilla real; 7 tests (`tests/test_compras.py`). **Fase 2 (predictor de
    reposición) sigue DIFERIDA** por canon — no se construyó.
 4. **Recordatorios/Calendario** `rec_` — 🔶 parcial (el bug de schema quedó **cerrado**, falta scope).
+   **⟵ SIGUIENTE EN LA SECUENCIA (redecidido 2026-07-23, ver ficha 4 arriba): antes de cerrar el scope
+   restante se construye Calendario en serio y se fusiona con Recordatorios en un solo módulo.**
    **Fase 0 · A1 hecho** (commit `fix(recordatorios): schema real`): `modules/recordatorios.py` ahora lee/
    escribe las columnas reales (`Día / Fecha`, `Monto aprox`, `Estado`, `Posposiciones`, `Última acción`,
    `Activo`), soporta tipo `única` (fechas que no se repiten, quedan negativas si vencen), incluye los
@@ -209,8 +237,10 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    columnas; el brief vuelve a avisar pagos. **Fase 0 · C4 hecho:** `recordatorios.vencidos()` +
    `marcar_hecho()` — el brief empuja los vencidos a diario con botón ✅ Hecho hasta que se marcan.
    9 tests de regresión (`tests/test_recordatorios.py`). **Sigue pendiente el scope de la ficha:** la
-   escalera completa (domingo + T-2 + T-0), el posponer-exige-fecha y el "nombra el patrón" tras 3
-   posposiciones — el schema real ya lo soporta.
+   escalera completa (domingo + T-2 + T-0, ya construida) más lo **nuevo** de la fusión — `core/agenda.py`
+   hoy solo lee eventos de hoy (`leer_agenda`) y tiene `crear_evento()` escrito pero sin conectar a
+   ningún tool; falta ampliar la lectura a un rango de días, cablear la escritura, y fusionar
+   recordatorio↔evento en una sola escalera.
 5. **Correo** `cor_` — 🔶 parcial. `modules/spam.py` + `core/correo.py` construidos y enganchados
    (digest de spam, archivar/conservar por toque — Gmail etiqueta `Donna/Archivado` + quita `INBOX`,
    Outlook mueve a la carpeta `Donna Archivado`; ninguno de los dos borra). El bucket "importante→resumen
@@ -265,10 +295,10 @@ su planilla; `TABS` combinado se mantiene para el guardián de schema), `core/sc
 (`job_verificar_schema` chequea vida contra Donna y finanzas contra `fin_id()` — sin esto tiraría
 incidentes falsos "columnas faltantes"). `CLAUDE.md` actualizado al canon v8. Detalle y pasos de
 migración en [`docs/Sombreros_Donna_Louis.md`](Sombreros_Donna_Louis.md). **Degrada elegante:** con
-`GOOGLE_SHEET_ID_LOUIS` vacío sigue en single-workbook, nada se rompe. **Pendiente (manual de Nico, no
-código):** crear la planilla Louis, mover las 8 hojas de finanzas, setear la env en `.env` + Railway,
-correr `setup_sheets.py` y verificar el faro. Hasta ese paso, la separación existe en código pero no
-está activa en producción. **Cable cruzado a vigilar:** Compras Fase 2 leerá `Compras_Detalle` (ahora en
+`GOOGLE_SHEET_ID_LOUIS` vacío sigue en single-workbook, nada se rompe. **Migración confirmada activa
+(verificado 2026-07-23):** la planilla "Louis" (`GOOGLE_SHEET_ID_LOUIS` en `.env`) existe desde
+2026-07-18 y tiene transacciones reales escribiéndose hasta hoy — la separación ya está en producción,
+no solo en código. **Cable cruzado a vigilar:** Compras Fase 2 leerá `Compras_Detalle` (ahora en
 Louis) → deberá pasar `sheet_id=sheets.fin_id()` explícito.
 
 **2. Tanda 1 — esperas unificadas (`core/espera.py` nuevo).** Antes cada corrección pendiente (categoría
@@ -310,6 +340,31 @@ código) y pusheado a `origin/main`; token ya seteado en Railway — falta verif
   `ncastroocordova-bit/cortex` (carpeta `vault/00-Inbox/`). **Prerrequisito a chequear:** que ese repo de
   Córtex exista en GitHub (el test local usó un vault en disco, no el clone).
 - **Ficha de tool:** `Spec_Herramientas_Nuevas.md` §arc_.
+
+## Auditoría de la planilla Louis (2026-07-23) — plan de realineamiento abierto
+
+Se leyeron las 8 hojas de Louis vía Sheets API y se cruzaron contra el código. **21 hallazgos**, el más
+grave: **el Dashboard y el Comparativo están muertos** (todo `#N/A`/`#REF!`) porque la migración al canon
+v8 dejó las referencias entre hojas desatadas — Sheets ata por ID interno de hoja, no por nombre, y esos
+IDs eran del workbook Donna. `Tarjetas y Deuda` sobrevivió porque solo se referencia a sí mismo.
+Verificado: una fórmula idéntica escrita de cero funciona (los gastos de julio dan $514.992).
+
+Otros hallazgos de peso: el faro **calcula** el interés en vez de usar el del estado de cuenta
+(subreporta **$6.652/mes**; el real es ~$63.908, no $57.256) y mezcla meses (BCh de junio, Mach de julio);
+el mes activo quedó congelado en junio; BCh está **$30.608 sobre el cupo** sin que el faro lo nombre;
+`_categoria_item` inventa categorías fuera del catálogo; el matcher no cubre `dictado`↔`correo` (hay un
+doble conteo de $4.340); y no hay **ni un ingreso registrado** en 69 filas.
+
+**Plan completo con olas de ejecución y gate de salida:**
+[`docs/Plan_Realineamiento_Louis.md`](Plan_Realineamiento_Louis.md).
+
+**Estado (2026-07-23):** **Ola 0 ✅ ejecutada** — Dashboard y Comparativo sin un solo error, mes activo
+en julio, 20 categorías limpias, fechas de `Deuda_Mensual` arregladas. Gastos de julio: **$514.992**.
+234 tests verdes. **Las 5 decisiones de Nico están tomadas** y dos cambiaron el plan: (1) las
+transferencias son gasto o no **según el destinatario** — a sí mismo no, a otra persona sí; (2) las
+compras se **parten por categoría** en `Transacciones` (2 filas con `ID_Único` sufijado en vez de 1 fila
+`Mixto`), lo que **retira `Mixto`** del canon en vez de ampliarlo. Quedan las Olas 1 (faro), 2 (código)
+y 3 (limpieza de datos).
 
 ## Auditoría contra la planilla real (2026-07-01, actualizada 2026-07-02)
 
@@ -407,10 +462,27 @@ watchdog de jobs, el detector `correccion_nico`, y extender `append_row_verifica
 (crear recordatorio/tarea, tocar el panel del cierre) — sin confirmar explícitamente por Nico, aunque el
 uso real del bot en 07-04/05 ya ejerció brief/cierre/desglose y esos caminos están probados en la práctica.
 
-Con el **autodiagnóstico lean ya construido** (ver arriba), el siguiente en la secuencia es
-**Compras Fase 1** (Módulo 3) — aunque Finanzas siguió creciendo fuera de secuencia con v4 porque era la
-prioridad real de Nico, y eso está bien: la regla madre ya no se sigue estricta (ver nota arriba del
-tablero).
+Con el **autodiagnóstico lean ya construido** (ver arriba), el siguiente en la secuencia era
+**Compras Fase 1** (Módulo 3) — **ya construida** (2026-07-05, ver ítem 3 del tablero). Finanzas siguió
+creciendo fuera de secuencia con v4 porque era la prioridad real de Nico, y eso está bien: la regla madre
+ya no se sigue estricta (ver nota arriba del tablero).
+
+## Secuencia redecidida (2026-07-23)
+
+Nueva prioridad, por decisión de Nico:
+
+1. **Calendario + Recordatorios `rec_` (fusión real)** — Módulo 4, ver ficha arriba. Se construye
+   Calendario en serio (lectura ampliada + escritura vía `agenda.crear_evento()`, hoy sin conectar) y se
+   fusiona con la escalera de Recordatorios en un solo módulo, en vez de dejarlos como dos paneles
+   separados.
+2. **Correo `cor_`** — Módulo 5, inmediatamente después. Cerrar el bucket "importante→resumen brief" que
+   falta (spam y financiero ya funcionan).
+3. Productividad, Proactividad-ampliado y Familia quedan después de Correo — sin fecha todavía.
+
+Esto no cambia la numeración de los 8 módulos (Calendario+Recordatorios ya era el 4 y Correo ya era el 5
+en la lista original) — lo que cambia es el **alcance** del módulo 4 (fusión real, no solo lectura menor
+del calendario) y la **confirmación explícita** de que es el siguiente en construirse, saltándose
+Productividad/Proactividad-ampliado/Familia por ahora.
 
 ---
 
