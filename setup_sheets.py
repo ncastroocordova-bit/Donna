@@ -91,6 +91,11 @@ TABS_LOUIS = {
     # modules/estados_cuenta.py al leer los estados de cuenta del banco. Registro visible.
     "Deuda_Mensual": ["Mes", "Banco", "Producto", "Deuda", "Cupo", "Interés mes", "Pago mínimo",
                       "Fecha estado", "Actualizado"],
+    # Saldo de cierre mensual de cuenta corriente (Finanzas v5 — reconciliación de estados,
+    # 2026-07-23). Hoja PROPIA, no Deuda_Mensual: un saldo no es deuda, y mezclarlos corrompería
+    # `_deuda_por_mes`. Auto-escrito por modules/estados_cuenta.py al leer una cartola de cuenta
+    # corriente — sin toque de Nico (dato informativo del documento, ver CLAUDE.md D11).
+    "Saldos": ["Mes", "Banco", "Saldo", "Fecha estado", "Actualizado"],
 }
 
 # Vista combinada (compat): consumidores que solo necesitan "¿qué columnas espera la

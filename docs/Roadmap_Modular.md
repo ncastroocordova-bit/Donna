@@ -358,13 +358,36 @@ doble conteo de $4.340); y no hay **ni un ingreso registrado** en 69 filas.
 **Plan completo con olas de ejecución y gate de salida:**
 [`docs/Plan_Realineamiento_Louis.md`](Plan_Realineamiento_Louis.md).
 
-**Estado (2026-07-23):** **Ola 0 ✅ ejecutada** — Dashboard y Comparativo sin un solo error, mes activo
-en julio, 20 categorías limpias, fechas de `Deuda_Mensual` arregladas. Gastos de julio: **$514.992**.
-234 tests verdes. **Las 5 decisiones de Nico están tomadas** y dos cambiaron el plan: (1) las
-transferencias son gasto o no **según el destinatario** — a sí mismo no, a otra persona sí; (2) las
-compras se **parten por categoría** en `Transacciones` (2 filas con `ID_Único` sufijado en vez de 1 fila
-`Mixto`), lo que **retira `Mixto`** del canon en vez de ampliarlo. Quedan las Olas 1 (faro), 2 (código)
-y 3 (limpieza de datos).
+**Estado (2026-07-23): las 6 olas ejecutadas, realineamiento cerrado.** 269 tests verdes (arrancó en
+~91). Resumen por ola:
+- **Ola 0** — Dashboard/Comparativo revividos (0 errores), mes activo en julio, categorías limpias.
+- **Ola 1** — el faro usa el interés del ESTADO cuando lo trae (intereses muertos $57.256 → **$63.908**
+  real), alerta de cupo excedido, `correo_dias` 2→14.
+- **Ola 2** — `Compras_Detalle` deja de inventar categorías; 2ª pasada de correlación contra lo YA
+  escrito en la planilla (el diagnóstico original decía "falta cubrir dictado" — **era otra causa**:
+  la correlación solo miraba el buffer del día, que se vacía cada noche).
+- **Ola 3** — 2 duplicados borrados + 5 traspasos recategorizados (**-$72.340 / -$40.500** del gasto
+  de julio: $514.992 → $415.152). Modelo de datos **corregido a mitad de camino**: `Transacciones` es
+  una fila por movimiento del banco (para reconciliar); `Compras_Detalle` es el detalle por ítem (de
+  ahí salen las métricas) — no se parten filas ni se sufija `ID_Único`, al revés de lo que se había
+  entendido primero. Nace la **regla del RUT propio**: un movimiento entre cuentas de Nico no es
+  gasto ni ingreso.
+- **Ola 4** — hoja `Metas` cargada (con un bug de fórmula evitado: `Objetivo=$0` para "deuda en cero"
+  da división por cero); `Subcategoría`→`Detalle_Medio`; comercios normalizados.
+- **Ola 5** — reconciliación de estados de cuenta (capacidad nueva, no reparación): cada estado/cartola
+  se compara contra `Transacciones` y da un diferencial en plata; cubre tarjeta de crédito **y**
+  cuenta corriente (débito); ingresos y saldo mensual (hoja `Saldos` nueva) desde los abonos de la
+  cartola. **Encontró un bug sistémico en el camino:** `Fecha` se lee como número de serie de Sheets,
+  no como texto — rompía en silencio la propia reconciliación de esta ola, la 2ª pasada de
+  correlación de la Ola 2 (nunca funcionó en producción) y el correlador sueño↔gasto. Arreglado con
+  un helper único (`sheets.fecha_iso()`). `CLAUDE.md` actualizado: excepción al canon de "no saldos
+  automáticos" para el saldo mensual (sale gratis del documento, cero fricción para Nico).
+
+**Plan completo, con los 4 bugs reales encontrados durante la construcción y su verificación contra
+datos en vivo:** [`docs/Plan_Realineamiento_Louis.md`](Plan_Realineamiento_Louis.md).
+
+**Pendiente de Nico:** confirmar `DUENO_NOMBRES` en Railway (además de local) y revisar el primer
+digest real con candidatos de la Ola 5 (compras faltantes + ingresos detectados).
 
 ## Auditoría contra la planilla real (2026-07-01, actualizada 2026-07-02)
 

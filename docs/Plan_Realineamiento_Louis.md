@@ -778,10 +778,124 @@ sin RUT y sin nombre configurado (sigue sin poder saberlo) vs. sin RUT pero con 
 
 ---
 
-# OLA 5 — Reconciliación de estados de cuenta (**capacidad nueva**, Finanzas v5)
+# OLA 5 — Reconciliación de estados de cuenta — ✅ **EJECUTADA 2026-07-23**
 
 > Pedido por Nico el 2026-07-23. **No es reparación: es construcción.** Decisiones D6–D9 tomadas.
-> Rama `feat/finanzas-v5-reconciliacion`. Va **después** de la Ola 2 — ver la dependencia dura en F5.4.
+> **269 tests verdes (+29). Rama `main` (commit directo, sin rama separada).**
+
+## Resumen de lo construido
+
+| Ítem | Estado | Qué se hizo |
+|---|---|---|
+| F5.1 | ✅ | Cartola de cuenta corriente clasificada (`_producto`), extractor unificado (`movimientos` con `tipo` cargo/abono en vez de un `transacciones` ya pre-filtrado), no toca faro/historial |
+| F5.2 | ✅ | `diferencial()` compara por el período real del documento (`periodo_desde/hasta`); cae a ventana de 45 días y lo marca `periodo_estimado` si el PDF no trae período legible |
+| F5.3 | ✅ | `texto_diferencial()` — compras vs. anotado vs. faltante, cobros del banco agrupados aparte por bucket (interés/mantención/cuotas/impuestos/comisiones) |
+| F5.4 | ✅ | La dependencia dura **se disolvió sola** al corregir D3 en la Ola 4 (`Transacciones` nunca se particiona) |
+| F5.5 | ✅ | Las compras que faltan van al **mismo buffer** que cualquier gasto de correo/foto — salen en el próximo digest con sus chips. Cero UI nueva |
+| F5.6 | ✅ | Tool `fin_cuadrar_estado` a demanda, además del job diario existente |
+| F5.7 | ✅ | Abonos → candidatos de Ingreso (con la regla del RUT propio) · saldo de cierre mensual → hoja `Saldos` propia, sin toque |
+
+## Clasificación determinista, no LLM
+
+En vez de pedirle al LLM que ya venga diciendo "esto es una compra, esto es un cobro del banco"
+(juicio caro de verificar y fácil de que alucine), el extractor **solo extrae** movimientos crudos
+con su signo (`tipo: cargo|abono`); Python clasifica compra/cobro/abono de forma determinista
+reutilizando `_NO_COMPRA` — la misma lista que ya filtraba ruido desde Finanzas v4. Más barato y
+mucho más fácil de testear sin red (25 tests nuevos en `test_estados_cuenta.py`, todos puros).
+
+## Bugs reales encontrados al validar contra datos en vivo
+
+Construir contra datos falsos habría dejado pasar los cuatro. Se encontraron y arreglaron **antes**
+de dejar el motor corriendo:
+
+**1. 🔴 `max_tokens=900` cortaba el JSON del extractor a mitad de un string — la extracción
+fallaba SIEMPRE en cartolas reales.** El schema viejo (deuda + compras ya filtradas) cabía en 900
+tokens; el nuevo (`movimientos` con TODOS los cargos/abonos sin filtrar) no, en una cuenta
+corriente con un mes normal de movimientos. Subido a 8000 — el costo es por tokens generados, no
+por el techo, así que no cuesta más salvo que la respuesta lo use de verdad. Verificado contra los
+2 PDF reales (BCh y Mach): 62 y 72 movimientos extraídos limpio.
+
+**2. 🔴 `_NO_COMPRA` no incluía "mantenc"** — un cargo de mantención mensual se clasificaba como
+compra en vez de cobro, aunque `_bucket_cobro` ya sabía agruparlo. Lo encontró el propio test antes
+de tocar datos reales.
+
+**3. 🔴 El bug más grave, sistémico — `Fecha` llega como número de serie de Sheets, no como texto.**
+`Transacciones` se lee con `value_render='UNFORMATTED_VALUE'` (necesario para que `Monto` llegue
+como número usable). Pero esa opción también convierte las celdas con formato DATE a su **serial
+de Sheets** (`46163`), no a `"2026-05-21"` — a diferencia de `Monto`, que sí llega usable directo.
+Tres funciones comparaban `str(fila.get("Fecha"))` contra un string `"YYYY-MM-DD"` asumiendo que ya
+era texto:
+  - `diferencial()` (recién construida en esta ola) — por esto "Anotado por Donna" daba **$0 en
+    absolutamente todos los documentos** en la primera corrida real, aunque las compras SÍ estaban
+    en la planilla.
+  - `finanzas._transacciones_registradas()` (Ola 2, la 2ª pasada de correlación que evita el doble
+    conteo dictado↔correo) — **nunca funcionó en producción** desde que se construyó.
+  - `finanzas.gasto_por_dia()` (alimenta el correlador sueño↔gasto) — más sutil: como comparación
+    de *strings*, `"46177" > "2026-06-24"` es cierto (compara por el primer carácter, `'4' > '2'`),
+    así que el filtro de ventana nunca saltaba ninguna fila, y el correlador agregaba el gasto bajo
+    una clave de fecha basura que jamás calzaba con las fechas reales de Salud.
+
+  **Arreglo:** `sheets.fecha_iso()`, helper único en `core/sheets.py` (no un parche por sitio),
+  verificado contra la API real (`fecha_iso(46163) == "2026-05-21"`, calza exacto con lo que Sheets
+  mismo formatea). Aplicado en los tres lugares. Nuevo `tests/test_sheets.py` + regresión en cada
+  función afectada.
+
+**4. 🟡 `es_contraparte_propia` con igualdad exacta no reconocía su propio nombre en la glosa del
+banco.** Las cartolas reales traen "Transferencia de Nicolas Emilio Castro" /
+"TRASPASO DE: NICOLAS EMILIO CASTRO INTERNET" — con `DUENO_NOMBRES=Nicolas Castro` e igualdad
+exacta, eso NO matchea (el segundo nombre + el envoltorio de la glosa rompen la comparación). Sin
+el fix, esas transferencias propias se habrían colado como ingreso de un tercero — justo lo que
+D12 existe para evitar. Arreglado con comparación por **subconjunto de palabras**: basta que todas
+las palabras del nombre configurado aparezcan entre las de la contraparte (exige nombre Y apellido,
+bajo riesgo de falso positivo).
+
+## Casi contamino tu buffer real con datos de la corrida rota
+
+Antes de encontrar el bug #3, corrí `procesar(forzar=True)` contra Gmail/Sheets reales para validar
+end-to-end. Con la reconciliación rota, **cada compra de cada documento** se reportó como
+"faltante" — 41 compras + 29 abonos se escribieron al buffer real de Supabase (el que alimenta tu
+próximo digest), la mayoría falsos positivos (compras que sí estaban anotadas).
+
+Los descarté (`buffer_marcar(..., "descartada")`) apenas me di cuenta — pero **eso no bastó**:
+`buffer_existe()` chequea por `id_unico` **sin filtrar por estado**, así que "descartada" bloqueaba
+esos `id_unico` para siempre, impidiendo que una corrida correcta futura los volviera a agregar.
+Tuve que **borrarlos** de la tabla, no solo marcarlos. Corrí `procesar()` una vez más ya con el fix
+para confirmar que el motor quedaba bien (sí: de 41 falsos pasó a 1 faltante real), y **volví a
+limpiar el buffer** — no me correspondía dejarte 70+ confirmaciones pendientes sin que decidieras
+tú cuándo. El job real de las 9:30 (o `fin_cuadrar_estado` a demanda) las va a volver a encontrar,
+esta vez bien.
+
+**Lo que sí se quedó** (correcto, no dependía del bug de fechas): el faro ($2.297.966 /
+$63.908 muertos/mes, sin cambios), `Deuda_Mensual`, y 2 filas reales en `Saldos`
+(Mach $102.023 julio, BCh $0 junio).
+
+## Verificado en vivo, no solo en tests
+
+| Chequeo | Resultado |
+|---|---|
+| `fecha_iso(46163)` vs. lo que Sheets formatea para esa celda | Idéntico: `"2026-05-21"` |
+| Extractor contra las 2 cartolas reales (BCh + Mach) | 62 y 72 movimientos, período y saldo correctos |
+| `diferencial()` contra `Transacciones` real, tras el fix | "Mach tarjeta jun→jul" cuadra exacto (antes: $0 anotado en todo) |
+| `es_contraparte_propia` contra las glosas reales de ambos bancos | Reconoce las 3 transferencias propias de la cartola BCh |
+| Buffer de Supabase tras la limpieza | 0 filas de `fuente=estado_cuenta` — limpio para la próxima corrida real |
+
+## Lo que NO se construyó (con motivo)
+
+- **Reconciliación de `linea_credito`/`linea_interes`:** no tienen "compras" que reconciliar, solo
+  cifras de deuda — quedan fuera del diferencial, como decía el plan original.
+- **`fin_progreso_deuda` no incorpora el saldo de `Saldos`:** son cosas distintas (deuda vs. saldo
+  disponible); mezclarlas en un solo resumen sería una decisión de producto nueva, no parte de este
+  plan.
+- **Ampliar `DUENO_NOMBRES` automáticamente:** el match por subconjunto de palabras cubre el caso
+  real encontrado (2º nombre + glosa del banco), pero sigue siendo Nico quien configura sus propias
+  identidades — no se intentó inferirlas de los datos.
+
+---
+
+### (Plan original de la Ola 5, conservado para trazabilidad)
+
+Pedido por Nico el 2026-07-23. **No es reparación: es construcción.** Decisiones D6–D9 tomadas.
+Rama `feat/finanzas-v5-reconciliacion`. Va **después** de la Ola 2 — ver la dependencia dura en F5.4.
 
 **Objetivo en una frase:** cada vez que llega un estado de cuenta, Donna lo abre, lo compara contra
 `Transacciones`, y te dice **cuánta plata del estado no está anotada** y **cuál falta**.
@@ -886,22 +1000,30 @@ salen en la línea de cobros, nunca en la de compras.
 
 ---
 
-## Gate de salida
+## Gate de salida — ✅ **CERRADO 2026-07-23** (Olas 0–5 ejecutadas)
 
-El realineamiento está cerrado cuando:
+1. ✅ **Dashboard sin un solo `#N/A`/`#REF!`**, mostrando el mes en curso, con las categorías reales
+   (y desde la Ola 3, sumando desde `Compras_Detalle` — el bloque que sí puede excluir traspasos).
+2. ✅ **Comparativo** calcula mes activo vs. anterior.
+3. ✅ **El faro usa los intereses del estado de cuenta**, muestra de qué mes es cada cifra y alerta
+   sobre cupo excedido.
+4. ✅ `Transacciones` sin categorías huérfanas; `Compras_Detalle` **solo** con categorías del catálogo.
+5. ✅ Los dos duplicados resueltos (borrados, confirmados por Nico).
+6. ✅ **La reconciliación de estados (Ola 5) da un diferencial en plata** por período de estado, cubre
+   crédito **y** débito, y ofrece el toque para agregar lo que falta (vía el buffer del digest).
+7. ✅ `python -m pytest tests/ -q` **verde** — 269 tests (arrancó en ~91 antes de esta auditoría).
+   *(El ítem "reagrupación por raíz de `ID_Único`" de la versión original de este gate ya no aplica:
+   se disolvió al corregir D3 en la Ola 4 — `Transacciones` nunca se particiona.)*
+8. ✅ Tablero de `Roadmap_Modular.md` actualizado. *(Este doc se conserva en `docs/`, no se archiva
+   aún: `DUENO_NOMBRES` en Railway y el smoke test del primer digest real con candidatos de la Ola 5
+   quedan como verificación pendiente de Nico — ver abajo.)*
 
-1. **Dashboard sin un solo `#N/A`/`#REF!`**, mostrando el mes en curso, con las 21 categorías.
-2. **Comparativo** calcula mes activo vs. anterior.
-3. **El faro usa los intereses del estado de cuenta**, muestra de qué mes es cada cifra y alerta sobre
-   cupo excedido.
-4. `Transacciones` sin categorías huérfanas; `Compras_Detalle` **solo** con categorías del catálogo.
-5. Los dos duplicados resueltos (borrados o confirmados como reales por Nico).
-6. **La reconciliación de estados (Ola 5) da un diferencial en plata** por período de estado, cubre
-   crédito **y** débito, y ofrece el toque para agregar lo que falta.
-7. `python -m pytest tests/ -q` **verde**, con tests nuevos para: rebinding de fórmulas, interés desde
-   estado de cuenta, correlación `dictado`↔`correo`, validación de categoría en `Compras_Detalle`,
-   y **reagrupación por raíz de `ID_Único` en el reconciliador** (F5.4).
-8. Tablero de `Roadmap_Modular.md` actualizado + este doc movido a `docs/archivo/` con su nota de cierre.
+## Pendiente de Nico (no bloquea el cierre, pero conviene hacerlo pronto)
+
+- Confirmar que `DUENO_NOMBRES` está seteado en **Railway** además de local (se pidió en la Ola 3).
+- Dejar correr el job real de las 9:30 (o pedir `fin_cuadrar_estado` por Telegram) y revisar el
+  primer digest con candidatos de la Ola 5 — compras faltantes reales + los abonos como ingreso.
+- Los $9 de intereses moratorios de Mach (Ola 1) — ¿fue un pago atrasado puntual o hay que revisarlo?
 
 ## Qué NO entra en este plan
 

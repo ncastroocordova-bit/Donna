@@ -11,6 +11,7 @@ corre en un hilo (asyncio.to_thread) para no tapar el event loop del bot.
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -145,6 +146,32 @@ async def get_rows(
         return r.get("values", [])
 
     return await asyncio.to_thread(_call)
+
+
+_EPOCH_SHEETS = datetime(1899, 12, 30)  # época de fecha serial de Google Sheets
+
+
+def fecha_iso(valor) -> str:
+    """Normaliza una celda de fecha leída con `UNFORMATTED_VALUE` a 'YYYY-MM-DD'.
+
+    Bug real encontrado en la auditoría del 2026-07-23 (Ola 5 del realineamiento de Louis): una
+    columna con formato DATE, leída con `value_render='UNFORMATTED_VALUE'`, devuelve el número de
+    SERIE de Sheets (ej. `46177`), no un string ISO — a diferencia de `Monto`, que sí llega como
+    número usable directo. Tres lugares del código comparaban `str(fila.get("Fecha"))` contra un
+    string `"YYYY-MM-DD"` asumiendo que ya era texto: la reconciliación de estados de cuenta
+    (`estados_cuenta.diferencial`), la 2ª pasada de correlación foto/dictado↔planilla
+    (`finanzas._transacciones_registradas`) y `finanzas.gasto_por_dia` (alimenta el correlador
+    sueño↔gasto). Los tres fallaban en silencio: `datetime.strptime("46177", "%Y-%m-%d")` lanza
+    `ValueError`, atrapado y tratado como 'no hay match' — nunca encontraban nada.
+
+    Si `valor` ya es texto (p. ej. viene de `FORMATTED_VALUE`, o de una columna sin formato DATE
+    real), se devuelve tal cual (recortado a 10 chars) — este helper es idempotente."""
+    if isinstance(valor, (int, float)):
+        try:
+            return (_EPOCH_SHEETS + timedelta(days=int(valor))).strftime("%Y-%m-%d")
+        except (OverflowError, ValueError):
+            return ""
+    return str(valor or "").strip()[:10]
 
 
 def _fila_headers(filas: list[list], clave: str | None = None) -> tuple[int, list]:

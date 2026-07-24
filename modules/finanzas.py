@@ -733,11 +733,26 @@ def es_contraparte_propia(nombre: str, rut: str, dueno_rut: str = "",
 
     Se compara por RUT cuando el banco lo trae (BCh) y por NOMBRE cuando no (Mach solo manda
     'Nicolas Castro'). Por eso los 5 traspasos de Mach entraron como Gasto e inflaron julio en
-    $40.500 hasta la auditoría del 2026-07-23."""
+    $40.500 hasta la auditoría del 2026-07-23.
+
+    El nombre se compara por **subconjunto de palabras**, no por igualdad exacta: las cartolas de
+    cuenta corriente (Ola 5) traen el nombre envuelto en la glosa del banco y a veces con el segundo
+    nombre — 'Transferencia de Nicolas Emilio Castro', 'TRASPASO DE: NICOLAS EMILIO CASTRO INTERNET'
+    — que con igualdad exacta contra 'Nicolas Castro' NO matchea, y esos abonos (que son él mismo
+    moviendo plata entre sus propias cuentas) se habrían colado como ingreso de terceros (verificado
+    contra las cartolas reales de BCh y Mach, 2026-07-23). Basta que TODAS las palabras del nombre
+    configurado aparezcan entre las palabras de la contraparte — bajo riesgo de falso positivo,
+    porque exige coincidencia de nombre Y apellido, no solo una palabra suelta."""
     if dueno_rut and rut and _rut_norm(rut) == _rut_norm(dueno_rut):
         return True
-    n = _nombre_norm(nombre)
-    return bool(n) and n in {_nombre_norm(x) for x in (dueno_nombres or []) if str(x).strip()}
+    tokens_contraparte = set(_nombre_norm(nombre).split())
+    if not tokens_contraparte:
+        return False
+    for propio in dueno_nombres or []:
+        tokens_propio = set(_nombre_norm(propio).split())
+        if tokens_propio and tokens_propio <= tokens_contraparte:
+            return True
+    return False
 
 
 TIPO_CAMBIO_USD = 1000  # estimación CLP/US$ (el correo solo trae US$); la compra se marca dudosa para confirmar.
@@ -1255,7 +1270,10 @@ async def _transacciones_registradas() -> list[dict]:
         idu = str(t.get("ID_Único", "")).strip()
         if not idu:
             continue
-        out.append({"id": idu, "fecha": str(t.get("Fecha", "")).strip(),
+        # sheets.fecha_iso: UNFORMATTED_VALUE devuelve la Fecha como serie de Sheets (46177), no
+        # "2026-06-11" — sin esto, _fecha_cerca() nunca matcheaba y la 2ª pasada de correlación
+        # (evita el doble conteo dictado↔correo del canon) nunca encontraba nada en producción.
+        out.append({"id": idu, "fecha": sheets.fecha_iso(t.get("Fecha", "")),
                     "monto": _num(t.get("Monto", 0)), "tiene_detalle": idu in con_detalle})
     return out
 
@@ -1377,7 +1395,11 @@ async def gasto_por_dia(dias: int = 60) -> dict:
     for f in filas:
         if not str(f.get("Tipo", "")).strip().lower().startswith("gasto"):
             continue
-        fecha = str(f.get("Fecha", "")).strip()
+        # sheets.fecha_iso: sin esto, "Fecha" llegaba como serie de Sheets (ej. "46177"). Como
+        # string, "46177" > "2026-06-24" (compara por el primer carácter, '4' > '2'), así que el
+        # filtro `fecha < desde` NUNCA saltaba una fila — el correlador sueño↔gasto agregaba el
+        # gasto bajo una clave de fecha basura que jamás calzaba con las fechas reales de Salud.
+        fecha = sheets.fecha_iso(f.get("Fecha", ""))
         if fecha < desde:
             continue
         out[fecha] = out.get(fecha, 0.0) + _num(f.get("Monto", 0))

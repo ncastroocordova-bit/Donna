@@ -312,6 +312,32 @@ def test_no_correlaciona_fuera_de_ventana_ni_por_monto_distinto():
     assert finanzas.fin_correlacionar_registradas(pend2, [_reg("A", "2026-07-15", 4340)]) == []
 
 
+# ── Ola 5 · regresión: Fecha llega como serial de Sheets, no como texto ──
+# Bug real encontrado el 2026-07-23 al validar la Ola 5 contra datos reales: Transacciones se lee
+# con UNFORMATTED_VALUE, así que "Fecha" es un número de serie (46163), no "2026-05-21". Esta
+# función construye el `fecha` que alimenta `_fecha_cerca()` en la 2ª pasada — sin `fecha_iso()`,
+# NUNCA matcheaba en producción (el ValueError de strptime se atrapaba como "no hay match").
+
+def test_transacciones_registradas_convierte_fecha_serial(monkeypatch):
+    async def _fake_tx(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        return [{"ID_Único": "2026-05-21_5500_OpenAI", "Fecha": 46163, "Monto": 5500}]
+    async def _fake_det(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        return []
+    monkeypatch.setattr(finanzas.sheets, "get_dicts",
+                        lambda hoja, **kw: _fake_tx(hoja, **kw) if hoja == finanzas.HOJA_TX else _fake_det(hoja, **kw))
+    out = asyncio.run(finanzas._transacciones_registradas())
+    assert out[0]["fecha"] == "2026-05-21"   # no "46163"
+
+
+def test_gasto_por_dia_convierte_fecha_serial(monkeypatch):
+    async def _fake(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        return [{"Tipo": "Gasto", "Fecha": 46178, "Monto": 3109}]   # 46178 = 2026-06-05
+    monkeypatch.setattr(finanzas.sheets, "get_dicts", _fake)
+    out = asyncio.run(finanzas.gasto_por_dia(dias=3650))
+    assert out.get("2026-06-05") == 3109
+    assert "46178" not in out   # antes del fix, la clave era el string del serial
+
+
 # ───────────────────────── Foto → categoría (procesar_foto, Vision mockeada) ─────────────────────────
 
 class _ContenidoFalso:
@@ -487,6 +513,25 @@ def test_contraparte_propia_por_nombre_cuando_no_hay_rut():
 def test_contraparte_propia_sin_config_no_adivina():
     """Sin RUT ni nombres configurados no puede saberlo → lo trata como tercero (gasto)."""
     assert not finanzas.es_contraparte_propia("Nicolas Castro", "", "", [])
+
+
+# ── Ola 5 · F5.7: el nombre viene envuelto en la glosa del banco y con 2º nombre ──
+# Con igualdad EXACTA (como era hasta este fix), "Nicolas Emilio Castro" no matchea contra
+# "Nicolas Castro" — y eso es exactamente lo que traen las cartolas reales de BCh y Mach
+# ("Transferencia de Nicolas Emilio Castro", "TRASPASO DE: NICOLAS EMILIO CASTRO INTERNET").
+# Sin este fix, esas 3 transferencias propias se habrían colado como ingreso de un tercero.
+
+def test_contraparte_propia_con_glosa_del_banco_y_segundo_nombre():
+    propios = ["Nicolas Castro"]
+    assert finanzas.es_contraparte_propia("Transferencia de Nicolas Emilio Castro", "", "", propios)
+    assert finanzas.es_contraparte_propia("TRASPASO DE: NICOLAS EMILIO CASTRO INTERNET", "", "", propios)
+
+
+def test_contraparte_propia_no_matchea_por_una_sola_palabra():
+    """Exige nombre Y apellido — un tercero que comparte solo el primer nombre no debe colarse."""
+    propios = ["Nicolas Castro"]
+    assert not finanzas.es_contraparte_propia("Transferencia de Nicolas Castillo", "", "", propios)
+    assert not finanzas.es_contraparte_propia("TRASPASO DE: Silvana Alejandra Cord INTERNET", "", "", propios)
 
 
 def test_traspaso_propio_no_deja_linea_de_detalle(_cat_real):

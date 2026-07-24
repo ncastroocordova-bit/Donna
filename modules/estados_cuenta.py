@@ -13,7 +13,7 @@ la clave del PDF vive en env, nunca en el Sheet/repo/chat; el worker destila, no
 import io
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pypdf
 from anthropic import AsyncAnthropic
@@ -77,6 +77,12 @@ def _producto(asunto: str, filename: str) -> str:
         return "linea_interes"                               # interés de la línea → B45
     if "linea" in s or "línea" in s or "ldc" in s:
         return "linea_credito"                               # monto utilizado de la línea → B44
+    # Ola 5 (F5.1): cartola de CUENTA CORRIENTE — débito. Va DESPUÉS de los checks de línea porque
+    # "cartola" también aparece en "Cartola Línea de Crédito Mensual". No es un documento de deuda:
+    # NO debe pasar por _celdas_faro ni _upsert_historial (corrompería el faro) — solo alimenta la
+    # reconciliación (F5.3) y, si trae abonos, los ingresos (F5.7).
+    if "cuenta corriente" in s or "ctacte" in s:
+        return "cartola_cuenta_corriente"
     if "tarjeta" in s or "eecc" in s or "estado de cuenta" in s:
         return "tarjeta_credito"
     return "otro"
@@ -105,23 +111,44 @@ def _texto_pdf(pdf_bytes: bytes, clave: str) -> str:
         return ""
 
 
+# Ola 5: schema único para los tres formatos (tarjeta, línea, cartola de cuenta corriente). En vez de
+# pedirle al LLM que ya venga clasificando "esto es una compra, esto es un cobro del banco" (juicio que
+# se presta a error y es caro de verificar), el LLM solo EXTRAE los movimientos crudos con su signo
+# (cargo/abono); la clasificación compra/cobro/abono la hace después Python de forma determinista
+# (`_clasificar_movimientos`, reutiliza `_NO_COMPRA`) — más barato y más fácil de testear sin red.
 _EXTRACTOR_SYS = (
-    "Lees estados de cuenta y cartolas de bancos chilenos. Devuelve SOLO un JSON, sin texto extra, con: "
-    "fecha (YYYY-MM-DD del estado de cuenta), "
+    "Lees estados de cuenta y cartolas de bancos chilenos (tarjeta de crédito, línea de crédito o "
+    "cuenta corriente/cartola). Devuelve SOLO un JSON, sin texto extra, con: "
+    "fecha (YYYY-MM-DD de emisión del estado), "
+    "periodo_desde, periodo_hasta (YYYY-MM-DD del período que factura/cubre el documento, o null si no "
+    "se indica claramente), "
     "deuda_total (entero CLP; para una TARJETA = el 'CUPO UTILIZADO'; para una LÍNEA DE CRÉDITO = el "
-    "valor de la etiqueta 'MONTO UTILIZADO' —no el saldo de movimientos—; null si no aplica), "
-    "cupo (entero CLP o null), interes_mes (entero CLP del interés/‘TOTAL INTERESES’ del período o null), "
+    "valor de la etiqueta 'MONTO UTILIZADO' —no el saldo de movimientos—; null si no aplica o es cartola "
+    "de cuenta corriente), "
+    "cupo (entero CLP o null), interes_mes (entero CLP del interés/'TOTAL INTERESES' del período o null), "
     "pago_minimo (entero CLP o null), "
-    "transacciones (lista de COMPRAS reales del período: {fecha (YYYY-MM-DD), comercio, monto (entero CLP)}; "
-    "NO incluyas pagos, abonos, intereses, impuestos ni amortizaciones — solo compras a comercios). "
+    "saldo_final (entero CLP: SOLO para cartola de cuenta corriente, el saldo al cierre del período; "
+    "null para tarjeta/línea), "
+    "movimientos (lista de TODOS los movimientos individuales del período — compras, pagos, intereses, "
+    "comisiones, cuotas Y abonos/depósitos, sin filtrar nada — cada uno: "
+    "{fecha (YYYY-MM-DD), descripcion (comercio o glosa del banco tal como aparece), "
+    "monto (entero CLP, siempre positivo), tipo ('cargo' si sale plata, 'abono' si entra), "
+    "rut_contraparte (RUT del destinatario/emisor si el documento lo trae, o null)}). "
     "Números sin separador de miles."
 )
 
 
 async def _extraer(texto: str, producto: str) -> dict | None:
     try:
+        # Ola 5: el schema único (`movimientos` con TODOS los cargos/abonos, sin filtrar) puede ser
+        # largo en una cartola de cuenta corriente con muchos movimientos — 900 tokens (el límite de
+        # cuando el extractor solo devolvía deuda+compras filtradas) cortaba el JSON a mitad de un
+        # string y la extracción fallaba SIEMPRE en cartolas reales (verificado 2026-07-23 contra los
+        # PDF de BCh y Mach: incluso 4000 se cortó — `stop_reason == "max_tokens"` con un mes normal
+        # de movimientos de cuenta corriente). El costo es por tokens generados, no por el tope, así
+        # que subir el techo no cuesta más salvo que la respuesta lo use de verdad.
         r = await _anthropic.messages.create(
-            model=settings.model_cheap, max_tokens=900, system=_EXTRACTOR_SYS,
+            model=settings.model_cheap, max_tokens=8000, system=_EXTRACTOR_SYS,
             messages=[{"role": "user", "content": f"Documento tipo '{producto}'. Extrae:\n\n{texto[:12000]}"}],
         )
         t = r.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
@@ -162,41 +189,127 @@ def _hoy() -> str:
     return datetime.now(settings.tz).strftime("%Y-%m-%d")
 
 
-# ───────────────────────── Reconciliación (1×/mes) ─────────────────────────
+# ───────────────────────── Saldo mensual (Ola 5 · F5.7, hoja propia) ─────────────────────────
+# Hoja PROPIA, no `Deuda_Mensual`: un saldo de cuenta corriente no es deuda. Si se guardara en la
+# misma hoja/columna que la deuda, `_deuda_por_mes` lo sumaría junto con la deuda real y corrompería
+# el progreso mes a mes que ya lee `fin_progreso_deuda`.
+HOJA_SALDOS = "Saldos"
+SALDO_COLS = ["Mes", "Banco", "Saldo", "Fecha estado", "Actualizado"]
 
-# Descripciones que NO son compras a comercio (son mecanismos de deuda/pago) → fuera de la reconciliación.
-_NO_COMPRA = ("avance", "cuota", "interes", "interés", "pago", "abono", "amortiz", "impuesto",
-              "comision", "comisión", "cancelado", "transferencia")
+
+async def _upsert_saldo(banco: str, mes: str, saldo: int, fecha: str) -> None:
+    """Una fila por (Mes, Banco). Auto-escribe SIN toque de Nico — mismo criterio que el faro: es
+    un dato informativo que trae el documento, no un gasto que haya que confirmar (D11: excepción
+    al canon de 'no saldos automáticos' porque sale gratis de un documento que Donna ya lee, no
+    requiere que Nico mantenga nada)."""
+    fid = sheets.fin_id()
+    filas = await sheets.get_rows(HOJA_SALDOS, sheet_id=fid)
+    h_idx, headers = sheets._fila_headers(filas)
+    if h_idx < 0:
+        headers = SALDO_COLS
+        h_idx = 0
+    idx = {c: headers.index(c) for c in SALDO_COLS if c in headers}
+    vals = [mes, banco, int(saldo), fecha, _hoy()]
+    for n, fila in enumerate(filas[h_idx + 1:], start=h_idx + 2):
+        def g(c):
+            i = idx.get(c, -1)
+            return str(fila[i]).strip() if 0 <= i < len(fila) else ""
+        if g("Mes") == mes and g("Banco") == banco:
+            for col, val in zip(SALDO_COLS, vals):
+                if col in idx:
+                    await sheets.set_cell(HOJA_SALDOS, n, idx[col], val, sheet_id=fid)
+            return
+    await sheets.append_row(HOJA_SALDOS, vals, sheet_id=fid)
 
 
-async def _reconciliar(transacciones: list[dict], dias_recientes: int = 45) -> list[dict]:
-    """Compara las COMPRAS del estado con `Transacciones` de la planilla. Devuelve las del estado
-    que NO están registradas (posibles gastos que se pasaron). Match por monto exacto + fecha ±5d.
-    Filtra ruido: salta avances/cuotas/pagos/intereses y compras viejas (cuotas ya conocidas).
-    No escribe nada (invariante): solo señala para que Nico revise."""
-    try:
-        planilla = await sheets.get_dicts(HOJA_TX, sheet_id=sheets.fin_id(), value_render="UNFORMATTED_VALUE")
-    except Exception:
-        logger.exception("_reconciliar: no pude leer Transacciones")
-        return []
-    montos_planilla = [(str(t.get("Fecha", "")).strip(), int(finanzas._num(t.get("Monto", 0)))) for t in planilla]
-    hoy = datetime.now(settings.tz).date()
-    faltan = []
-    for tx in transacciones or []:
-        monto = int(finanzas._num(tx.get("monto", 0)))
-        comercio = str(tx.get("comercio", "")).strip()
-        if monto <= 0 or any(k in comercio.lower() for k in _NO_COMPRA):
+# ───────────────────────── F5.5 + F5.7: candidatos al buffer del digest ─────────────────────────
+# Ni las compras que faltan ni los ingresos se escriben directo a Transacciones: entran al MISMO
+# buffer que usa cualquier gasto de correo/foto, y salen en el próximo digest con sus chips para
+# confirmar con un toque. Cero UI nueva — reusa el digest vivo completo (mensaje anclado, chips,
+# commit único) y respeta el invariante "Sheets nunca escribe sin OK de Nico".
+
+async def _registrar_faltantes(diffs: list[dict]) -> int:
+    """F5.5: las compras que un diferencial marcó como 'falta anotar' → candidatas al buffer."""
+    n = 0
+    for d in diffs:
+        medio = {"bch": "Banco de Chile", "mach": "Mach"}.get(d.get("banco", ""), d.get("banco", ""))
+        for f in d.get("faltantes", []):
+            datos = {
+                "fecha": f["fecha"], "tipo": "Gasto",
+                "categoria": finanzas._categoria_de(f.get("comercio", "")),
+                "comercio": f.get("comercio", ""), "monto": f["monto"], "medio": medio,
+                "subcategoria": f"Rut {f['rut_contraparte']}" if f.get("rut_contraparte") else "",
+            }
+            if await finanzas._bufferizar(datos, "estado_cuenta"):
+                n += 1
+    return n
+
+
+async def _registrar_abonos(banco: str, abonos: list[dict], dueno_rut: str) -> int:
+    """F5.7: los abonos de una cartola → candidatos de Ingreso. Regla del RUT propio (D12): un
+    abono desde una cuenta de Nico es traslado, no ingreso — se descarta sin registrar nada."""
+    n = 0
+    propios = finanzas._dueno_nombres()
+    medio = {"bch": "Banco de Chile", "mach": "Mach"}.get(banco, banco)
+    for a in abonos:
+        desc = str(a.get("descripcion", "")).strip()
+        rut = str(a.get("rut_contraparte") or "")
+        if finanzas.es_contraparte_propia(desc, rut, dueno_rut, propios):
             continue
-        fecha = str(tx.get("fecha", "")).strip()
-        try:
-            d = datetime.strptime(fecha[:10], "%Y-%m-%d").date()
-        except (ValueError, TypeError):
+        datos = {
+            "fecha": str(a.get("fecha", "")) or _hoy(), "tipo": "Ingreso", "categoria": "Otro Ingreso",
+            "comercio": desc or "Abono", "monto": a["monto"], "medio": f"{medio} cuenta corriente",
+            "subcategoria": f"Rut {rut}" if rut else "",
+        }
+        if await finanzas._bufferizar(datos, "estado_cuenta"):
+            n += 1
+    return n
+
+
+# ───────────────────────── Reconciliación por documento (Ola 5: F5.1-F5.4) ─────────────────────────
+
+# Descripciones que NO son compras a comercio (son mecanismos de deuda/pago) → fuera de "compras",
+# se agrupan como "cobros del banco" en el diferencial (F5.3) en vez de descartarse en silencio.
+# Debe cubrir todo lo que `_BUCKETS_COBRO` sabe agrupar — si un cargo cae aquí pero no calza con
+# ningún bucket, `_bucket_cobro` lo manda a "otros cobros" (no rompe), pero si falta una palabra
+# clave que SÍ tiene bucket (como pasaba con "mantenc" antes de este fix), el cargo se cuela como
+# compra en vez de cobro y ensucia el diferencial.
+_NO_COMPRA = ("avance", "cuota", "interes", "interés", "mantenc", "pago", "abono", "amortiz",
+              "impuesto", "comision", "comisión", "cancelado", "transferencia")
+
+# Bucket de cobro por palabra clave, para agrupar el diferencial de forma legible en vez de listar
+# cada glosa del banco suelta. Orden importa: la primera que calza gana.
+_BUCKETS_COBRO = (
+    ("interes", "interés"), ("interés", "interés"), ("mantenc", "mantención"), ("cuota", "cuotas"),
+    ("impuesto", "impuestos"), ("comision", "comisiones"), ("comisión", "comisiones"),
+)
+
+
+def _bucket_cobro(descripcion: str) -> str:
+    d = (descripcion or "").lower()
+    for kw, etiqueta in _BUCKETS_COBRO:
+        if kw in d:
+            return etiqueta
+    return "otros cobros"
+
+
+def _clasificar_movimientos(movimientos: list[dict] | None) -> tuple[list[dict], list[dict], list[dict]]:
+    """Los `movimientos` crudos del extractor → (compras, cobros_banco, abonos). Determinista, sin
+    LLM: el modelo solo extrae fecha/descripción/monto/tipo; la clasificación de QUÉ es cada cargo
+    la hace `_NO_COMPRA` (ya probado, ya usado en la reconciliación desde Finanzas v4)."""
+    compras, cobros, abonos = [], [], []
+    for m in movimientos or []:
+        monto = int(finanzas._num(m.get("monto", 0)))
+        if monto <= 0:
             continue
-        if (hoy - d).days > dias_recientes:
-            continue  # cuota vieja de una compra ya conocida, no un gasto que falte
-        if not any(pm == monto and _cerca(pf, fecha) for pf, pm in montos_planilla):
-            faltan.append({"fecha": fecha, "comercio": comercio, "monto": monto})
-    return faltan
+        fila = {**m, "monto": monto}
+        if str(m.get("tipo", "")).strip().lower() == "abono":
+            abonos.append(fila)
+        elif any(k in str(m.get("descripcion", "")).lower() for k in _NO_COMPRA):
+            cobros.append(fila)
+        else:
+            compras.append(fila)
+    return compras, cobros, abonos
 
 
 def _cerca(f1: str, f2: str, dias: int = 5) -> bool:
@@ -208,18 +321,126 @@ def _cerca(f1: str, f2: str, dias: int = 5) -> bool:
         return False
 
 
+def _en_rango(fecha: str, desde, hasta) -> bool:
+    try:
+        d = datetime.strptime(str(fecha)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return False
+    return desde <= d <= hasta
+
+
+def diferencial(doc: dict, planilla: list[dict], hoy=None) -> dict:
+    """F5.2 + F5.3: el diferencial en plata de UN documento (un estado/cartola). Puro — no toca red,
+    no escribe nada — para poder testearlo sin mocks de Sheets/Gmail/LLM.
+
+    `doc` = lo que devuelve `_extraer` (+ banco/producto/fecha ya anotados por `procesar`).
+    `planilla` = filas de `Transacciones` ya leídas (UNFORMATTED_VALUE), UNA sola vez por corrida —
+    no por documento, para no releer la hoja N veces.
+
+    Compara SOLO compras (nunca cobros del banco, nunca abonos — F5.1.5) contra la planilla, en el
+    RANGO del propio documento (`periodo_desde`/`periodo_hasta`); si el documento no trae período
+    legible, cae a una ventana de respaldo de 45 días y lo marca `periodo_estimado` — nunca presenta
+    un cuadre como exacto cuando el rango se adivinó."""
+    hoy = hoy or datetime.now(settings.tz).date()
+    compras, cobros, _ = _clasificar_movimientos(doc.get("movimientos"))
+    desde_raw, hasta_raw = doc.get("periodo_desde"), doc.get("periodo_hasta")
+    estimado = not (desde_raw and hasta_raw)
+    if estimado:
+        try:
+            hasta_d = datetime.strptime(str(doc.get("fecha") or hoy.isoformat())[:10], "%Y-%m-%d").date()
+        except ValueError:
+            hasta_d = hoy
+        desde_d = hasta_d - timedelta(days=45)
+    else:
+        try:
+            desde_d = datetime.strptime(str(desde_raw)[:10], "%Y-%m-%d").date()
+            hasta_d = datetime.strptime(str(hasta_raw)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            estimado = True
+            hasta_d = hoy
+            desde_d = hoy - timedelta(days=45)
+
+    # sheets.fecha_iso: la planilla se lee con UNFORMATTED_VALUE → Fecha llega como número de
+    # serie de Sheets (46177), no como "2026-06-11". Sin esto, TODO comparaba mal y "Anotado por
+    # Donna" daba $0 en cualquier documento (verificado 2026-07-23 contra los estados reales).
+    montos_planilla = [(sheets.fecha_iso(t.get("Fecha", "")), int(finanzas._num(t.get("Monto", 0))))
+                       for t in planilla]
+    compras_periodo = [c for c in compras if _en_rango(c.get("fecha"), desde_d, hasta_d)]
+    faltantes = []
+    anotado_n = 0
+    for c in compras_periodo:
+        if any(pm == c["monto"] and _cerca(pf, str(c.get("fecha", ""))) for pf, pm in montos_planilla):
+            anotado_n += 1
+        else:
+            faltantes.append({"fecha": str(c.get("fecha", "")), "comercio": c.get("descripcion", ""),
+                              "monto": c["monto"], "rut_contraparte": c.get("rut_contraparte")})
+    compras_total = sum(c["monto"] for c in compras_periodo)
+    faltan_total = sum(f["monto"] for f in faltantes)
+
+    cobros_por_bucket: dict[str, int] = {}
+    for c in cobros:
+        if _en_rango(c.get("fecha"), desde_d, hasta_d):
+            b = _bucket_cobro(c.get("descripcion", ""))
+            cobros_por_bucket[b] = cobros_por_bucket.get(b, 0) + c["monto"]
+
+    return {
+        "banco": doc.get("banco", ""), "producto": doc.get("producto", ""),
+        "periodo_desde": desde_d.isoformat(), "periodo_hasta": hasta_d.isoformat(),
+        "periodo_estimado": estimado,
+        "compras_total": compras_total, "compras_n": len(compras_periodo),
+        "anotado_total": compras_total - faltan_total, "anotado_n": anotado_n,
+        "faltantes": faltantes,
+        "cobros": cobros_por_bucket,
+    }
+
+
+def texto_diferencial(d: dict) -> str:
+    """Renderiza UN diferencial (F5.3). Dos cuadres separados, nunca mezclados: compras (lo que
+    importa: un descuadre ahí = gasto perdido) y cobros del banco (Donna nunca los captura por
+    correo — mezclarlos con las compras garantizaría un descuadre permanente sin significado)."""
+    nb = {"bch": "BCh", "mach": "Mach"}
+    np_ = {"tarjeta_credito": "tarjeta", "linea_credito": "línea", "cartola_cuenta_corriente": "cuenta corriente"}
+    banco = nb.get(d["banco"], d["banco"])
+    prod = np_.get(d["producto"], d["producto"])
+    l = [f"📄 Estado {banco} {prod} · {d['periodo_desde']} → {d['periodo_hasta']}"
+         + (" (período estimado)" if d.get("periodo_estimado") else "")]
+    l.append(f"   Compras del estado      {finanzas.clp(d['compras_total'])}  ({d['compras_n']} movimientos)")
+    l.append(f"   Anotado por Donna       {finanzas.clp(d['anotado_total'])}  ({d['anotado_n']} movimientos)")
+    if d["faltantes"]:
+        l.append(f"   ⚠️ Falta anotar          {finanzas.clp(sum(f['monto'] for f in d['faltantes']))}"
+                 f"  ({len(d['faltantes'])} compra(s))")
+    else:
+        l.append("   ✓ cuadra")
+    if d.get("cobros"):
+        partes = " · ".join(f"{k} {finanzas.clp(v)}" for k, v in d["cobros"].items())
+        l.append(f"   Cobros del banco (no son gasto que se te olvidó): {partes}")
+    return "\n".join(l)
+
+
 # ───────────────────────── Orquestación ─────────────────────────
 
 async def procesar(max_n: int = 40, reconciliar: bool = True, forzar: bool = False) -> dict:
-    """Baja los estados nuevos, extrae, actualiza faro + historial, reconcilia. Devuelve el
+    """Baja los estados nuevos, extrae, actualiza faro + historial (docs de deuda) o reconcilia +
+    registra ingresos/saldo (cartolas), y arma el diferencial por documento (Ola 5). Devuelve el
     resumen para el reporte. Cada (correo+adjunto) se procesa una sola vez (dedup en memoria);
     `forzar=True` reprocesa todo (para backfill/validación)."""
-    resumen = {"nuevos": 0, "bancos": set(), "registros": [], "faltantes": [], "deuda_actual": 0,
-               "delta": None, "procedencia": []}
+    resumen = {"nuevos": 0, "bancos": set(), "registros": [], "reconciliaciones": [],
+               "faltantes_agregados": 0, "ingresos_agregados": 0,
+               "deuda_actual": 0, "delta": None, "procedencia": []}
     if not gmail.disponible():
         return resumen
     msgs = await gmail.buscar_estados(QUERY, max_n)
-    tx_para_reconciliar = []
+    # Se leen UNA vez por corrida (no por documento) — varios estados pueden llegar el mismo día.
+    planilla, dueno_rut = [], ""
+    if reconciliar:
+        try:
+            planilla = await sheets.get_dicts(HOJA_TX, sheet_id=sheets.fin_id(), value_render="UNFORMATTED_VALUE")
+        except Exception:
+            logger.exception("procesar: no pude leer Transacciones para reconciliar")
+        try:
+            dueno_rut = (await memory.get_perfil()).get("rut", "")
+        except Exception:
+            pass
     for m in msgs:
         banco = _banco(m["remitente"], m["asunto"])
         if banco == "otro":
@@ -253,15 +474,37 @@ async def procesar(max_n: int = 40, reconciliar: bool = True, forzar: bool = Fal
             resumen["registros"].append(datos)
             resumen["bancos"].add(banco)
             resumen["nuevos"] += 1
-            # historial + faro
-            try:
-                await _upsert_historial(datos)
-                for fila, col, val in _celdas_faro(banco, producto, datos):
-                    await sheets.set_cell(HOJA_TARJETAS, fila, col, val, sheet_id=sheets.fin_id())
-            except Exception:
-                logger.exception("estados_cuenta: no pude actualizar faro/historial")
-            if producto == "tarjeta_credito":
-                tx_para_reconciliar += datos.get("transacciones") or []
+            # Faro + historial: SOLO documentos de deuda. Una cartola de cuenta corriente NO lo es
+            # (F5.1.3) — si entrara acá, corrompería el faro.
+            if producto != "cartola_cuenta_corriente":
+                try:
+                    await _upsert_historial(datos)
+                    for fila, col, val in _celdas_faro(banco, producto, datos):
+                        await sheets.set_cell(HOJA_TARJETAS, fila, col, val, sheet_id=sheets.fin_id())
+                except Exception:
+                    logger.exception("estados_cuenta: no pude actualizar faro/historial")
+            # Diferencial por documento (F5.2/F5.3): tarjeta y cartola tienen movimientos
+            # comparables contra Transacciones; una línea de crédito no tiene "compras".
+            if reconciliar and producto in ("tarjeta_credito", "cartola_cuenta_corriente"):
+                try:
+                    diff = diferencial(datos, planilla)
+                    resumen["reconciliaciones"].append(diff)
+                    resumen["faltantes_agregados"] += await _registrar_faltantes([diff])
+                except Exception:
+                    logger.exception("estados_cuenta: no pude reconciliar un documento")
+            # F5.7: ingresos + saldo, solo cartola (única fuente con abonos/saldo de cuenta).
+            if producto == "cartola_cuenta_corriente":
+                try:
+                    _, _, abonos = _clasificar_movimientos(datos.get("movimientos"))
+                    resumen["ingresos_agregados"] += await _registrar_abonos(banco, abonos, dueno_rut)
+                except Exception:
+                    logger.exception("estados_cuenta: no pude registrar los abonos")
+                if datos.get("saldo_final") is not None and datos.get("mes"):
+                    try:
+                        await _upsert_saldo(banco, datos["mes"],
+                                            int(finanzas._num(datos["saldo_final"])), datos.get("fecha", ""))
+                    except Exception:
+                        logger.exception("estados_cuenta: no pude guardar el saldo")
             try:
                 await memory.marcar_correo_visto("estadocta", clave_dedup, "estado_cuenta")
             except Exception:
@@ -279,8 +522,6 @@ async def procesar(max_n: int = 40, reconciliar: bool = True, forzar: bool = Fal
     except Exception:
         logger.exception("estados_cuenta: no pude leer la procedencia")
         resumen["procedencia"] = []
-    if reconciliar and tx_para_reconciliar:
-        resumen["faltantes"] = await _reconciliar(tx_para_reconciliar)
     return resumen
 
 
@@ -389,11 +630,18 @@ def texto_reporte(r: dict) -> str:
     proc = texto_procedencia(r.get("procedencia") or [])
     if proc:
         l.append(proc)
-    if r.get("faltantes"):
-        n = len(r["faltantes"])
-        muestra = "; ".join(f"{finanzas.clp(x['monto'])} en {x['comercio']}" for x in r["faltantes"][:3])
-        l.append(f"⚠️ {n} cargo(s) del banco que no tengo registrados (revisa si se te pasaron): {muestra}"
-                 + (" …" if n > 3 else "") + ".")
+    for diff in r.get("reconciliaciones") or []:
+        l.append("")
+        l.append(texto_diferencial(diff))
+    avisos = []
+    if r.get("faltantes_agregados"):
+        avisos.append(f"📥 {r['faltantes_agregados']} compra(s) que faltaban quedaron en tu próximo "
+                      "digest para confirmar.")
+    if r.get("ingresos_agregados"):
+        avisos.append(f"💰 {r['ingresos_agregados']} ingreso(s) detectado(s), también en el digest.")
+    if avisos:
+        l.append("")
+        l.extend(avisos)
     return "\n".join(l)
 
 
@@ -424,12 +672,27 @@ async def _t_progreso(inp: dict) -> str:
     return "Progreso de tu deuda (mes a mes):\n" + "\n".join(lineas) + cola
 
 
+async def _t_cuadrar_estado(inp: dict) -> str:
+    """Tool (F5.6): 'cuadra el último estado' / 'revisa mis estados de cuenta' a demanda — no
+    espera al job diario. Mismo `procesar()` que corre solo a las 9:30; el dedup interno hace que
+    no vuelva a bajar/gastar tokens en documentos ya procesados, solo trae los nuevos si los hay."""
+    r = await procesar()
+    if not r["nuevos"]:
+        return "No hay estados de cuenta nuevos desde la última vez que revisé."
+    return texto_reporte(r)
+
+
 TOOLS = [
     {
         "name": "fin_progreso_deuda",
         "description": "OBLIGATORIO cuando Nico pregunta cómo va su deuda, si ha bajado, o por el progreso mes a mes. Lee el historial real (Deuda_Mensual). No inventes.",
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "fin_cuadrar_estado",
+        "description": "Cuando Nico pide revisar/cuadrar sus estados de cuenta o cartolas a demanda (ej. 'cuadra el último estado', 'revisa si me falta anotar algo del banco'), en vez de esperar al job automático de las 9:30. Procesa cualquier documento nuevo y devuelve el diferencial.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
 ]
 
-HANDLERS = {"fin_progreso_deuda": _t_progreso}
+HANDLERS = {"fin_progreso_deuda": _t_progreso, "fin_cuadrar_estado": _t_cuadrar_estado}
