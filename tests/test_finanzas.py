@@ -248,6 +248,28 @@ def test_normalizar_medio_la_operacion_gana_al_banco():
     assert finanzas.normalizar_medio("Transferencia recibida (Itaú)") == "Transferencia"
 
 
+def test_normalizar_medio_no_adivina_el_producto():
+    """La regresión de las 11 filas de junio: eran BCh y Mach mezcladas, crédito las dos, y el
+    código las mandaba a débito por default. Saber el banco NO es saber el producto — si falta,
+    'Otro' (una pregunta visible) le gana a un 'BCh débito' inventado (una respuesta falsa)."""
+    assert finanzas.normalizar_medio("Banco de Chile") == "Otro"
+    assert finanzas.normalizar_medio("Mach") == "Otro"
+    assert finanzas.normalizar_medio("Tarjeta crédito") == "Otro"      # crédito, pero ¿de qué banco?
+    # Con el producto explícito, sí resuelve:
+    assert finanzas.normalizar_medio("Banco de Chile crédito") == "BCh crédito"
+    assert finanzas.normalizar_medio("Banco de Chile débito") == "BCh débito"
+
+
+def test_normalizar_medio_el_numero_de_tarjeta_manda():
+    """El nº de tarjeta es la señal más confiable: no depende de que el parser de turno se
+    acordara de anotar el producto. Gana sobre el texto del medio."""
+    assert finanzas.normalizar_medio("Banco de Chile", "****9371") == "BCh crédito"
+    assert finanzas.normalizar_medio("", "****5502") == "BCh débito"
+    assert finanzas.normalizar_medio("Mach", "****7160") == "Mach crédito"
+    # Una tarjeta que no está en el mapa no se inventa
+    assert finanzas.normalizar_medio("Banco de Chile", "****0000") == "Otro"
+
+
 def test_normalizar_medio_nunca_devuelve_algo_fuera_del_catalogo():
     """La garantía dura: pase lo que pase, a la planilla llega uno de los seis. Un parser nuevo
     no puede reintroducir una etiqueta suelta."""
@@ -481,7 +503,10 @@ def test_bch_cargo():
     assert d["monto"] == 12520
     assert d["comercio"] == "STA ISABEL LOMAS"
     assert d["categoria"] == "Alimentación"
-    assert d["medio"] == "Banco de Chile"
+    # El correo dice 'con cargo a Cuenta ****5502' = débito. Antes se tiraba ese dato y los tres
+    # casos (cuenta / tarjeta de crédito / tarjeta de débito) salían como 'Banco de Chile' pelado.
+    assert d["medio"] == "Banco de Chile débito"
+    assert finanzas.normalizar_medio(d["medio"], d["subcategoria"]) == "BCh débito"
     assert d["fecha"] == "2026-06-20"
     assert d["subcategoria"] == "****5502"
 

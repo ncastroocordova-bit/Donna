@@ -228,11 +228,30 @@ async def _upsert_saldo(banco: str, mes: str, saldo: int, fecha: str) -> None:
 # confirmar con un toque. Cero UI nueva — reusa el digest vivo completo (mensaje anclado, chips,
 # commit único) y respeta el invariante "Sheets nunca escribe sin OK de Nico".
 
+# (banco, producto del documento) → medio canónico. El documento SIEMPRE sabe de qué producto es
+# —por eso se llama estado de tarjeta o cartola de cuenta corriente— y ese dato antes se perdía:
+# `_registrar_faltantes` anotaba solo el banco ('Banco de Chile'), así que las compras rescatadas
+# de un estado de TARJETA quedaban indistinguibles de un cargo a la cuenta corriente. Las 11 filas
+# mal etiquetadas de junio salieron de acá. Ahora el producto viaja con el banco.
+_MEDIO_DOC = {
+    ("bch", "tarjeta_credito"): "Banco de Chile crédito",
+    ("bch", "cartola_cuenta_corriente"): "Banco de Chile débito",
+    ("mach", "tarjeta_credito"): "Mach crédito",
+    ("mach", "cartola_cuenta_corriente"): "Mach débito",
+}
+
+
+def _medio_de_documento(banco: str, producto: str) -> str:
+    """Medio de pago que corresponde a un documento. Si el par no está mapeado devuelve el banco
+    pelado y `finanzas.normalizar_medio` lo mandará a 'Otro' — visible, no adivinado."""
+    return _MEDIO_DOC.get((banco, producto), banco)
+
+
 async def _registrar_faltantes(diffs: list[dict]) -> int:
     """F5.5: las compras que un diferencial marcó como 'falta anotar' → candidatas al buffer."""
     n = 0
     for d in diffs:
-        medio = {"bch": "Banco de Chile", "mach": "Mach"}.get(d.get("banco", ""), d.get("banco", ""))
+        medio = _medio_de_documento(d.get("banco", ""), d.get("producto", ""))
         for f in d.get("faltantes", []):
             datos = {
                 "fecha": f["fecha"], "tipo": "Gasto",
@@ -265,7 +284,8 @@ async def _registrar_abonos(banco: str, abonos: list[dict], dueno_rut: str) -> i
     Lo que pasa los tres entra al buffer como candidato de Ingreso, a confirmar en el digest."""
     n = 0
     propios = finanzas._dueno_nombres()
-    medio = {"bch": "Banco de Chile", "mach": "Mach"}.get(banco, banco)
+    # Un abono siempre entra a la cuenta corriente, nunca a una tarjeta de crédito.
+    medio = _medio_de_documento(banco, "cartola_cuenta_corriente")
     for a in abonos:
         desc = str(a.get("descripcion", "")).strip()
         rut = str(a.get("rut_contraparte") or "")
@@ -277,7 +297,7 @@ async def _registrar_abonos(banco: str, abonos: list[dict], dueno_rut: str) -> i
             continue
         datos = {
             "fecha": str(a.get("fecha", "")) or _hoy(), "tipo": "Ingreso", "categoria": "Otro Ingreso",
-            "comercio": desc or "Abono", "monto": a["monto"], "medio": f"{medio} cuenta corriente",
+            "comercio": desc or "Abono", "monto": a["monto"], "medio": medio,
             "subcategoria": f"Rut {rut}" if rut else "",
         }
         if await finanzas._bufferizar(datos, "estado_cuenta"):

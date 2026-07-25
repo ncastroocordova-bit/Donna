@@ -541,6 +541,19 @@ def _intencion_de(categoria: str) -> str:
 # reintroducir un valor suelto: pase lo que pase, a la hoja llega uno de estos seis.
 MEDIOS_CANON = ("Mach débito", "Mach crédito", "BCh débito", "BCh crédito", "Transferencia", "Otro")
 
+# Los 4 últimos dígitos → la cuenta exacta. Es la señal MÁS confiable que existe: el banco los
+# manda en cada correo de compra, y a diferencia del texto del medio no dependen de que el parser
+# de turno se acuerde de anotar el producto. Sembrado desde las transacciones reales (2026-07-24).
+# Para agregar una tarjeta nueva basta una línea acá; lo que no esté mapeado NO se adivina.
+MEDIO_POR_TARJETA = {
+    "5502": "BCh débito",     # cuenta corriente BCh ("con cargo a Cuenta ****5502")
+    "9371": "BCh crédito",    # tarjeta de crédito BCh (la de las compras en USD)
+    "1969": "Mach débito",
+    "6867": "Mach débito",
+    "7160": "Mach crédito",
+    "4846": "Mach crédito",
+}
+
 
 def normalizar_medio(medio: str, detalle: str = "") -> str:
     """Cualquier etiqueta de medio de pago → el vocabulario canónico. `detalle` es el antiguo
@@ -548,19 +561,40 @@ def normalizar_medio(medio: str, detalle: str = "") -> str:
     no se escriba a la planilla, y es lo que desambigua los casos que el medio solo no resuelve
     (ej. medio='Mach' + detalle='Transferencia a terceros' → Transferencia, no Mach débito).
 
-    El orden de los chequeos importa: 'Banco de Chile transferencia' calza con banco Y con
-    transferencia — manda la operación, porque la plata sale de la cuenta corriente igual."""
+    El orden de los chequeos importa por dos razones:
+      1. 'Banco de Chile transferencia' calza con banco Y con transferencia — manda la operación,
+         porque la plata sale de la cuenta corriente igual.
+      2. El nº de tarjeta manda sobre el texto: el texto depende de que el parser se acordara de
+         anotar el producto, el número no.
+
+    **No adivina.** Si sabe el banco pero no el producto (ej. 'Banco de Chile' pelado, sin nº de
+    tarjeta), devuelve 'Otro' en vez de asumir débito. Esa suposición callada es exactamente lo que
+    dejó 11 filas etiquetadas mal en junio: eran una mezcla de BCh y Mach, crédito las dos, y
+    nadie se enteró hasta la auditoría de columnas. Un 'Otro' en la planilla es una pregunta
+    visible; un 'BCh débito' inventado es una respuesta falsa."""
     blob = _norm(f"{medio} {detalle}")
     if not blob.strip():
         return "Otro"
     if "transferencia" in blob or "traspaso" in blob:
         return "Transferencia"
-    es_credito = "credito" in blob
-    if "mach" in blob:
-        return "Mach crédito" if es_credito else "Mach débito"
-    if "banco de chile" in blob or "bch" in blob or "edwards" in blob:
-        return "BCh crédito" if es_credito else "BCh débito"
-    return "Otro"       # Copec Pay, MercadoPago y cualquier rail nuevo: no son una cuenta
+    tarjeta = re.search(r"\*{2,}\s*(\d{4})|\b(\d{4})\s*$", str(detalle or "").strip())
+    if tarjeta:
+        mapeado = MEDIO_POR_TARJETA.get(tarjeta.group(1) or tarjeta.group(2))
+        if mapeado:
+            return mapeado
+    if "credito" in blob:
+        if "mach" in blob:
+            return "Mach crédito"
+        if "banco de chile" in blob or "bch" in blob or "edwards" in blob:
+            return "BCh crédito"
+    if "debito" in blob or "cuenta corriente" in blob or "cargo a cuenta" in blob:
+        if "mach" in blob:
+            return "Mach débito"
+        if "banco de chile" in blob or "bch" in blob or "edwards" in blob:
+            return "BCh débito"
+    logger.warning("normalizar_medio: no pude resolver el producto de medio=%r detalle=%r → 'Otro'",
+                   medio, detalle)
+    return "Otro"
 
 
 def _progreso(actual, objetivo) -> int | None:
@@ -808,9 +842,14 @@ def _parse_bch_cargo(texto: str) -> dict | None:
     es_usd = bool(m.group(1))
     valor = _num(m.group(2))
     comercio = m.group(4).strip()
+    # El correo YA dice el producto ('con cargo a Cuenta' = débito · 'con Tarjeta de Crédito' =
+    # crédito) y antes se tiraba: los tres casos salían como 'Banco de Chile' a secas y después
+    # nadie podía distinguir débito de crédito. Ahora viaja en el medio desde el origen.
+    frase = _norm(m.group(0))
+    producto = "crédito" if "tarjeta de credito" in frase else "débito"
     tx = {
         "tipo": "Gasto", "categoria": _categoria_de(comercio), "subcategoria": f"****{m.group(3)}",
-        "comercio": comercio, "medio": "Banco de Chile", "fecha": _fecha_iso(m.group(5)),
+        "comercio": comercio, "medio": f"Banco de Chile {producto}", "fecha": _fecha_iso(m.group(5)),
         "dudosa": False, "motivo_duda": "",
     }
     if es_usd:  # el cargo real en pesos no viene en el correo → estimo y marco para confirmar.
@@ -1750,7 +1789,11 @@ TOOLS = [
                 "monto": {"type": "number", "description": "Monto en pesos, sin separadores"},
                 "categoria": {"type": "string"},
                 "comercio": {"type": "string"},
-                "medio": {"type": "string", "description": "Banco de Chile, Mach, MP, efectivo, débito, crédito, transferencia"},
+                "medio": {"type": "string", "description": (
+                    "Banco y producto juntos, uno de: 'Mach débito', 'Mach crédito', 'BCh débito', "
+                    "'BCh crédito', 'Transferencia'. El PRODUCTO (débito/crédito) es obligatorio: "
+                    "sin él no se puede saber de qué cuenta salió la plata. Si el texto no lo dice, "
+                    "deja el campo vacío en vez de adivinar.")},
             },
             "required": ["monto"],
         },
