@@ -422,11 +422,51 @@ problema eran las columnas, no los datos.
   Dashboard y el Comparativo se reengancharon solas (`Transacciones!F`→`E`,
   `Compras_Detalle!E`→`D`, `!F`→`E`); **ningún número del Dashboard se movió** y las 9 hojas
   siguen con 0 errores. 276 tests verdes (3 nuevos sobre el vocabulario de `Medio`).
+### Corrección al diagnóstico + pasos 1 y 2 del plan de Predecible (2026-07-24)
+
+El "hallazgo de fondo" del párrafo anterior estaba **mal leído**. La columna `Fuente` no tiene
+fotos, pero sí desgloses por texto, que es el otro camino de captura. El buffer de Supabase dice:
+**Donna preguntó *"¿qué compraste?"* 8 veces y Nico respondió 7 (87%)**; hay 14 filas del buffer
+con ítems reales. La captura funciona y Nico sí responde.
+
+Y `Predecible=no` en 65/65 es **mayormente correcto**: lo que se compra en el almacén San Vale
+(11 de 68 transacciones) es pan, chanchería y cervezas — perecible y cotidiano, que el canon
+excluye del predictor a propósito. El clasificador acierta en el control (`arroz`, `atún`,
+`detergente`, `papel higiénico` → sí). El predictor no está sin datos por un bug: está sin datos
+porque la despensa no pasa por ese canal.
+
+**Los tres huecos reales** (y qué se hizo con cada uno):
+1. **El clasificador no sabía que Nico tiene un hijo.** `pañales emilio` × $29.340 salía `no` — el
+   ítem de reposición por excelencia. ✅ **Hecho (paso 2):** se agregaron las familias que
+   faltaban (guagua: pañal/toallita/fórmula/colado/mamadera; aseo recurrente) y se cambió el
+   desempate a **la coincidencia más específica gana**, que de paso arregla los compuestos
+   (`salsa de tomate` calzaba con `tomate` y salía `no`). 18/18 casos correctos.
+2. **Las correcciones no se aprendían.** El chip 📦/🥖 existe desde v3 pero el toque moría en ese
+   digest: Nico podía marcar "pañales" cada semana y Donna lo volvía a inferir mal. ✅ **Hecho
+   (paso 1):** tabla `items_predecibles` (migración 015, aplicada), `memory.get_items_predecibles`
+   / `upsert_item_predecible`, `finanzas.aprender_predecible` (aprende la palabra significativa,
+   no la frase entera) y `_predecible` consulta el lookup **antes** que las keywords. Verificado
+   en vivo contra Supabase: enseñar → releer → la corrección manda.
+3. **La granularidad muere donde vive la despensa.** Los desgloses del almacén salen perfectos
+   (`pan 2.500 + chanchería 1.840`); los del súper no — **$29.340 en Santa Isabel se respondió con
+   un solo ítem**. Una compra de súper son 15 productos, y ahí está el arroz y el detergente.
+   ⬜ **Pendiente (paso 3):** foto primero sobre ~$15.000 en comercio "de compras", con botón, en
+   vez de la pregunta abierta que invita a la respuesta de una línea. Es el paso que de verdad
+   produce despensa itemizada.
+
+⬜ **Paso 4 (conductual):** la lista de Compras Fase 1 (`Compras`, planilla Donna) tiene **0 filas
+en tres semanas**. Es el segundo feed del predictor por canon, no necesita OCR ni parseo, y está
+muerto. ⬜ **Paso 5:** gate explícito antes de abrir Compras Fase 2 — N ítems con ≥3 eventos cada
+uno. Hoy daría cero.
+
 - **Inferencia a confirmar por Nico:** las 11 filas que decían `Tarjeta crédito` sin banco ni nº
   de tarjeta quedaron como **`BCh crédito`**. Evidencia: van del 21-may al 17-jun y el estado de
   BCh cierra el 18-jun (`Deuda_Mensual`); es además la única tarjeta que no manda correo por
   compra en pesos, que es justo por lo que faltaban y las trajo el estado de cuenta. Si eran de
   Mach, se corrigen con un reemplazo en la columna F.
+  **Resuelto (2026-07-24): la inferencia estaba MAL.** Nico las revisó: eran mezcladas — 7
+  `BCh crédito` + 4 `Mach crédito`. Ya las corrigió a mano y no se salió del vocabulario. La
+  causa de raíz (el producto se sabía y se tiraba) quedó cerrada en el commit siguiente.
 
 ## Auditoría contra la planilla real (2026-07-01, actualizada 2026-07-02)
 

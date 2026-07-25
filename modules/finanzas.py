@@ -612,21 +612,95 @@ def _progreso(actual, objetivo) -> int | None:
 _NO_PREDECIBLE_KW = ["pan", "marraqueta", "hallulla", "dobladita", "chancher", "fiambre", "verdura",
                      "fruta", "palta", "tomate", "lechuga", "platano", "plátano", "comida preparada",
                      "almuerzo", "completo", "sushi", "pizza", "delivery", "helado", "pastel"]
+# Auditoría 2026-07-24: la lista estaba afinada para una despensa genérica y no sabía que Nico
+# tiene un hijo. El caso que lo delató: 'pañales emilio' × $29.340 salió `predecible=no` — el ítem
+# de reposición por excelencia (recurrente, previsible, no perecible). Se agregan las dos familias
+# que faltaban: lo de guagua y lo de aseo/casa que se repone sí o sí.
 _PREDECIBLE_KW = ["arroz", "atun", "atún", "fideo", "tallarin", "aceite", "azucar", "azúcar", "sal ",
                   "harina", "papel", "higienic", "higiénic", "confort", "toalla nova", "cloro",
                   "detergente", "lavaloza", "jabon", "jabón", "shampoo", "pasta de diente", "conserva",
                   "legumbre", "lenteja", "poroto", "garbanzo", "te ", "cafe", "café", "leche en polvo",
                   "mermelada", "salsa de tomate", "ketchup", "mayonesa", "servilleta", "desodorante",
-                  "limpieza", "abarrote", "despensa", "arvej"]
+                  "limpieza", "abarrote", "despensa", "arvej",
+                  # Emilio: reposición pura, y de las caras — no puede quedar fuera del predictor.
+                  "pañal", "panal", "toallita", "formula", "fórmula", "colado", "cereal infantil",
+                  "mamadera", "chupete", "crema de coche", "talco",
+                  # Aseo/casa recurrente que faltaba.
+                  "bolsa de basura", "esponja", "cera", "desinfectante", "suavizante", "escoba",
+                  "traperos", "virutilla", "alcohol gel", "cloro gel"]
+# `leche` sola es ambigua (la líquida es perecible, la en polvo es despensa) y `leche en polvo`
+# ya está arriba. Se deja fuera a propósito: si Nico la marca con el chip, el lookup la aprende.
+
+def _norm_item(s: str) -> str:
+    """Minúsculas + sin tildes, PERO sin tocar los espacios. No usa `_norm` a propósito: ese hace
+    `.strip()`, y varias keywords dependen del espacio final para no dar falsos positivos
+    ('sal ' no debe calzar con 'salsa', 'te ' no debe calzar con 'tetera')."""
+    s = unicodedata.normalize("NFD", str(s or ""))
+    return "".join(c for c in s if not unicodedata.combining(c)).lower()
+
+
+# Las listas se comparan ya normalizadas: si el texto pierde las tildes, las keywords también
+# tienen que perderlas o 'atún'/'jabón'/'pañal' no calzarían nunca.
+_NO_PREDECIBLE_N = [_norm_item(k) for k in _NO_PREDECIBLE_KW]
+_PREDECIBLE_N = [_norm_item(k) for k in _PREDECIBLE_KW]
+
+_items_aprendidos: dict[str, bool] = {}   # patrón → predecible; lo llena `refrescar_predecibles()`
+_predecibles_cargados = False
+
+
+async def refrescar_predecibles(forzar: bool = False) -> dict[str, bool]:
+    """Trae de Supabase lo que Nico ya corrigió con el chip 📦/🥖 y lo deja en cache de módulo.
+    `_predecible` es síncrona (la llaman parsers sin loop), por eso el lookup se precarga acá.
+
+    Carga UNA vez por proceso, igual que `_categorias_reales`: los puntos que la llaman
+    (`fin_desglose`, `procesar_foto`) corren varias veces al día y no tiene sentido un viaje a
+    Supabase en cada uno. `aprender_predecible` mantiene la cache caliente cuando Nico corrige,
+    así que no se desactualiza sola. Degrada a lo que haya en cache si Supabase falla."""
+    global _items_aprendidos, _predecibles_cargados
+    if _predecibles_cargados and not forzar:
+        return _items_aprendidos
+    try:
+        _items_aprendidos = await memory.get_items_predecibles()
+        _predecibles_cargados = True
+    except Exception:
+        logger.exception("refrescar_predecibles: no pude leer items_predecibles")
+    return _items_aprendidos
 
 
 def _predecible(texto: str) -> bool:
     """¿Es un ítem de despensa/reposición (sí) o cotidiano/perecible (no)? Recibe el nombre del
-    ítem y/o su categoría. Conservador: si no calza con la despensa, NO es predecible."""
-    t = (texto or "").lower()
-    if any(k in t for k in _NO_PREDECIBLE_KW):
-        return False
-    return any(k in t for k in _PREDECIBLE_KW)
+    ítem y/o su categoría. Conservador: si no calza con la despensa, NO es predecible.
+
+    Lo APRENDIDO manda sobre la heurística: si Nico ya corrigió ese ítem con el chip 📦/🥖, esa
+    es la respuesta y las palabras clave no se consultan. Antes la corrección vivía solo dentro
+    del digest en curso y se perdía, así que la misma pregunta volvía cada semana."""
+    t = _norm_item(texto)
+    for patron, valor in _items_aprendidos.items():
+        if patron and patron in t:
+            return valor
+    # Gana la coincidencia MÁS ESPECÍFICA (la keyword más larga), no la lista que se revise
+    # primero. Antes el NO ganaba siempre y eso rompía los compuestos: 'salsa de tomate' es
+    # despensa, pero calzaba con 'tomate' (perecible) y salía `no`. Mismo caso: 'leche en polvo'.
+    no_kw = max((len(k) for k in _NO_PREDECIBLE_N if k in t), default=0)
+    si_kw = max((len(k) for k in _PREDECIBLE_N if k in t), default=0)
+    return si_kw > no_kw
+
+
+async def aprender_predecible(item: str, predecible: bool) -> None:
+    """Persiste la corrección del chip 📦/🥖 y actualiza el cache en caliente, para que el mismo
+    digest ya use el criterio nuevo en los ítems que queden por clasificar.
+
+    El patrón que se guarda es la PRIMERA palabra significativa del ítem, no la frase entera:
+    de 'pañales emilio' se aprende 'pañales', que es lo que se repite entre compras. Guardar la
+    frase completa haría un lookup que casi nunca vuelve a calzar."""
+    nombre = _norm_item(item).strip()   # misma normalización que `_predecible`, o el patrón no calza
+    if not nombre:
+        return
+    patron = next((p for p in nombre.split() if len(p) >= 4), nombre.split()[0] if nombre.split() else "")
+    if not patron:
+        return
+    await memory.upsert_item_predecible(patron, predecible)
+    _items_aprendidos[patron] = predecible
 
 
 def _intencion_resumen(items: list[dict] | None) -> str:
@@ -957,6 +1031,7 @@ async def procesar_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> d
     """Vision AISLADA sobre una boleta → buffer del día, ÍTEM POR ÍTEM cuando se puede (v3).
     El correo del banco sigue siendo el total canónico; estos ítems se correlacionan con él en
     el cierre (fin_correlacionar). Degrada: si no logra itemizar, queda como un solo total."""
+    await refrescar_predecibles()   # las correcciones del chip 📦/🥖 mandan sobre las keywords
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
     try:
         r = await _anthropic.messages.create(
@@ -1280,6 +1355,7 @@ DESGLOSE_SYSTEM = (
 async def fin_desglose(texto: str, total=None) -> list[dict]:
     """Desglose dictado → líneas de detalle. Determinista primero (regex, cero tokens); si no
     saca nada, cae al LLM. Cada línea trae categoría/intención/predecible."""
+    await refrescar_predecibles()   # las correcciones del chip 📦/🥖 mandan sobre las keywords
     lineas = _desglose_determinista(texto, total)
     if lineas:
         return lineas

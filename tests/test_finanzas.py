@@ -227,6 +227,59 @@ def _cat_real(monkeypatch):
     monkeypatch.setattr(finanzas, "_categorias_reales", fake)
 
 
+# ── Predecible (2026-07-24): el clasificador de reposición y su lookup aprendido ──
+
+@pytest.fixture(autouse=True)
+def _sin_aprendidos(monkeypatch):
+    """Aísla la heurística de predecibles en TODO el archivo: cache vacía y marcada como ya
+    cargada, así ningún test sale a Supabase por el lookup (los que ejercen el lookup se
+    sobreescriben `_items_aprendidos` ellos mismos)."""
+    monkeypatch.setattr(finanzas, "_items_aprendidos", {})
+    monkeypatch.setattr(finanzas, "_predecibles_cargados", True)
+
+
+def test_predecible_conoce_la_vida_de_nico(_sin_aprendidos):
+    """La lista estaba afinada para una despensa genérica y no sabía que Nico tiene un hijo.
+    'pañales emilio' × $29.340 salía `no` — el ítem de reposición por excelencia."""
+    assert finanzas._predecible("pañales emilio") is True
+    assert finanzas._predecible("toallitas humedas") is True
+    assert finanzas._predecible("fórmula") is True
+    # Y lo perecible/cotidiano sigue fuera del predictor por canon
+    assert finanzas._predecible("pan") is False
+    assert finanzas._predecible("chanchería") is False
+
+
+def test_predecible_gana_la_coincidencia_mas_especifica(_sin_aprendidos):
+    """Antes el NO ganaba siempre por orden de revisión, y eso rompía los compuestos: 'salsa de
+    tomate' es despensa pero calzaba con 'tomate' (perecible). Ahora gana la keyword más larga."""
+    assert finanzas._predecible("salsa de tomate") is True
+    assert finanzas._predecible("leche en polvo") is True
+    assert finanzas._predecible("tomate") is False       # el simple sigue siendo perecible
+    assert finanzas._predecible("leche") is False        # la líquida es ambigua: fuera
+
+
+def test_predecible_no_confunde_por_prefijo(_sin_aprendidos):
+    """Las keywords con espacio final ('sal ', 'te ') existen justo para esto. El normalizador
+    de ítems no puede hacer `.strip()` o vuelven los falsos positivos."""
+    assert finanzas._predecible("salame") is False
+    assert finanzas._predecible("tetera") is False
+
+
+def test_predecible_lo_aprendido_manda_sobre_las_keywords(monkeypatch):
+    """El canon de la espina: una corrección de Nico no se vuelve a inferir desde cero. El chip
+    📦/🥖 existía desde v3 pero moría en ese digest — marcaba 'pañales' cada semana y Donna lo
+    olvidaba. El lookup se consulta ANTES que la heurística."""
+    monkeypatch.setattr(finanzas, "_items_aprendidos", {"panales": False, "cerveza": True})
+    assert finanzas._predecible("pañales emilio") is False   # la keyword decía True
+    assert finanzas._predecible("cervezas") is True          # la keyword decía False
+
+
+def test_norm_item_no_toca_los_espacios():
+    """`_norm` hace .strip() y por eso no sirve acá: convertiría 'sal ' en 'sal'."""
+    assert finanzas._norm_item("Pañales ") == "panales "
+    assert finanzas._norm_item("ATÚN") == "atun"
+
+
 # ── Auditoría de columnas 2026-07-24: el vocabulario canónico de `Medio` ──
 # La hoja tenía OCHO valores mezclando banco, producto y operación ('Banco de Chile' x18 sin
 # decir débito o crédito, 'Tarjeta crédito' x11 sin decir de qué banco, 'Mach' x8 que en realidad

@@ -366,6 +366,28 @@ async def upsert_comercio(patron: str, nombre: str, categoria: str = "", es_comp
     await db.table("comercios").upsert(fila, on_conflict="patron").execute()
 
 
+# ─────────────── Ítems predecibles: qué se repone y qué no (lookup aprendido) ───────────────
+
+async def get_items_predecibles() -> dict[str, bool]:
+    """Lo que Nico ya corrigió con el chip 📦/🥖: patrón del ítem → predecible sí/no.
+    Lo consulta `finanzas._predecible` ANTES de caer a sus palabras clave, así una corrección
+    manda sobre la heurística y no hay que corregir lo mismo dos veces."""
+    db = await _get_db()
+    r = await db.table("items_predecibles").select("patron, predecible").execute()
+    return {f["patron"]: bool(f["predecible"]) for f in (r.data or [])}
+
+
+async def upsert_item_predecible(patron: str, predecible: bool) -> None:
+    """Aprende que un ítem es (o no es) de reposición. Lo alimenta el chip 📦/🥖 del digest:
+    sin esto la corrección vivía solo en ese digest y se perdía."""
+    patron = (patron or "").strip().lower()
+    if not patron:
+        return
+    db = await _get_db()
+    await db.table("items_predecibles").upsert(
+        {"patron": patron, "predecible": bool(predecible)}, on_conflict="patron").execute()
+
+
 # ───────────────────────── jobs_log: resiliencia del scheduler ─────────────────────────
 
 async def job_ya_corrio(job: str, fecha: str | None = None) -> bool:

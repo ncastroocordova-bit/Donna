@@ -672,6 +672,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             items[i]["intencion"] = _sig_deseo(items[i].get("intencion", ""))
         elif accion == "p":
             items[i]["predecible"] = not items[i].get("predecible")
+            # El toque no se queda en este digest: se aprende. Sin esto Nico marcaba "pañales"
+            # como reposición cada semana y Donna lo volvía a inferir mal la siguiente — el chip
+            # existía desde v3 pero no alimentaba nada (canon de la espina: el aprendizaje se
+            # persiste en Supabase). Degrada elegante: si falla, el digest sigue igual.
+            try:
+                await finanzas.aprender_predecible(items[i].get("item", ""), items[i]["predecible"])
+            except Exception:
+                logger.exception("digest: no pude aprender el predecible del ítem")
         await memory.buffer_actualizar(mid, {"items": items})
         await _edit_ok(q, _texto_items(b or {}, items), reply_markup=_teclado_items(mid, items, ver_todos))
         return
