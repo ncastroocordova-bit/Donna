@@ -1,7 +1,7 @@
 # migrations/ — instrucciones locales
 
 **El canon del proyecto vive en [`../CLAUDE.md`](../CLAUDE.md).** Claude Code ya lo carga; este
-archivo NO lo repite. Hasta el 2026-07-24 sí lo repetía —una copia completa— y se desincronizó en
+archivo NO lo repite. Hasta el 2026-07-25 sí lo repetía —una copia completa— y se desincronizó en
 silencio: seguía anunciando el faro viejo ($2.028.091 / $48.236), no conocía la planilla Louis ni
 la hoja `Saldos`, y mandaba a documentos archivados. **Si algo de acá empieza a parecerse al canon,
 bórralo y deja el link.**

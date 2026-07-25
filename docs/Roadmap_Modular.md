@@ -227,6 +227,12 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    `/lista` manda la lista tocable (un ✅ por producto → lo saca y registra la fecha). Validado
    end-to-end contra la planilla real; 7 tests (`tests/test_compras.py`). **Fase 2 (predictor de
    reposición) sigue DIFERIDA** por canon — no se construyó.
+   **Pista de aterrizaje de la Fase 2 (2026-07-24/25):** se auditó de dónde saldrían sus datos y no
+   había ninguno (`Predecible=sí` en 0 de 65 líneas, lista Fase 1 en 0 filas). Los pasos 1-3 del
+   plan ya están hechos (el chip 📦/🥖 aprende · el clasificador conoce la despensa real · la
+   boleta se pide y se pega al cargo en las compras grandes); faltan el 4 (usar la lista, es
+   conductual) y el 5 (el gate de datos). Ver la sección de más abajo — **la Fase 2 no se abre
+   hasta que el gate del paso 5 dé verde**, y hoy da 0.
 4. **Recordatorios/Calendario** `rec_` — 🔶 parcial (el bug de schema quedó **cerrado**, falta scope).
    **⟵ SIGUIENTE EN LA SECUENCIA (redecidido 2026-07-23, ver ficha 4 arriba): antes de cerrar el scope
    restante se construye Calendario en serio y se fusiona con Recordatorios en un solo módulo.**
@@ -450,7 +456,7 @@ porque la despensa no pasa por ese canal.
 3. **La granularidad muere donde vive la despensa.** Los desgloses del almacén salen perfectos
    (`pan 2.500 + chanchería 1.840`); los del súper no — **$29.340 en Santa Isabel se respondió con
    un solo ítem**. Una compra de súper son 15 productos, y ahí está el arroz y el detergente.
-   ✅ **Hecho (paso 3, 2026-07-24):** sobre `finanzas.UMBRAL_FOTO` ($15.000) en un comercio "de
+   ✅ **Hecho (paso 3, 2026-07-25):** sobre `finanzas.UMBRAL_FOTO` ($15.000) en un comercio "de
    compras", Donna deja de preguntar abierto y **pide la boleta**: *"Vi $29.340 en Santa Isabel.
    Eso no es un ítem — mándame la boleta y la desgloso yo"*, con 📷 solo en su propia fila y el
    texto bajado a secundario. Bajo el umbral, la pregunta abierta de siempre.
@@ -462,10 +468,44 @@ porque la despensa no pasa por ese canal.
    como desglose del mismo cargo (sin esto la espera se descartaba y se perdía el vínculo).
    `finanzas.leer_boleta` se separó de `procesar_foto` para poder adjuntar sin bufferizar aparte.
 
-⬜ **Paso 4 (conductual):** la lista de Compras Fase 1 (`Compras`, planilla Donna) tiene **0 filas
-en tres semanas**. Es el segundo feed del predictor por canon, no necesita OCR ni parseo, y está
-muerto. ⬜ **Paso 5:** gate explícito antes de abrir Compras Fase 2 — N ítems con ≥3 eventos cada
-uno. Hoy daría cero.
+### ⬜ Paso 4 — despertar la lista de Compras Fase 1 (el segundo feed)
+
+**Qué pasa:** la hoja `Compras` (planilla Donna) tiene **0 filas desde que se construyó el
+2026-07-05**. El módulo funciona —`cmp_agregar` / `cmp_lista` / `cmp_comprado` + el comando
+`/lista` con sus toques—; simplemente no se usa.
+
+**Por qué importa:** por canon, el predictor de Fase 2 aprende de **dos** fuentes, y esta es la
+barata: un ítem marcado `comprado` da el par (ítem, fecha) **directo, sin OCR, sin LLM, sin
+parseo**. La otra fuente (`Predecible=sí` en `Compras_Detalle`) depende de que llegue una boleta
+con despensa. Con la lista viva, el predictor tiene datos aunque no se saque ni una foto.
+
+**Es conductual, no código** — nada que construir. Lo que se necesita: usar *"Donna falta arroz"*
+cuando se acaba algo, y `/lista` antes de ir al súper (que es donde el ✅ registra la fecha de
+compra, que es el dato que el predictor necesita).
+
+**Lo único que sí valdría construir, y solo si a las 2 semanas sigue en cero:** un nudge desde
+Proactividad («llevas N días sin agregar nada a la lista»), respetando el tope 1/día. No antes —
+sería resolver con código un problema de hábito que todavía no se sabe si existe.
+
+### ⬜ Paso 5 — el gate: medir antes de abrir Compras Fase 2
+
+**La regla:** no se construye el predictor hasta que haya con qué. Canon: *calla hasta tener
+datos* (mismo criterio que el factor de optimismo y las ventanas de salud).
+
+**Umbral concreto:** **≥5 ítems distintos con ≥3 eventos de compra cada uno.** Con menos de 3
+fechas por ítem no hay intervalo que estimar —dos compras dan un solo intervalo, y con uno solo no
+se distingue una compra mensual de una casualidad—, y con menos de 5 ítems el módulo avisaría de
+tan poco que no cambia nada.
+
+**Cómo se mide (lo único que hay que construir de este paso, ~30 min):** una función que cuente
+eventos por ítem cruzando las dos fuentes —`Compras_Detalle` con `Predecible=sí` (pasando
+`sheet_id=sheets.fin_id()`, que cruza de Donna a Louis) y la hoja `Compras` con
+`Estado=comprado`— y devuelva la tabla ítem → nº de eventos → intervalo mediano. Sale en la
+revisión dominical, en una línea, junto al resto.
+
+**Estado hoy (2026-07-25): 0 ítems califican.** `Predecible=sí` está en 0 de 65 líneas y la lista
+tiene 0 filas. Con el paso 3 desplegado, la cuenta empieza a subir desde la próxima vuelta al
+súper — pero el gate se evalúa con el dato, no con la expectativa.
 
 - **Inferencia a confirmar por Nico:** las 11 filas que decían `Tarjeta crédito` sin banco ni nº
   de tarjeta quedaron como **`BCh crédito`**. Evidencia: van del 21-may al 17-jun y el estado de
