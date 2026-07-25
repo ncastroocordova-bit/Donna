@@ -1027,10 +1027,11 @@ def _cuadrar_resto(items: list[dict], total) -> list[dict]:
     return items
 
 
-async def procesar_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> dict | None:
-    """Vision AISLADA sobre una boleta → buffer del día, ÍTEM POR ÍTEM cuando se puede (v3).
-    El correo del banco sigue siendo el total canónico; estos ítems se correlacionan con él en
-    el cierre (fin_correlacionar). Degrada: si no logra itemizar, queda como un solo total."""
+async def leer_boleta(image_bytes: bytes, media_type: str = "image/jpeg") -> dict | None:
+    """Vision AISLADA sobre una boleta → {comercio, total, items, fecha, medio}. SIN tocar el
+    buffer: separado de `procesar_foto` para que la foto pueda ir a un cargo que YA existe
+    (`adjuntar_foto_a_cargo`) en vez de crear una entrada nueva que después haya que correlacionar.
+    Devuelve None si no logra leerla."""
     await refrescar_predecibles()   # las correcciones del chip 📦/🥖 mandan sobre las keywords
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
     try:
@@ -1049,18 +1050,73 @@ async def procesar_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> d
         d = _parse_json(r.content[0].text)
         total = d.get("total", d.get("monto", 0))
         items = [_linea_detalle(l) for l in (d.get("items") or []) if _num(l.get("precio", l.get("monto", 0))) > 0]
+        return {
+            "comercio": d.get("comercio", ""), "total": total, "items": items,
+            "fecha": d.get("fecha", ""), "medio": d.get("medio", ""),
+            "categoria": d.get("categoria", "Otros"),
+        }
+    except Exception:
+        logger.exception("leer_boleta falló")
+        return None
+
+
+async def procesar_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> dict | None:
+    """Boleta suelta (no es respuesta a una pregunta por un cargo concreto) → buffer del día,
+    ÍTEM POR ÍTEM cuando se puede (v3). El correo del banco sigue siendo el total canónico; estos
+    ítems se correlacionan con él en el cierre (fin_correlacionar). Degrada: si no logra itemizar,
+    queda como un solo total."""
+    d = await leer_boleta(image_bytes, media_type)
+    if d is None:
+        return None
+    try:
+        total, items = d["total"], d["items"]
         if items:
             items = _cuadrar_resto(items, total)
         datos = {
-            "tipo": "Gasto", "monto": total, "comercio": d.get("comercio", ""),
-            "fecha": d.get("fecha", ""), "medio": d.get("medio", ""),
-            "categoria": (items[0]["categoria"] if items else d.get("categoria", "Otros")),
+            "tipo": "Gasto", "monto": total, "comercio": d["comercio"],
+            "fecha": d["fecha"], "medio": d["medio"],
+            "categoria": (items[0]["categoria"] if items else d["categoria"]),
             "items": items or None,
         }
         return await _bufferizar(datos, "foto")
     except Exception:
         logger.exception("procesar_foto falló")
         return None
+
+
+async def adjuntar_foto_a_cargo(buffer_id: str, image_bytes: bytes,
+                                media_type: str = "image/jpeg") -> str:
+    """La foto es la respuesta a un *"¿qué compraste?"* por un cargo concreto: sus ítems van a ESE
+    cargo, no a una entrada nueva.
+
+    Es la diferencia con `procesar_foto`, que buffea aparte y confía en que la correlación
+    monto+fecha+comercio los junte después. Ahí el emparejamiento puede fallar —la boleta dice
+    'ALMACEN SAN VALENTIN' y el banco 'MERCADOPAGO*SANVA'—, y cuando falla quedan dos entradas
+    del mismo gasto. Acá el vínculo lo puso Nico al tocar el botón: no hay nada que adivinar.
+
+    El total manda es el del CARGO (el banco es la fuente canónica del monto), no el que leyó la
+    Vision: si la boleta suma menos, `_cuadrar_resto` completa la diferencia."""
+    try:
+        cargo = next((p for p in await memory.buffer_pendientes() if p["id"] == buffer_id), None)
+    except Exception:
+        logger.exception("adjuntar_foto_a_cargo: no pude leer el buffer")
+        cargo = None
+    if not cargo:
+        return "Ese cargo ya no está pendiente. Mándame la foto suelta y la cruzo igual."
+    d = await leer_boleta(image_bytes, media_type)
+    if d is None or not d["items"]:
+        return "No pude sacar los ítems de esa foto. Dímelos por texto («2000 chanchería, resto pan») o la dejamos así."
+    items = _cuadrar_resto(d["items"], cargo.get("monto"))
+    try:
+        await memory.buffer_actualizar(buffer_id, {"items": items,
+                                                   "intencion": _intencion_resumen(items)})
+    except Exception:
+        logger.exception("adjuntar_foto_a_cargo: no pude guardar el detalle")
+        return "Leí la boleta pero no pude guardarla ahora. Reintenta en un rato."
+    n_pred = sum(1 for i in items if i.get("predecible"))
+    extra = f" {n_pred} de reposición 📦." if n_pred else ""
+    return (f"Leí la boleta: {len(items)} ítem(s) en {cargo.get('comercio') or 'ese cargo'}.{extra} "
+            "Lo confirmas en el digest del cierre.")
 
 
 async def procesar_correo(raw: str, remitente: str = "", asunto: str = "", dueno_rut: str = "",
@@ -1483,6 +1539,20 @@ async def _correlacionar_contra_planilla() -> int:
 # el flag aprendido `es_compras` de la regla de comercio.
 _CATEGORIAS_COMPRAS = {"alimentación", "alimentacion", "supermercado", "hogar", "almacén",
                        "almacen", "limpieza", "despensa", "abarrotes"}
+
+
+# Sobre este monto, una compra "de compras" ya no es un ítem: es una vuelta al súper. La pregunta
+# abierta ("¿qué compraste?") invita a la respuesta de una línea, y eso es justo lo que pasó —
+# $29.340 en Santa Isabel se contestó con "pañales emilio", una sola línea para 15 productos. Y la
+# despensa (arroz, atún, detergente: lo ÚNICO que alimenta el predictor de Compras Fase 2) vive
+# precisamente en esas vueltas grandes, no en el pan diario del almacén. Sobre el umbral Donna
+# pide la BOLETA, que es el único camino que itemiza de verdad sin que Nico dicte 15 productos.
+UMBRAL_FOTO = 15000
+
+
+def pedir_foto(monto) -> bool:
+    """¿Este cargo amerita pedir la boleta en vez de preguntar abierto?"""
+    return int(_num(monto)) >= UMBRAL_FOTO
 
 
 def _es_compras(p: dict, reglas: list[dict] | None = None) -> bool:

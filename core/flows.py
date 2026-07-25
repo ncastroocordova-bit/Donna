@@ -245,8 +245,19 @@ async def corregir_categoria_item(buffer_id: str, idx: int, categoria: str) -> d
     return items[idx]
 
 
-def teclado_pregunta_compra(buffer_id: str) -> InlineKeyboardMarkup:
-    """Botones de la pregunta '¿qué compraste?' (v3): foto, desglosar por texto, o después."""
+def teclado_pregunta_compra(buffer_id: str, foto_primero: bool = False) -> InlineKeyboardMarkup:
+    """Botones de la pregunta '¿qué compraste?' (v3): foto, desglosar por texto, o después.
+
+    `foto_primero` (paso 3 del plan de Predecible) es para las compras grandes: la foto pasa a
+    ocupar su propia fila arriba y el desglose por texto baja a secundario. En una vuelta al súper
+    el texto no sirve —nadie dicta 15 productos— y la despensa que alimenta al predictor está
+    justamente ahí."""
+    if foto_primero:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📷 Mandar la boleta", callback_data=f"compra:foto:{buffer_id}")],
+            [InlineKeyboardButton("✍️ Prefiero escribirlo", callback_data=f"compra:desglosar:{buffer_id}"),
+             InlineKeyboardButton("⏭️ Después", callback_data=f"compra:despues:{buffer_id}")],
+        ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📷 Mandar foto", callback_data=f"compra:foto:{buffer_id}"),
          InlineKeyboardButton("✍️ Desglosar", callback_data=f"compra:desglosar:{buffer_id}")],
@@ -716,7 +727,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 "(o «cancelar» si mejor no)."
             )
         elif accion == "foto":
-            await q.edit_message_text("Mándame la foto de la boleta y la cruzo con este cargo. 📷")
+            # La espera ATA la próxima foto a ESTE cargo. Antes solo se pedía la foto y se confiaba
+            # en que la correlación monto+fecha+comercio la juntara con el cargo — y esa es la que
+            # falla cuando la boleta dice 'ALMACEN SAN VALENTIN' y el banco 'MERCADOPAGO*SANVA'.
+            espera.iniciar(context.user_data, "foto_cargo", {"buffer_id": buffer_id})
+            await q.edit_message_text("Dale, mándame la foto de la boleta y la pego a este cargo. 📷")
         else:  # despues
             if q.message.message_id == _digest_msg.get(q.message.chat_id):
                 await _volver_al_digest(q)   # venía del digest anclado → el digest vuelve, no un texto suelto

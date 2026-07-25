@@ -450,9 +450,17 @@ porque la despensa no pasa por ese canal.
 3. **La granularidad muere donde vive la despensa.** Los desgloses del almacén salen perfectos
    (`pan 2.500 + chanchería 1.840`); los del súper no — **$29.340 en Santa Isabel se respondió con
    un solo ítem**. Una compra de súper son 15 productos, y ahí está el arroz y el detergente.
-   ⬜ **Pendiente (paso 3):** foto primero sobre ~$15.000 en comercio "de compras", con botón, en
-   vez de la pregunta abierta que invita a la respuesta de una línea. Es el paso que de verdad
-   produce despensa itemizada.
+   ✅ **Hecho (paso 3, 2026-07-24):** sobre `finanzas.UMBRAL_FOTO` ($15.000) en un comercio "de
+   compras", Donna deja de preguntar abierto y **pide la boleta**: *"Vi $29.340 en Santa Isabel.
+   Eso no es un ítem — mándame la boleta y la desgloso yo"*, con 📷 solo en su propia fila y el
+   texto bajado a secundario. Bajo el umbral, la pregunta abierta de siempre.
+   **Y se ató la foto al cargo:** el botón 📷 abre una espera `foto_cargo` y la siguiente foto va
+   a ESE cargo. Antes solo se pedía la foto y se confiaba en que la correlación
+   monto+fecha+comercio la juntara — que es justo la que falla cuando la boleta dice 'ALMACEN SAN
+   VALENTIN' y el banco 'MERCADOPAGO*SANVA'. El total canónico sigue siendo el del banco: si la
+   boleta suma menos, `_cuadrar_resto` completa. Si Nico responde por texto en vez de foto, vale
+   como desglose del mismo cargo (sin esto la espera se descartaba y se perdía el vínculo).
+   `finanzas.leer_boleta` se separó de `procesar_foto` para poder adjuntar sin bufferizar aparte.
 
 ⬜ **Paso 4 (conductual):** la lista de Compras Fase 1 (`Compras`, planilla Donna) tiene **0 filas
 en tres semanas**. Es el segundo feed del predictor por canon, no necesita OCR ni parseo, y está

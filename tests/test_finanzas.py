@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from core import flows
 from modules import finanzas
 
 
@@ -946,3 +947,64 @@ def test_gasto_incompleto_expira_solo():
                                   "creado": viejo}
     assert finanzas.hay_gasto_incompleto() is False        # ya se enfrió, no insiste con esto
     finanzas.limpiar_gasto_incompleto()
+
+
+# ── Paso 3 del plan de Predecible (2026-07-24): la foto primero en las compras grandes ──
+# El caso que lo motivó: $29.340 en Santa Isabel contestado con UN ítem ("pañales emilio"). Una
+# vuelta al súper son 15 productos, y ahí vive la despensa —lo único que alimenta el predictor de
+# Compras Fase 2—. La pregunta abierta invita a la respuesta de una línea; la boleta no.
+
+def test_pedir_foto_solo_sobre_el_umbral():
+    assert finanzas.pedir_foto(29340) is True       # la vuelta al súper de Santa Isabel
+    assert finanzas.pedir_foto(finanzas.UMBRAL_FOTO) is True
+    assert finanzas.pedir_foto(4340) is False       # el pan y la chanchería del almacén
+    assert finanzas.pedir_foto(None) is False
+    assert finanzas.pedir_foto("") is False
+
+
+def test_adjuntar_foto_va_al_cargo_pedido_sin_correlacionar(monkeypatch):
+    """El vínculo lo puso Nico al tocar 📷, así que no hay nada que adivinar: los ítems entran a
+    ESE cargo. `procesar_foto` en cambio crea una entrada aparte que hay que correlacionar después
+    por monto+fecha+comercio — y eso falla cuando la boleta dice 'ALMACEN SAN VALENTIN' y el banco
+    'MERCADOPAGO*SANVA'."""
+    texto = """{"comercio": "SANTA ISABEL", "total": 29340,
+    "items": [{"item": "pañales", "precio": 12000, "categoria": "Hijo"},
+              {"item": "arroz", "precio": 2340, "categoria": "Alimentación"}]}"""
+    _mock_vision(monkeypatch, texto)
+    guardado = {}
+
+    async def _pendientes_falso():
+        return [{"id": "B1", "comercio": "STA ISABEL LOMAS", "monto": 29340}]
+
+    async def _actualizar_falso(bid, campos):
+        guardado[bid] = campos
+
+    monkeypatch.setattr(finanzas.memory, "buffer_pendientes", _pendientes_falso)
+    monkeypatch.setattr(finanzas.memory, "buffer_actualizar", _actualizar_falso)
+
+    msg = asyncio.run(finanzas.adjuntar_foto_a_cargo("B1", b"fake"))
+    items = guardado["B1"]["items"]
+    # El total manda es el del CARGO (el banco es canónico), no el de la Vision: se cuadra el resto.
+    assert sum(i["precio"] for i in items) == 29340
+    assert [i["item"] for i in items] == ["pañales", "arroz", "Resto"]
+    assert items[0]["predecible"] is True and items[1]["predecible"] is True   # despensa de verdad
+    assert "2 de reposición" in msg or "ítem(s)" in msg
+
+
+def test_adjuntar_foto_si_el_cargo_ya_no_esta(monkeypatch):
+    """La espera dura 15 min; si el digest ya cerró, la foto no se pierde — se ofrece el camino
+    suelto en vez de tragarse la boleta en silencio."""
+    async def _pendientes_falso():
+        return []
+
+    monkeypatch.setattr(finanzas.memory, "buffer_pendientes", _pendientes_falso)
+    msg = asyncio.run(finanzas.adjuntar_foto_a_cargo("B404", b"fake"))
+    assert "ya no está pendiente" in msg
+
+
+def test_teclado_pregunta_compra_pone_la_foto_primero():
+    grande = flows.teclado_pregunta_compra("B1", foto_primero=True).inline_keyboard
+    chico = flows.teclado_pregunta_compra("B1").inline_keyboard
+    assert len(grande[0]) == 1 and "boleta" in grande[0][0].text        # sola, arriba
+    assert grande[0][0].callback_data == "compra:foto:B1"
+    assert len(chico[0]) == 2                                          # foto y texto a la par

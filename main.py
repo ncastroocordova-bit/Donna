@@ -162,6 +162,7 @@ _CANCELAR_MSGS = {
     "correccion_tx": "Ok, dejo esa línea como estaba. Tócala de nuevo si quieres corregirla.",
     "correccion_item_cat": "Ok, no le cambio la categoría a ese ítem.",
     "desglose_cargo": "Ok, lo dejamos para el cierre.",
+    "foto_cargo": "Ok, sin foto. El cargo queda igual en el digest.",
     "correccion_inferencia": "Ok, no la corrijo. Sigue como estaba.",
 }
 
@@ -219,6 +220,11 @@ _MANEJADORES_ESPERA = {
     "correccion_tx": _resolver_correccion_tx,
     "correccion_item_cat": _resolver_correccion_item_cat,
     "desglose_cargo": _resolver_desglose_cargo,
+    # Donna pidió la boleta, pero si Nico igual lo escribe ("pañales 12000, resto abarrotes") eso
+    # vale como desglose del MISMO cargo: mismo payload, mismo resolvedor. Sin esto el tipo no
+    # tenía manejador, la espera se descartaba y el texto se iba al cerebro — perdiendo el vínculo
+    # con el cargo que el propio Nico acababa de establecer al tocar 📷.
+    "foto_cargo": _resolver_desglose_cargo,
     "correccion_inferencia": _resolver_correccion_inferencia,
 }
 
@@ -316,7 +322,7 @@ async def _procesar_entrada(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         espera.limpiar(context.user_data)
         await eco()
         await update.message.reply_text(_CANCELAR_MSGS.get(esp["tipo"], "Ok, lo dejamos."))
-        if esp["tipo"] in ("correccion_tx", "correccion_item_cat", "desglose_cargo"):
+        if esp["tipo"] in ("correccion_tx", "correccion_item_cat", "desglose_cargo", "foto_cargo"):
             # El ancla del digest quedó mutada en modo pregunta → restaurarla a la vista normal.
             await flows.refrescar_digest(context.bot, update.effective_chat.id)
         return True
@@ -394,6 +400,16 @@ async def manejar_foto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     f = await update.message.photo[-1].get_file()
     buf = bytes(await f.download_as_bytearray())
+    # ¿Donna pidió LA boleta de un cargo concreto? Entonces los ítems van a ese cargo, sin pasar
+    # por la correlación (el vínculo ya lo puso Nico al tocar 📷). La espera expira sola a los
+    # 15 min como todas: una foto que llega después es una boleta suelta, no la respuesta.
+    esp = espera.activa(context.user_data)
+    if esp and esp["tipo"] == "foto_cargo":
+        espera.limpiar(context.user_data)
+        msg = await finanzas.adjuntar_foto_a_cargo(esp["payload"]["buffer_id"], buf, "image/jpeg")
+        await update.message.reply_text(msg)
+        await flows.refrescar_digest(context.bot, update.effective_chat.id)
+        return
     datos = await finanzas.procesar_foto(buf, "image/jpeg")
     if datos:
         n_items = len(datos.get("items") or [])

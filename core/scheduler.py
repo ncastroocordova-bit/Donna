@@ -293,10 +293,20 @@ async def job_preguntar_compras(context: ContextTypes.DEFAULT_TYPE) -> None:
     cargos = await finanzas.cargos_sin_detalle()
     for c in cargos[:MAX_PREGUNTAS_COMPRA]:
         try:
+            comercio = c.get("comercio") or "un comercio"
+            monto = finanzas.clp(c.get("monto"))
+            # Compra grande = vuelta al súper: se pide la BOLETA, no un "¿qué compraste?" abierto.
+            # La pregunta abierta invita a la respuesta de una línea, y ahí se perdía la despensa
+            # (paso 3 del plan de Predecible; ver docs/Roadmap_Modular.md).
+            if finanzas.pedir_foto(c.get("monto")):
+                texto = (f"Vi {monto} en {comercio}. Eso no es un ítem — mándame la boleta y la "
+                         f"desgloso yo. 📷")
+            else:
+                texto = f"Vi {monto} en {comercio} — ¿qué compraste?"
             await context.bot.send_message(
-                settings.nico_telegram_id,
-                f"Vi {finanzas.clp(c.get('monto'))} en {c.get('comercio') or 'un comercio'} — ¿qué compraste?",
-                reply_markup=flows.teclado_pregunta_compra(c["id"]),
+                settings.nico_telegram_id, texto,
+                reply_markup=flows.teclado_pregunta_compra(
+                    c["id"], foto_primero=finanzas.pedir_foto(c.get("monto"))),
             )
             await memory.buffer_marcar_preguntado(c["id"])
         except Exception:
