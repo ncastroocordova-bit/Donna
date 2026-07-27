@@ -38,3 +38,4 @@ corrección— se persiste en Supabase y **nunca** en el Sheet.
 | 013 | `Compras_Detalle` (es una hoja de Sheets, no una tabla: la migración solo documenta) |
 | 014 | `incidentes` — autodiagnóstico lean |
 | 015 | `items_predecibles` — lookup aprendido del chip 📦/🥖 (qué se repone y qué no) |
+| 016 | `items_nombres` — lookup aprendido del botón ✎ (nombre corregido de un ítem mal leído) |

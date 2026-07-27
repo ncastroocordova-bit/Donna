@@ -464,3 +464,27 @@ def test_desmarcar_mit_lo_vuelve_a_pendiente(monkeypatch):
     ok = asyncio.run(salud.marcar_mit("llamar al banco", hecho=False))
     assert ok is True
     assert llamadas[0]["valor"] == ""
+
+
+# ───────────────────────── ya_registro_primera_comida (Fase 3: aviso de mediodía) ─────────────
+
+def test_ya_registro_primera_comida_si_la_fila_de_hoy_la_trae(monkeypatch):
+    _mock_get_dicts(monkeypatch, [{"Fecha": "2026-07-27", "Primera comida": "08:00"}])
+    assert asyncio.run(salud.ya_registro_primera_comida("2026-07-27")) is True
+
+
+def test_ya_registro_primera_comida_no_si_la_fila_esta_vacia(monkeypatch):
+    _mock_get_dicts(monkeypatch, [{"Fecha": "2026-07-27", "Primera comida": ""}])
+    assert asyncio.run(salud.ya_registro_primera_comida("2026-07-27")) is False
+
+
+def test_ya_registro_primera_comida_no_si_no_hay_fila_hoy(monkeypatch):
+    _mock_get_dicts(monkeypatch, [{"Fecha": "2026-07-26", "Primera comida": "08:00"}])
+    assert asyncio.run(salud.ya_registro_primera_comida("2026-07-27")) is False
+
+
+def test_ya_registro_primera_comida_degrada_a_falso_si_sheets_falla(monkeypatch):
+    async def _boom(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        raise RuntimeError("Sheets caído")
+    monkeypatch.setattr(salud.sheets, "get_dicts", _boom)
+    assert asyncio.run(salud.ya_registro_primera_comida("2026-07-27")) is False

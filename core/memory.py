@@ -388,6 +388,28 @@ async def upsert_item_predecible(patron: str, predecible: bool) -> None:
         {"patron": patron, "predecible": bool(predecible)}, on_conflict="patron").execute()
 
 
+# ─────────────── Ítems: nombre corregido (lookup aprendido, botón ✎ del digest) ───────────────
+
+async def get_items_nombres() -> dict[str, str]:
+    """Correcciones de nombre que Nico ya hizo: texto crudo (normalizado) → nombre canónico.
+    La consulta el parseo de foto/dictado ANTES de armar la línea de detalle, así una corrección
+    no se repite la próxima vez que la boleta trae el mismo texto mal leído."""
+    db = await _get_db()
+    r = await db.table("items_nombres").select("patron, nombre_canonico").execute()
+    return {f["patron"]: f["nombre_canonico"] for f in (r.data or [])}
+
+
+async def upsert_item_nombre(patron: str, nombre_canonico: str) -> None:
+    """Aprende la corrección de nombre de un ítem. La alimenta el botón ✎ del digest."""
+    patron = (patron or "").strip().lower()
+    nombre_canonico = (nombre_canonico or "").strip()
+    if not patron or not nombre_canonico:
+        return
+    db = await _get_db()
+    await db.table("items_nombres").upsert(
+        {"patron": patron, "nombre_canonico": nombre_canonico}, on_conflict="patron").execute()
+
+
 # ───────────────────────── jobs_log: resiliencia del scheduler ─────────────────────────
 
 async def job_ya_corrio(job: str, fecha: str | None = None) -> bool:

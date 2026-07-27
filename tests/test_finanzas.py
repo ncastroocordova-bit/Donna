@@ -275,6 +275,65 @@ def test_predecible_lo_aprendido_manda_sobre_las_keywords(monkeypatch):
     assert finanzas._predecible("cervezas") is True          # la keyword decía False
 
 
+# ── Fase 5 (2026-07-27): nombre de ítem corregido, botón ✎ del digest ──
+
+@pytest.fixture(autouse=True)
+def _sin_nombres_aprendidos(monkeypatch):
+    """Mismo criterio que `_sin_aprendidos`: cache vacía y marcada como ya cargada, así ningún
+    test de este archivo sale a Supabase por el lookup de nombres (`_linea_detalle` lo consulta
+    en cada línea de foto/dictado, aunque el test no tenga nada que ver con Fase 5)."""
+    monkeypatch.setattr(finanzas, "_items_nombres", {})
+    monkeypatch.setattr(finanzas, "_nombres_cargados", True)
+
+
+def test_nombre_corregido_usa_lo_aprendido(monkeypatch):
+    monkeypatch.setattr(finanzas, "_items_nombres", {"pahales emilio": "Pañales Emilio"})
+    assert finanzas._nombre_corregido("pahales emilio") == "Pañales Emilio"
+
+
+def test_nombre_corregido_sin_match_devuelve_el_original(_sin_nombres_aprendidos):
+    assert finanzas._nombre_corregido("arroz") == "arroz"
+
+
+def test_nombre_corregido_gana_el_patron_mas_largo(monkeypatch):
+    """Dos patrones podrían calzar con el mismo texto; que no gane el más corto por casualidad
+    de orden de iteración del dict."""
+    monkeypatch.setattr(finanzas, "_items_nombres", {
+        "pahales": "Pañales (genérico)", "pahales emilio talla 3": "Pañales Emilio T3",
+    })
+    assert finanzas._nombre_corregido("pahales emilio talla 3") == "Pañales Emilio T3"
+
+
+def test_aprender_nombre_item_persiste_y_calienta_cache(monkeypatch):
+    guardado = {}
+    async def _upsert(patron, nombre):
+        guardado["patron"], guardado["nombre"] = patron, nombre
+    monkeypatch.setattr(finanzas.memory, "upsert_item_nombre", _upsert)
+
+    asyncio.run(finanzas.aprender_nombre_item("pahales emilio", "Pañales Emilio"))
+
+    assert guardado == {"patron": "pahales emilio", "nombre": "Pañales Emilio"}
+    assert finanzas._items_nombres["pahales emilio"] == "Pañales Emilio"
+
+
+def test_aprender_nombre_item_vacio_no_escribe(monkeypatch):
+    llamado = {"ok": False}
+    async def _upsert(patron, nombre):
+        llamado["ok"] = True
+    monkeypatch.setattr(finanzas.memory, "upsert_item_nombre", _upsert)
+
+    asyncio.run(finanzas.aprender_nombre_item("", "algo"))
+    asyncio.run(finanzas.aprender_nombre_item("algo", "   "))
+
+    assert llamado["ok"] is False
+
+
+def test_linea_detalle_aplica_el_nombre_corregido(monkeypatch):
+    monkeypatch.setattr(finanzas, "_items_nombres", {"pahales emilio": "Pañales Emilio"})
+    linea = finanzas._linea_detalle({"item": "pahales emilio", "precio": 8000, "categoria": "Hogar"})
+    assert linea["item"] == "Pañales Emilio"
+
+
 def test_norm_item_no_toca_los_espacios():
     """`_norm` hace .strip() y por eso no sirve acá: convertiría 'sal ' en 'sal'."""
     assert finanzas._norm_item("Pañales ") == "panales "
@@ -444,6 +503,61 @@ def test_gasto_por_dia_convierte_fecha_serial(monkeypatch):
     out = asyncio.run(finanzas.gasto_por_dia(dias=3650))
     assert out.get("2026-06-05") == 3109
     assert "46178" not in out   # antes del fix, la clave era el string del serial
+
+
+# ───────────────────────── Fase 4: fin_movimientos_recientes (no había ninguna tool que ─────────────────────────
+# listara los cargos uno por uno — solo totales agregados como fin_saldo_mes).
+
+def test_movimientos_recientes_mas_nuevo_primero(monkeypatch):
+    async def _fake(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        return [
+            {"Fecha": "2026-06-01", "Tipo": "Gasto", "Categoría": "Almacén", "Comercio": "San Vale", "Monto": 5000, "Medio": "BCh débito"},
+            {"Fecha": "2026-06-03", "Tipo": "Gasto", "Categoría": "Otros", "Comercio": "Copec", "Monto": 20000, "Medio": "Mach débito"},
+        ]
+    monkeypatch.setattr(finanzas.sheets, "get_dicts", _fake)
+    out = asyncio.run(finanzas.movimientos_recientes(dias=3650))
+    assert [m["comercio"] for m in out] == ["Copec", "San Vale"]   # 06-03 antes que 06-01
+
+
+def test_movimientos_recientes_respeta_la_ventana_de_dias(monkeypatch):
+    async def _fake(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        return [{"Fecha": "2020-01-01", "Tipo": "Gasto", "Categoría": "Otros", "Comercio": "Viejo", "Monto": 100, "Medio": ""}]
+    monkeypatch.setattr(finanzas.sheets, "get_dicts", _fake)
+    out = asyncio.run(finanzas.movimientos_recientes(dias=7))
+    assert out == []   # 2020 queda fuera de una ventana de 7 días
+
+
+def test_movimientos_recientes_degrada_a_vacio_si_sheets_falla(monkeypatch):
+    async def _boom(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        raise RuntimeError("Sheets caído")
+    monkeypatch.setattr(finanzas.sheets, "get_dicts", _boom)
+    assert asyncio.run(finanzas.movimientos_recientes()) == []
+
+
+def test_tool_movimientos_recientes_lista_cada_cargo(monkeypatch):
+    async def _fake(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        return [{"Fecha": "2026-06-03", "Tipo": "Gasto", "Categoría": "Otros", "Comercio": "Copec", "Monto": 20000, "Medio": "Mach débito"}]
+    monkeypatch.setattr(finanzas.sheets, "get_dicts", _fake)
+    r = asyncio.run(finanzas._t_movimientos_recientes({"dias": 3650}))
+    assert "Copec" in r and "20.000" in r or "20000" in r
+
+
+def test_tool_movimientos_recientes_vacio_no_inventa(monkeypatch):
+    async def _fake(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        return []
+    monkeypatch.setattr(finanzas.sheets, "get_dicts", _fake)
+    r = asyncio.run(finanzas._t_movimientos_recientes({}))
+    assert "No tengo movimientos" in r
+
+
+def test_tool_movimientos_recientes_limita_dias_a_60(monkeypatch):
+    vistos = []
+    async def _fake(hoja, sheet_id=None, value_render="FORMATTED_VALUE"):
+        vistos.append(True)
+        return []
+    monkeypatch.setattr(finanzas.sheets, "get_dicts", _fake)
+    asyncio.run(finanzas._t_movimientos_recientes({"dias": 9999}))
+    assert vistos   # no truena con un valor absurdo; se acota puertas adentro
 
 
 # ───────────────────────── Foto → categoría (procesar_foto, Vision mockeada) ─────────────────────────

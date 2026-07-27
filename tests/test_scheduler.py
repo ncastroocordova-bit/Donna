@@ -112,6 +112,8 @@ def _mock_cierre(monkeypatch):
     """Silencia todo lo que el cierre toca salvo lo que se está probando."""
     async def _nada(*a, **k):
         return None
+    async def _falso(*a, **k):
+        return False
     async def _ingerir():
         return {"revisados": 0, "nuevos": 0}
     async def _intro():
@@ -125,6 +127,7 @@ def _mock_cierre(monkeypatch):
     monkeypatch.setattr(scheduler.correlador, "correr", _nada)
     monkeypatch.setattr(scheduler.salud, "marcar_cierre", _nada)
     monkeypatch.setattr(scheduler.memory, "marcar_job", _nada)
+    monkeypatch.setattr(scheduler.memory, "job_ya_corrio", _falso)  # cada paso se evalúa "no mandado aún"
 
 
 class _CtxCierre(_CtxFake):
@@ -155,3 +158,122 @@ def test_cierre_ya_no_pregunta_el_peso(monkeypatch):
 def test_es_domingo_usa_la_convencion_stdlib():
     assert scheduler.es_domingo(datetime(2026, 7, 19)) is True    # domingo
     assert scheduler.es_domingo(datetime(2026, 7, 13)) is False   # lunes
+
+
+# ───────────────────────── cierre: resiliencia por paso (jobs_log granular) ─────────────────────────
+# Antes, un paso temprano que tronaba (ej. la ingesta de correo) tumbaba TODO lo que venía
+# después sin marcar nada en `jobs_log` — un reinicio de Railway en esa ventana repetía el cierre
+# completo desde cero: el digest nunca llegaba, y lo que sí había alcanzado a mandarse antes del
+# fallo se repetía en cada reintento. Estos tests cubren las dos mitades del arreglo.
+
+def test_cierre_paso_que_falla_no_bloquea_los_siguientes(monkeypatch):
+    """La ingesta de correo truena (el bug real: `fin_aplicar_correlacion` sin proteger) — el
+    panel, el digest y la inferencia deben mandarse igual."""
+    _mock_cierre(monkeypatch)
+
+    async def _ingerir_roto():
+        raise RuntimeError("fin_aplicar_correlacion reventó")
+    monkeypatch.setattr(scheduler.finanzas, "ingerir_gastos_email", _ingerir_roto)
+
+    llamados = []
+    async def _panel(*a, **k):
+        llamados.append("panel")
+    async def _digest(*a, **k):
+        llamados.append("digest")
+    async def _inferencia(*a, **k):
+        llamados.append("inferencia")
+    monkeypatch.setattr(scheduler.flows, "enviar_panel_cierre", _panel)
+    monkeypatch.setattr(scheduler.flows, "enviar_digest", _digest)
+    monkeypatch.setattr(scheduler.flows, "preguntar_inferencia_pendiente", _inferencia)
+
+    registrados = []
+    async def _registrar(tool, tipo, resumen, *, input_json=None, error_texto=""):
+        registrados.append(tool)
+        return {"id": 1}
+    monkeypatch.setattr(scheduler.diagnostico, "registrar", _registrar)
+
+    asyncio.run(scheduler.job_cierre(_CtxCierre()))
+
+    assert llamados == ["panel", "digest", "inferencia"]   # ninguno se saltó por el fallo de ingesta
+    assert "job_cierre:ingesta" in registrados             # y el fallo quedó anotado
+
+
+def test_cierre_paso_ya_hecho_no_se_reenvia(monkeypatch):
+    """Si `jobs_log` ya tiene 'cierre:digest' de un intento anterior (mismo día), un reintento
+    no debe volver a mandar el digest — evita el mensaje repetido tras un reinicio."""
+    _mock_cierre(monkeypatch)
+
+    async def _ya_corrio(clave, fecha=None):
+        return clave == "cierre:digest"
+    monkeypatch.setattr(scheduler.memory, "job_ya_corrio", _ya_corrio)
+
+    llamado = {"digest": False}
+    async def _digest(*a, **k):
+        llamado["digest"] = True
+    monkeypatch.setattr(scheduler.flows, "enviar_digest", _digest)
+
+    asyncio.run(scheduler.job_cierre(_CtxCierre()))
+
+    assert llamado["digest"] is False
+
+
+# ───────────────────────── primera comida: aviso de mediodía (Fase 3) ─────────────────────────
+
+def test_primera_comida_manda_el_aviso_si_no_esta_registrada(monkeypatch):
+    async def _no_corrio(job, fecha=None):
+        return False
+    async def _no_registrada():
+        return False
+    marcados = []
+    async def _marcar(job, fecha=None):
+        marcados.append(job)
+
+    monkeypatch.setattr(scheduler.memory, "job_ya_corrio", _no_corrio)
+    monkeypatch.setattr(scheduler.memory, "marcar_job", _marcar)
+    monkeypatch.setattr(scheduler.salud, "ya_registro_primera_comida", _no_registrada)
+
+    ctx = _CtxFake()
+    asyncio.run(scheduler.job_primera_comida(ctx))
+
+    assert len(ctx.bot.enviados) == 1
+    assert marcados == ["primera_comida"]
+
+
+def test_primera_comida_calla_si_ya_la_dijo_por_su_cuenta(monkeypatch):
+    """Si Nico ya contó su primera comida por chat antes de las 12:30, el aviso no debe insistir
+    — pero igual se marca el job para no volver a chequear ese día."""
+    async def _no_corrio(job, fecha=None):
+        return False
+    async def _ya_registrada():
+        return True
+    marcados = []
+    async def _marcar(job, fecha=None):
+        marcados.append(job)
+
+    monkeypatch.setattr(scheduler.memory, "job_ya_corrio", _no_corrio)
+    monkeypatch.setattr(scheduler.memory, "marcar_job", _marcar)
+    monkeypatch.setattr(scheduler.salud, "ya_registro_primera_comida", _ya_registrada)
+
+    ctx = _CtxFake()
+    asyncio.run(scheduler.job_primera_comida(ctx))
+
+    assert ctx.bot.enviados == []
+    assert marcados == ["primera_comida"]
+
+
+def test_primera_comida_no_corre_dos_veces_el_mismo_dia(monkeypatch):
+    async def _ya_corrio(job, fecha=None):
+        return True
+    monkeypatch.setattr(scheduler.memory, "job_ya_corrio", _ya_corrio)
+
+    llamada = {"chequeo": False}
+    async def _no_debiera_llamarse():
+        llamada["chequeo"] = True
+        return False
+    monkeypatch.setattr(scheduler.salud, "ya_registro_primera_comida", _no_debiera_llamarse)
+
+    ctx = _CtxFake()
+    asyncio.run(scheduler.job_primera_comida(ctx))
+
+    assert ctx.bot.enviados == []
+    assert llamada["chequeo"] is False

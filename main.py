@@ -161,6 +161,7 @@ async def cmd_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 _CANCELAR_MSGS = {
     "correccion_tx": "Ok, dejo esa línea como estaba. Tócala de nuevo si quieres corregirla.",
     "correccion_item_cat": "Ok, no le cambio la categoría a ese ítem.",
+    "correccion_item_nombre": "Ok, no le cambio el nombre a ese ítem.",
     "desglose_cargo": "Ok, lo dejamos para el cierre.",
     "foto_cargo": "Ok, sin foto. El cargo queda igual en el digest.",
     "correccion_inferencia": "Ok, no la corrijo. Sigue como estaba.",
@@ -186,6 +187,21 @@ async def _resolver_correccion_item_cat(update, context, payload: dict, texto: s
     await eco()
     if it:
         await update.message.reply_text(f"«{it.get('item', '')}» → {it.get('categoria', '')}. Quedó.")
+    else:
+        await update.message.reply_text("No pude actualizar ese ítem.")
+    await flows.refrescar_digest(context.bot, update.effective_chat.id)
+    return True
+
+
+async def _resolver_correccion_item_nombre(update, context, payload: dict, texto: str, eco) -> bool:
+    if not espera.parece_respuesta_corta(texto):
+        return False
+    buf = context.user_data.get("items_buffer")
+    idx = context.user_data.get("item_idx")
+    it = await flows.corregir_nombre_item(buf, idx, texto) if buf is not None and idx is not None else None
+    await eco()
+    if it:
+        await update.message.reply_text(f"«{it.get('item', '')}», anotado. Ya no te lo vuelvo a preguntar.")
     else:
         await update.message.reply_text("No pude actualizar ese ítem.")
     await flows.refrescar_digest(context.bot, update.effective_chat.id)
@@ -219,6 +235,7 @@ async def _resolver_correccion_inferencia(update, context, payload: dict, texto:
 _MANEJADORES_ESPERA = {
     "correccion_tx": _resolver_correccion_tx,
     "correccion_item_cat": _resolver_correccion_item_cat,
+    "correccion_item_nombre": _resolver_correccion_item_nombre,
     "desglose_cargo": _resolver_desglose_cargo,
     # Donna pidió la boleta, pero si Nico igual lo escribe ("pañales 12000, resto abarrotes") eso
     # vale como desglose del MISMO cargo: mismo payload, mismo resolvedor. Sin esto el tipo no
@@ -322,7 +339,7 @@ async def _procesar_entrada(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         espera.limpiar(context.user_data)
         await eco()
         await update.message.reply_text(_CANCELAR_MSGS.get(esp["tipo"], "Ok, lo dejamos."))
-        if esp["tipo"] in ("correccion_tx", "correccion_item_cat", "desglose_cargo", "foto_cargo"):
+        if esp["tipo"] in ("correccion_tx", "correccion_item_cat", "correccion_item_nombre", "desglose_cargo", "foto_cargo"):
             # El ancla del digest quedó mutada en modo pregunta → restaurarla a la vista normal.
             await flows.refrescar_digest(context.bot, update.effective_chat.id)
         return True

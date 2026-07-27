@@ -18,11 +18,13 @@ from modules import spam as spam_mod
 
 logger = logging.getLogger(__name__)
 
-# Chips del cierre. Para las horas: (etiqueta, valor); el valor "HH:00" alimenta las ventanas.
+# Chips de hora. Para las horas: (etiqueta, valor); el valor "HH:00" alimenta las ventanas.
 # Horas completas (sin minutos, por canon). Rango elegido por Nico: primera 6-12, última 18-01.
 # La última cruza medianoche a propósito (00/01 = comió pasada la medianoche, típico de una noche
 # de producción): `salud._ventana_minutos` ya suma 24h cuando el fin es menor que el inicio, así
 # que "primera 09:00 → última 01:00" da 16h, no un negativo.
+# CHIPS_PRIMERA_COMIDA ya NO vive en el panel del cierre (22:00, cuando ya se le había olvidado)
+# — se pregunta sola a mediodía (Fase 3, ver teclado_primera_comida / job_primera_comida).
 CHIPS_PRIMERA_COMIDA = [(str(h), f"{h:02d}:00") for h in range(6, 13)]                        # 6..12
 CHIPS_COMIDA = [(f"{h % 24:02d}", f"{h % 24:02d}:00") for h in range(18, 26)]                 # 18..23, 00, 01
 CHIPS_POR_FILA = 4
@@ -75,7 +77,6 @@ def teclado_cierre(estado: dict | None = None, mits: list[str] | None = None, fe
          InlineKeyboardButton(mk("🏃 Hoy no", e.get("ejercicio") == "no"), callback_data=f"hab:ejercicio:no{suf}")],
         [InlineKeyboardButton(mk("🧘 Medité", e.get("meditacion") == "si"), callback_data=f"hab:meditacion:si{suf}"),
          InlineKeyboardButton(mk("🧘 Hoy no", e.get("meditacion") == "no"), callback_data=f"hab:meditacion:no{suf}")],
-        *chips("🍳", "primera_comida", CHIPS_PRIMERA_COMIDA, "pcom"),
         *chips("🍽️", "comida", CHIPS_COMIDA, "comida"),
         [InlineKeyboardButton(mk(f"Ánimo {n}", e.get("animo") == n), callback_data=f"animo:{n}{suf}") for n in ("1", "2", "3", "4")],
     ]
@@ -101,6 +102,13 @@ def teclado_hora_dormi() -> InlineKeyboardMarkup:
 def teclado_hora_despertar() -> InlineKeyboardMarkup:
     """Chips de hora desperté (C3), encadenados tras elegir la hora dormí."""
     return InlineKeyboardMarkup([[InlineKeyboardButton(h, callback_data=f"sh:w:{h}") for h in CHIPS_HORA_DESPERTAR]])
+
+
+def teclado_primera_comida() -> InlineKeyboardMarkup:
+    """Chips de hora de la primera comida (Fase 3): aviso independiente de mediodía, no el panel
+    del cierre — a las 22:00 ya se le había olvidado a Nico. Mismo rango 6-12 de siempre."""
+    botones = [InlineKeyboardButton(f"🍳 {lbl}", callback_data=f"pcom:{val}") for lbl, val in CHIPS_PRIMERA_COMIDA]
+    return InlineKeyboardMarkup([botones[i:i + CHIPS_POR_FILA] for i in range(0, len(botones), CHIPS_POR_FILA)])
 
 
 def teclado_mes_activo(mes: int) -> InlineKeyboardMarkup:
@@ -218,6 +226,7 @@ def _teclado_items(mid: str, items: list[dict], ver_todos: bool) -> InlineKeyboa
             InlineKeyboardButton(f"✏️ {(str(it.get('item') or '—'))[:14]}", callback_data=f"dgi:c:{mid}:{i}:{v}"),
             InlineKeyboardButton(f"{(it.get('intencion') or '¿?')[:9]}▸", callback_data=f"dgi:d:{mid}:{i}:{v}"),
             InlineKeyboardButton("📦" if it.get("predecible") else "🥖", callback_data=f"dgi:p:{mid}:{i}:{v}"),
+            InlineKeyboardButton("✎", callback_data=f"dgi:n:{mid}:{i}:{v}"),
         ])
     if not ver_todos and len(idxs) < len(items):
         filas.append([InlineKeyboardButton(f"👀 Ver los {len(items)}", callback_data=f"dgi:all:{mid}")])
@@ -242,6 +251,27 @@ async def corregir_categoria_item(buffer_id: str, idx: int, categoria: str) -> d
         return None
     items[idx]["categoria"] = categoria.strip()
     await memory.buffer_actualizar(buffer_id, {"items": items})
+    return items[idx]
+
+
+async def corregir_nombre_item(buffer_id: str, idx: int, nombre: str) -> dict | None:
+    """Aplica el nombre corregido a un ítem y lo APRENDE (a diferencia de la categoría): la
+    próxima vez que una boleta/dictado traiga el mismo texto mal leído, Donna ya sabe cómo se
+    llama de verdad — sin esto, Nico corregiría el mismo ítem cada boleta."""
+    b = await memory.get_buffer(buffer_id)
+    items = (b or {}).get("items") or []
+    if not (0 <= idx < len(items)):
+        return None
+    nuevo = nombre.strip()
+    if not nuevo:
+        return None
+    original = items[idx].get("item", "")
+    items[idx]["item"] = nuevo
+    await memory.buffer_actualizar(buffer_id, {"items": items})
+    try:
+        await finanzas.aprender_nombre_item(original, nuevo)
+    except Exception:
+        logger.exception("corregir_nombre_item: no pude aprender la corrección de nombre")
     return items[idx]
 
 
@@ -465,7 +495,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await q.answer()
     data = q.data
 
-    if data.split(":", 1)[0] in ("hab", "comida", "pcom", "animo", "mit"):
+    if data.split(":", 1)[0] in ("hab", "comida", "animo", "mit"):
         # Panel del cierre: cada toque actualiza SOLO el teclado (marca ✅), sin cerrar el panel,
         # para poder anotar varios hábitos. El estado vive por message_id (no se arrastra entre días).
         # La fecha va anclada al final del callback (|YYYY-MM-DD, fix C6): así el toque cae en la
@@ -484,10 +514,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 hora = base.split(":", 1)[1]  # "20:00" lleva ':' → tomo todo lo que sigue al primer ':'
                 estado["comida"] = hora
                 await salud.marcar_habito("ultima_comida", hora, fecha=fecha)
-            elif tipo == "pcom":  # primera comida (ventanas E8, C3)
-                hora = base.split(":", 1)[1]
-                estado["primera_comida"] = hora
-                await salud.registrar_hora("primera_comida", hora, fecha=fecha)
             elif tipo == "animo":
                 estado["animo"] = partes[1]
                 await salud.registrar_animo(partes[1], fecha=fecha)
@@ -544,6 +570,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             else:
                 cola = ""
             await q.edit_message_text(f"Despertaste {hora}. Ventana de sueño anotada. {cola}".strip())
+        return
+
+    if data.startswith("pcom:"):  # Fase 3: primera comida, aviso independiente de mediodía
+        hora = data.split(":", 1)[1]
+        await salud.registrar_hora("primera_comida", hora)
+        await q.edit_message_text(f"Primera comida a las {hora}, anotado.")
         return
 
     if data.startswith("cfg:"):  # C2: actualizar el Mes activo del Dashboard (toque del día 1)
@@ -668,6 +700,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         ver_todos = len(partes) > 4 and partes[4] == "a"
         if i >= len(items):
             await q.answer("Ese ítem ya no está.")
+            return
+        if accion == "n":   # ✎ corrige el NOMBRE del ítem (se aprende, a diferencia de la categoría)
+            context.user_data["items_buffer"] = mid
+            context.user_data["item_idx"] = i
+            espera.iniciar(context.user_data, "correccion_item_nombre")
+            await _edit_ok(q, f"«{items[i].get('item') or '—'}» — escríbeme el nombre correcto (o «cancelar»).")
             return
         if accion == "c":   # el nombre abre chips de categoría para ese ítem
             todas = await finanzas.categorias_lista()

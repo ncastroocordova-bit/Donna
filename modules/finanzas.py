@@ -703,6 +703,51 @@ async def aprender_predecible(item: str, predecible: bool) -> None:
     _items_aprendidos[patron] = predecible
 
 
+# ─────────────── Ítems: nombre corregido (botón ✎ del digest, migración 016) ───────────────
+# Distinto de lo predecible: acá el patrón es el texto CRUDO completo (no una palabra clave
+# suelta) — es la corrección literal de algo que la foto/dictado leyó mal, no una clasificación
+# difusa, así que un match parcial de una sola palabra sería más riesgoso (podría renombrar un
+# ítem que no tiene nada que ver).
+
+_items_nombres: dict[str, str] = {}   # patrón (texto crudo normalizado) → nombre corregido
+_nombres_cargados = False
+
+
+async def refrescar_nombres_item(forzar: bool = False) -> dict[str, str]:
+    """Trae de Supabase las correcciones de nombre que Nico ya hizo y las deja en cache de
+    módulo — mismo patrón que `refrescar_predecibles` y por la misma razón: `_linea_detalle` es
+    síncrona (la llaman los parsers de foto/dictado sin loop)."""
+    global _items_nombres, _nombres_cargados
+    if _nombres_cargados and not forzar:
+        return _items_nombres
+    try:
+        _items_nombres = await memory.get_items_nombres()
+        _nombres_cargados = True
+    except Exception:
+        logger.exception("refrescar_nombres_item: no pude leer items_nombres")
+    return _items_nombres
+
+
+def _nombre_corregido(nombre: str) -> str:
+    """Si Nico ya corrigió este texto antes, devuelve el nombre canónico en vez del crudo que
+    trajo la foto/dictado. Gana el patrón más largo que calce (mismo criterio que `_predecible`),
+    para que una corrección de un ítem no le pise el nombre a otro por una coincidencia corta."""
+    t = _norm_item(nombre)
+    mejor = max(((p, c) for p, c in _items_nombres.items() if p and p in t), key=lambda pc: len(pc[0]), default=None)
+    return mejor[1] if mejor else nombre
+
+
+async def aprender_nombre_item(item_original: str, nombre_correcto: str) -> None:
+    """Persiste la corrección del botón ✎ y calienta el cache — sin esto, Nico tendría que
+    corregir el mismo ítem mal leído cada vez que vuelve a comprarlo."""
+    patron = _norm_item(item_original).strip()
+    nombre_correcto = (nombre_correcto or "").strip()
+    if not patron or not nombre_correcto:
+        return
+    await memory.upsert_item_nombre(patron, nombre_correcto)
+    _items_nombres[patron] = nombre_correcto
+
+
 def _intencion_resumen(items: list[dict] | None) -> str:
     """Intención a nivel de transacción a partir de las líneas: 'Mixto' si hay ≥2 distintas,
     la única si todas coinciden, '' si no hay detalle."""
@@ -731,7 +776,7 @@ def _linea_detalle(raw: dict, comercio: str = "", categoria_padre: str = "") -> 
     """Normaliza una línea de detalle (de foto o desglose) con categoría/intención/predecible.
     La categoría acá es la MEJOR APUESTA; la validación contra `Categorias` ocurre al escribir,
     en `_filas_detalle` (que es async y sí puede leer el catálogo)."""
-    nombre = str(raw.get("item") or raw.get("nombre") or "").strip()
+    nombre = _nombre_corregido(str(raw.get("item") or raw.get("nombre") or "").strip())
     categoria = str(raw.get("categoria") or "").strip() or _categoria_item(nombre, categoria_padre)
     blob = f"{nombre} {categoria}"
     return {
@@ -1033,6 +1078,7 @@ async def leer_boleta(image_bytes: bytes, media_type: str = "image/jpeg") -> dic
     (`adjuntar_foto_a_cargo`) en vez de crear una entrada nueva que después haya que correlacionar.
     Devuelve None si no logra leerla."""
     await refrescar_predecibles()   # las correcciones del chip 📦/🥖 mandan sobre las keywords
+    await refrescar_nombres_item()  # las correcciones del botón ✎ mandan sobre el texto crudo
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
     try:
         r = await _anthropic.messages.create(
@@ -1412,6 +1458,7 @@ async def fin_desglose(texto: str, total=None) -> list[dict]:
     """Desglose dictado → líneas de detalle. Determinista primero (regex, cero tokens); si no
     saca nada, cae al LLM. Cada línea trae categoría/intención/predecible."""
     await refrescar_predecibles()   # las correcciones del chip 📦/🥖 mandan sobre las keywords
+    await refrescar_nombres_item()  # las correcciones del botón ✎ mandan sobre el texto crudo
     lineas = _desglose_determinista(texto, total)
     if lineas:
         return lineas
@@ -1643,6 +1690,34 @@ async def gasto_por_dia(dias: int = 60) -> dict:
     return out
 
 
+async def movimientos_recientes(dias: int = 7) -> list[dict]:
+    """Últimos movimientos REALES de `Transacciones` (Louis), más recientes primero. A
+    diferencia de `armar_digest` (el buffer del día, pendiente de confirmar) esto lee lo que ya
+    quedó escrito en la planilla — es la respuesta a 'muéstrame mis cargos'/'qué he gastado',
+    que hasta ahora no tenía ninguna tool (solo existían totales agregados)."""
+    try:
+        filas = await sheets.get_dicts(HOJA_TX, sheet_id=sheets.fin_id(), value_render="UNFORMATTED_VALUE")
+    except Exception:
+        logger.exception("movimientos_recientes: no pude leer Transacciones")
+        return []
+    desde = (datetime.now(settings.tz).date() - timedelta(days=dias)).strftime("%Y-%m-%d")
+    out = []
+    for f in filas:
+        fecha = sheets.fecha_iso(f.get("Fecha", ""))
+        if fecha < desde:
+            continue
+        out.append({
+            "fecha": fecha,
+            "tipo": str(f.get("Tipo", "")).strip(),
+            "categoria": str(f.get("Categoría", "")).strip(),
+            "comercio": str(f.get("Comercio", "")).strip(),
+            "monto": _num(f.get("Monto", 0)),
+            "medio": str(f.get("Medio", "")).strip(),
+        })
+    out.sort(key=lambda m: m["fecha"], reverse=True)
+    return out
+
+
 async def saldo_mes() -> dict:
     """Lee el saldo del mes del Dashboard (B4:B8) en UN request. Orden del bloque:
     B4 ingresos · B5 gastos · B6 balance · B7 tasa ahorro (se ignora) · B8 ¿llego a fin
@@ -1799,6 +1874,22 @@ async def _t_saldo_mes(inp: dict) -> str:
         return "No pude leer el saldo del mes ahora."
 
 
+async def _t_movimientos_recientes(inp: dict) -> str:
+    dias = max(1, min(int(inp.get("dias") or 7), 60))
+    try:
+        movs = await movimientos_recientes(dias)
+    except Exception:
+        logger.exception("fin_movimientos_recientes falló")
+        return "No pude leer tus movimientos ahora."
+    if not movs:
+        return f"No tengo movimientos registrados en los últimos {dias} días."
+    TOPE = 25
+    lineas = [f"{m['fecha']} · {m['comercio'] or m['categoria']}: {clp(m['monto'])} ({m['medio'] or m['tipo']})"
+              for m in movs[:TOPE]]
+    cola = f"\n… y {len(movs) - TOPE} más." if len(movs) > TOPE else ""
+    return f"Tus últimos movimientos ({dias} días, {len(movs)} en total):\n" + "\n".join(lineas) + cola
+
+
 async def _t_presupuesto(inp: dict) -> str:
     try:
         # Bloque "GASTO POR CATEGORÍA" del Dashboard canónico: A=Categoría, C=Gastado, D=% Usado.
@@ -1950,6 +2041,19 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "fin_movimientos_recientes",
+        "description": (
+            "OBLIGATORIO cuando Nico pide ver sus cargos, movimientos o gastos recientes UNO POR "
+            "UNO ('muéstrame mis cargos', 'qué he gastado esta semana', 'mis últimos movimientos', "
+            "'qué compré') — a diferencia de fin_saldo_mes (solo el total), esto lista cada "
+            "movimiento real ya confirmado en la planilla. No inventes montos ni comercios."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"dias": {"type": "integer", "description": "Cuántos días atrás mirar (default 7, máximo 60)"}},
+        },
+    },
+    {
         "name": "fin_presupuesto",
         "description": "OBLIGATORIO cuando Nico pregunta cómo va respecto al presupuesto o si se está pasando en una categoría. Lee el bloque por categoría del Dashboard. No inventes.",
         "input_schema": {"type": "object", "properties": {}},
@@ -2014,6 +2118,7 @@ TOOLS = [
 HANDLERS = {
     "fin_registrar_gasto": _t_registrar_gasto,
     "fin_saldo_mes": _t_saldo_mes,
+    "fin_movimientos_recientes": _t_movimientos_recientes,
     "fin_presupuesto": _t_presupuesto,
     "fin_estado_deuda": _t_estado_deuda,
     "fin_armar_digest": _t_armar_digest,

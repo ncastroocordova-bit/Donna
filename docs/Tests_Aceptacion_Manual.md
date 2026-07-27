@@ -105,13 +105,15 @@ Tools cableadas: `fin_registrar_gasto`, `fin_saldo_mes`, `fin_presupuesto`, `fin
 - [ ] **F5.** *"¿Qué tengo pendiente de confirmar hoy?"* o `/digest` (`fin_armar_digest`) → la lista del día.
 - [ ] **F6.** *"¿Cómo voy con mis metas?"* (`fin_metas`) → si no tienes metas en la hoja `Metas`, te lo dice; si hay una o más, te muestra avance vs. objetivo.
 - [ ] **F7.** Con una meta que ya exista en `Metas`: *"aboné 50 mil al fondo de emergencia"* (`fin_aportar_meta`) → confirma el aporte y el nuevo % (revísalo también en la hoja).
+- [ ] **F8. (Fase 4, ¡nuevo!)** *"Muéstrame mis cargos"* o *"¿qué he gastado esta semana?"* (`fin_movimientos_recientes`) → lista cada movimiento real ya escrito en `Transacciones` (fecha, comercio, monto, medio), más reciente primero — no solo el total como F1. Antes de esto Donna no tenía ninguna tool para esto y podía quedarse muda o improvisar.
 
 ### G. Digest nocturno — botones del panel
 - [ ] **G1.** `/cierre` (o espera las 22:00) → llega el panel de hábitos y, si hay movimientos, el digest con botones.
 - [ ] **G2.** Toca **"✅ Aceptar todo"** → dice cuántos escribió (y si algo ya estaba, no lo duplica); revisa que aparecieron en la hoja `Transacciones`.
 - [ ] **G3.** Toca una línea marcada ⚠️/✏️ y escribe la categoría correcta → la próxima vez que ese mismo comercio aparezca (día distinto), debería llegar ya con esa categoría sin corregirla de nuevo.
 - [ ] **G4.** Toca **"📝 Detallar"** en un gasto sin ítems → te ofrece foto o desglosar por texto. Prueba las dos rutas en gastos distintos.
-- [ ] **G5.** Toca **"📋 N ítems"** en un gasto con detalle → abre el panel de ítems (lista + "✅ Listo"). Toca un ítem → su editor: cambia Necesario/Inversión/Deseo, alterna 📦 Despensa/🥖 Perecible, toca "🏷️ Categoría" y escribe una nueva, prueba "⬅️ Volver" y por último "✅ Listo". Verifica que no se traba al re-tocar el mismo valor.
+- [ ] **G5.** Toca **"📋 N ítems"** en un gasto con detalle → abre la grilla de ítems (solo los ⚠️ por revisar; "👀 Ver los N" expande a todos). Cada fila trae 4 botones: **✏️ nombre** (abre chips de categoría + "⌨️ Escribirla"), **Intención▸** (cicla Necesario/Inversión/Deseo con un toque), **📦/🥖** (alterna predecible) y **"✅ Listo"** para volver al digest. Verifica que no se traba al re-tocar el mismo valor.
+- [ ] **G5-bis. Corregir el NOMBRE del ítem, y que se aprenda (Fase 5, ¡nuevo!)** Toca **✎** en un ítem → te pide el nombre correcto por texto (ej. la foto leyó "pahales" y le escribes *"Pañales Emilio"*). Confirma que el ítem queda con el nombre nuevo en la grilla. **La prueba real:** la próxima vez que una boleta o dictado traiga el mismo texto mal leído (mismo comercio/ítem), el nombre debería salir ya corregido solo, sin que tengas que volver a tocar ✎.
 - [ ] **G6.** Al corregir una línea, escribe *"descartar"* → esa línea desaparece del digest sin escribirse a la planilla.
 
 ### H. Anti-duplicado
@@ -148,18 +150,25 @@ Tools cableadas: `sal_marcar_habito`, `sal_registrar_animo`, `sal_registrar_suen
 `sal_evento_contextual`.
 
 ### A. Panel del cierre (botones) — un solo mensaje, marca varios
-`/cierre` (o espera las 22:00). El panel trae, en filas: ejercicio, meditación, primera comida,
-última comida, ánimo, y un botón por cada MIT pendiente. Cada toque marca ✅ **sin cerrar el
-panel** (puedes anotar varios). *Agua/proteína se sacaron del panel — ya no se preguntan en el
-cierre; las columnas `Agua`/`Proteína` quedan como legado sin capturar.*
+`/cierre` (o espera las 22:00). El panel trae, en filas: ejercicio, meditación, última comida,
+ánimo, y un botón por cada MIT pendiente. Cada toque marca ✅ **sin cerrar el panel** (puedes
+anotar varios). *Agua/proteína se sacaron del panel — ya no se preguntan en el cierre; las
+columnas `Agua`/`Proteína` quedan como legado sin capturar. Primera comida también se sacó de
+acá (Fase 3) — a las 22:00 ya se le había olvidado a Nico; ahora tiene su propio aviso de
+mediodía, ver sección A-bis.*
 - [ ] **A1.** Toca **"🏃 Hice ejercicio"** → revisa la fila de hoy en `Diario`, columna `Ejercicio` = "Sí".
 - [ ] **A2.** Otro día toca **"🏃 Hoy no"** → queda "No" (registrado, pero no suma a la racha).
 - [ ] **A3.** Toca **"🧘 Medité"** → columna `Meditación`.
-- [ ] **A4.** Toca un chip **"🍳 9/10/11/12"** (primera comida) → columna `Primera comida` (HH:00).
 - [ ] **A5.** Toca un chip **"🍽️ 18/19/20/21+"** (última comida) → columna `Última comida`.
 - [ ] **A6.** Toca un **Ánimo** (1 a 4) → columna `Ánimo (1-4)`.
 - [ ] **A7.** Si hay MITs pendientes, cada uno es un botón (☐/✅). Tócalo → lo marca hecho en `Tareas`; tócalo de nuevo → lo desmarca (toggle).
 - [ ] **A8.** Después del panel llega el pedido de MITs por voz. Dicta 1-3 prioridades de mañana → se crean como filas en `Tareas` (Tipo=MIT, Fecha objetivo=mañana). *Ojo: la columna `MITs de mañana` de `Diario` es legado y ya no se usa — los MITs viven en `Tareas`.*
+
+### A-bis. Primera comida — aviso independiente de mediodía (Fase 3, ¡nuevo!)
+A las 12:30 (después de Proactividad, que ocupa las 12:00) llega un mensaje aparte con chips de
+hora (6 a 12), solo si todavía no quedó anotada la primera comida de hoy.
+- [ ] **A9.** A las 12:30, si no le has contado tu primera comida por otro medio, te llega *"¿A qué hora comiste hoy por primera vez?"* con chips. Tócalo → columna `Primera comida` (HH:00).
+- [ ] **A10.** Si ya se la contaste antes por chat (ej. *"comí a las 8"*, ver C1) o ya tocaste el chip, el aviso de las 12:30 **no debe llegar** ese día.
 
 ### B. Sueño — ahora por hora, con derivación automática (¡cambió!)
 El brief de las 8:00 ya **no** pregunta el binario "7h+/menos". En su lugar manda una pregunta

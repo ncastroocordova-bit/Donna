@@ -6,6 +6,7 @@ El contexto se arma con presupuesto: prefijo cacheado + datos del día + top-k
 memorias relevantes (contextual retrieval, just-in-time). Historial largo → compactación.
 """
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
@@ -16,6 +17,20 @@ from modules import archivista, aprendizaje, compras, estados_cuenta, finanzas, 
 
 logger = logging.getLogger(__name__)
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+# Mismo criterio que el encabezado del brief (core/scheduler.py `_encabezado_fecha`): el día de
+# la semana se calcula en código, determinista, y nunca se le pide al LLM que lo redacte. Antes
+# esto solo pasaba en el brief — el cierre y el chat libre no recibían la fecha real en ningún
+# lado, así que el cerebro podía inventar un día de la semana que no calzara ("Nico. Jueves." en
+# domingo). `_fecha_hoy` se inyecta en `_armar_contexto`, que alimenta TODOS los llamados al
+# cerebro (chat, brief, cierre, proactividad) — un solo punto de verdad.
+_DIAS_ES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+
+
+def _fecha_hoy(ahora: datetime | None = None) -> str:
+    d = ahora or datetime.now(settings.tz)
+    return f"Hoy es {_DIAS_ES[d.weekday()]} {d.strftime('%d/%m/%Y')}."
+
 
 _PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 CONSTITUTION = (_PROMPTS / "constitution.md").read_text(encoding="utf-8")
@@ -217,6 +232,11 @@ def _hint_tool(mensaje: str) -> str:
         return O + "llama fin_registrar_gasto para anotarlo en el buffer del día (se confirma en el cierre). Sin esta llamada no queda."
     if any(p in msg for p in ["cómo voy de plata", "cuánto gasté", "balance", "cuánto llevo gastado", "cómo va mi plata", "saldo"]):
         return O + "llama fin_saldo_mes para el saldo real del mes. No inventes cifras."
+    # OJO orden: "compré"/"gasté" ya los reclama la rama de arriba (registrar un gasto nuevo) —
+    # estas frases evitan esa palabra a propósito para no quedar mudas detrás de esa rama.
+    if any(p in msg for p in ["mis cargos", "mis movimientos", "últimos movimientos", "ultimos movimientos",
+                               "qué he gastado", "que he gastado", "mis últimos gastos", "mis ultimos gastos"]):
+        return O + "llama fin_movimientos_recientes para tus movimientos reales, uno por uno. No inventes montos ni comercios."
     if any(p in msg for p in ["presupuesto", "me estoy pasando", "cuánto llevo en", "cuánto gasté en"]):
         return O + "llama fin_presupuesto para comparar gasto vs presupuesto. No inventes."
     if any(p in msg for p in ["cómo va mi deuda", "progreso de la deuda", "ha bajado la deuda", "cuánto he bajado", "deuda mes a mes"]):
@@ -270,14 +290,14 @@ async def _armar_contexto(mensaje: str) -> str:
     except Exception:
         logger.exception("_armar_contexto: aprendizaje no disponible; sigo sin él")
         aprendido = ""
-    bloques = []
+    bloques = [_fecha_hoy()]
     if perfil:
         bloques.append("Perfil de Nico:\n" + "\n".join(f"- {k}: {v}" for k, v in perfil.items() if not k.startswith("_")))
     if memorias:
         bloques.append("Memorias relevantes:\n" + "\n".join(f"- [{m.get('contexto', '')}] {m['texto']}" for m in memorias))
     if aprendido:
         bloques.append(aprendido)
-    if not bloques:
+    if len(bloques) == 1:  # solo la fecha: nada de perfil/memoria/aprendizaje cargado
         bloques.append("(Sin contexto cargado — para cualquier dato de Nico usa las herramientas; no inventes cifras ni estados.)")
     return "\n\n".join(bloques)
 

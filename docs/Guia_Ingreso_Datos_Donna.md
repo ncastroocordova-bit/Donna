@@ -13,7 +13,7 @@
 
 ## PARTE A — Qué pregunta Donna, cuándo y cómo
 
-Tres momentos: **Brief 8:00** (casi todo lectura), **Cierre 22:00** (acá entra la data), **durante el día** (pasivo/ad-hoc). Método: 🔘 toque · 🎙️ voz · ⚙️ automático.
+Cuatro momentos: **Brief 8:00** (casi todo lectura), **Mediodía 12:30** (un solo dato puntual), **Cierre 22:00** (acá entra el resto de la data), **durante el día** (pasivo/ad-hoc). Método: 🔘 toque · 🎙️ voz · ⚙️ automático.
 
 ### Brief 8:00 — solo lectura (~5s de input)
 | Dato | Cómo lo pregunta Donna | Método | Aterriza en | Tier |
@@ -26,11 +26,18 @@ Tres momentos: **Brief 8:00** (casi todo lectura), **Cierre 22:00** (acá entra 
 | Saldo del mes corriendo | (lo muestra) | ⚙️ | `Dashboard` | A |
 | Resumen de correos del día | (lo muestra: N importantes c/línea, M archivados, K financieros al digest) | ⚙️ Gmail | Gmail (etiquetas) | A |
 
+### Mediodía 12:30 — un aviso puntual (Fase 3)
+Primera comida se sacó del cierre: a las 22:00 ya se le había olvidado a Nico (comió 14 horas
+antes). Se pregunta sola a las 12:30 (después de Proactividad, que ocupa las 12:00), y **solo si
+todavía no quedó anotada** (por chip o porque Nico ya la contó por chat antes).
+| Dato | Cómo lo pregunta Donna | Método | Aterriza en | Tier |
+|---|---|---|---|---|
+| Primera comida | chips de hora (franja 6-12) | 🔘 chips | `Diario` (Primera comida) | A |
+
 ### Cierre 22:00 — panel único de toques + digest (~45–50s)
 | Dato | Cómo lo pregunta Donna | Método | Aterriza en | Tier |
 |---|---|---|---|---|
 | Ejercicio | "¿Te moviste hoy?" | 🔘 sí/no | `Diario` (Ejercicio) | A |
-| Primera comida | chips de hora (franja 6-12) | 🔘 chips | `Diario` (Primera comida) | A |
 | Última comida (ayuno) | chips de hora (franja 18-01) | 🔘 chips | `Diario` (Última comida) | A |
 | Meditación | "¿Meditaste?" | 🔘 sí/no | `Diario` (Meditación) | B |
 | Ánimo | "¿Cómo andas hoy? 1 a 4" | 🔘 4 botones | `Diario` (Ánimo) | A |

@@ -86,9 +86,54 @@ def test_toggle_deseo_cicla():
 def test_callback_data_cabe_en_64_bytes():
     """Telegram corta callback_data en 64 bytes SIN error: un id de buffer real (uuid de 36)
     con índice de dos dígitos tiene que caber en el peor caso de cada familia."""
-    peores = [f"dgi:c:{UUID}:11:a", f"dic:{UUID}:11:999", f"dgc:{UUID}:desc", f"digest:items:{UUID}"]
+    peores = [f"dgi:c:{UUID}:11:a", f"dgi:n:{UUID}:11:a", f"dic:{UUID}:11:999", f"dgc:{UUID}:desc", f"digest:items:{UUID}"]
     for cb in peores:
         assert len(cb.encode("utf-8")) <= 64, cb
+
+
+# ───────────────────────── ítems: corregir el NOMBRE (Fase 5, se aprende) ─────────────────────────
+
+def test_grilla_trae_el_boton_de_nombre():
+    kb = flows._teclado_items(UUID, ITEMS, ver_todos=True).inline_keyboard
+    filas_item = [f for f in kb if f[0].callback_data.startswith("dgi:c:")]
+    assert all(any(b.callback_data.startswith("dgi:n:") for b in f) for f in filas_item)
+
+
+def _mock_buffer(monkeypatch, items):
+    b = {"items": [dict(it) for it in items]}
+    actualizados = []
+    async def _get(buffer_id):
+        return b
+    async def _actualizar(buffer_id, cambios):
+        actualizados.append(cambios)
+        b.update(cambios)
+    monkeypatch.setattr(flows.memory, "get_buffer", _get)
+    monkeypatch.setattr(flows.memory, "buffer_actualizar", _actualizar)
+    return actualizados
+
+
+def test_corregir_nombre_item_actualiza_y_aprende(monkeypatch):
+    _mock_buffer(monkeypatch, [{"item": "pahales", "precio": 8000, "categoria": "Hogar", "predecible": False}])
+    aprendidos = []
+    async def _aprender(original, nuevo):
+        aprendidos.append((original, nuevo))
+    monkeypatch.setattr(finanzas, "aprender_nombre_item", _aprender)
+
+    it = asyncio.run(flows.corregir_nombre_item(UUID, 0, "Pañales Emilio"))
+
+    assert it["item"] == "Pañales Emilio"
+    assert aprendidos == [("pahales", "Pañales Emilio")]
+
+
+def test_corregir_nombre_item_indice_invalido_no_truena(monkeypatch):
+    _mock_buffer(monkeypatch, [{"item": "arroz", "precio": 1000}])
+    assert asyncio.run(flows.corregir_nombre_item(UUID, 5, "Arroz Grado 1")) is None
+
+
+def test_corregir_nombre_item_vacio_no_hace_nada(monkeypatch):
+    actualizados = _mock_buffer(monkeypatch, [{"item": "arroz", "precio": 1000}])
+    assert asyncio.run(flows.corregir_nombre_item(UUID, 0, "   ")) is None
+    assert actualizados == []
 
 
 # ───────────────────────── el digest vivo: texto y refresco ─────────────────────────

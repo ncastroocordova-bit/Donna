@@ -202,6 +202,13 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    (categorías/comercios que Donna ya infirió con confianza, para confirmar con un toque en vez de
    tipear) e **ítems por excepción** (solo lo que no pudo clasificar solo). Escribe todo en **un commit
    único** a Sheets al cerrar, no fila por fila. 177 líneas de test nuevas (`tests/test_digest_vivo.py`).
+   **+ Fase 4/5 (2026-07-27), a partir de feedback real de Nico:** tool nueva `fin_movimientos_recientes`
+   ("muéstrame mis cargos"/"qué he gastado") — antes no existía ninguna forma de listar movimientos
+   individuales, solo totales agregados (`fin_saldo_mes`). Y botón **✎** en la grilla de ítems del
+   digest para corregir el NOMBRE de un ítem mal leído por foto/dictado — a diferencia de la
+   categoría, esta corrección **se aprende** (tabla `items_nombres`, migración 016, mismo patrón que
+   `items_predecibles`): la próxima vez que el mismo texto crudo aparezca, sale ya corregido.
+   21 tests nuevos entre `test_finanzas.py`/`test_digest_vivo.py`/`test_brain_hints.py`.
    Semana de 7 días estable: **sin confirmar**.
 2. **Salud** `sal_` — 🔨 completo (base + v2/E8: nutrición, ventanas, peso, score, eventos). El correlador
    ya está **encendido** (`core/correlador.py`, cruza sueño↔ánimo↔gasto en el cierre) y ahora respeta la
@@ -219,6 +226,11 @@ registra ese hecho en vez de fingir que la secuencia se respetó.
    por chip); y el panel completo pasó a **cadena de una pregunta a la vez** en vez de un formulario con
    todo junto — corta el abandono a mitad de cierre. `core/scheduler.py` + `core/frases.py` tocados;
    35+ tests nuevos entre `test_salud.py`/`test_scheduler.py`/`test_frases.py`/`test_ux_fase0.py`.
+   **+ primera comida a mediodía (2026-07-27):** Nico reportó que nunca la contestaba en el
+   cierre — a las 22:00 ya se le había olvidado lo que comió a las 8 de la mañana. Se sacó de
+   `teclado_cierre` y ahora es un aviso propio a las 12:30 (`job_primera_comida`, no 12:00 para
+   no chocar con Proactividad), que además **calla si Nico ya la contó por su cuenta** antes de
+   esa hora (`salud.ya_registro_primera_comida`). 8 tests nuevos.
    Semana de 7 días estable: **sin confirmar**.
 3. **Compras** `cmp_` — 🔨 **Fase 1 construida (2026-07-05).** `modules/compras.py`: lista manual del
    súper. `cmp_agregar` ("falta arroz", "queda poco atún, anótalo" → parser determinista, sin LLM, dedup
@@ -288,6 +300,30 @@ touchpoint de las 8:00 en sí.
   lógica que podía desincronizarse; ahora es determinista. La revisión dominical (Módulo 2, ítem "Salud")
   **fallaba en silencio** si Railway estaba caído a las 22:30 — ahora, si no corrió, se detecta y no se
   pierde muda (mismo espíritu que `jobs_log`/`check_pendientes` ya documentado en el ítem 2 del tablero).
+
+### El cierre y el cerebro, a partir de 3 bugs reales reportados por Nico (2026-07-27)
+
+Nico reportó tres síntomas en una sola sesión: una inferencia repetida ~10 veces seguidas, el
+digest financiero que un día no llegó, y Donna diciendo "Nico. Jueves." en un mensaje del cierre
+de un domingo. Investigación en el código (no reproducido en vivo, sin acceso a logs de Railway)
+encontró causas concretas para las tres, todas en `core/scheduler.py`/`core/brain.py`:
+
+- **`job_cierre` resiliente por paso.** Antes encadenaba 6 pasos sin aislar errores (ingesta de
+  correo → intro → panel → digest → inferencia) y solo marcaba `jobs_log` al final. Si un paso
+  temprano tronaba (el candidato concreto: `fin_aplicar_correlacion()` sin proteger dentro de
+  `ingerir_gastos_email`), todo lo que venía después se caía SIN marcar nada — así que un
+  reinicio de Railway en esa ventana repetía el cierre completo desde cero: el digest nunca
+  llegaba (se caía antes de esa línea) y lo que sí alcanzaba a mandarse antes del fallo se repetía
+  en cada reintento. Ahora cada pieza visible (`cierre:ingesta`/`panel`/`digest`/`inferencia`)
+  se marca por separado; un reintento solo repite lo que de verdad no salió.
+- **Fecha real inyectada al cerebro.** El encabezado determinista de fecha (`📅 Domingo 26/07`)
+  solo existía en el brief, antepuesto AL texto del LLM. En el cierre y en cualquier chat libre,
+  el modelo nunca recibía la fecha real — podía inventar un día de la semana que no calzara.
+  `brain._armar_contexto` ahora inyecta `_fecha_hoy()` (mismo criterio determinista) SIEMPRE,
+  para brief, cierre, proactividad y chat por igual.
+
+6 tests nuevos (`test_scheduler.py` + `test_brain_fecha.py` nuevo). Sin confirmar aún en
+producción — pendiente de que Nico observe si el patrón no vuelve a repetirse.
 
 ### Canon v8 + Tanda 1 (2026-07-16 — cableado, aún sin commitear al abrir la sesión)
 

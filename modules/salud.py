@@ -299,6 +299,22 @@ async def derivar_sueno_de_ventana(fecha: str | None = None) -> str | None:
     return val
 
 
+async def ya_registro_primera_comida(fecha: str | None = None) -> bool:
+    """¿Ya quedó anotada la hora de la primera comida de hoy? El aviso de mediodía (Fase 3) la
+    pregunta ahí porque a las 22:00 ya se le había olvidado (canon: se sacó del panel del
+    cierre). Si Nico ya la contó antes por chat (sal_set_hora), el aviso no debe insistir.
+    Degrada elegante: si Sheets falla, asume que NO está (mejor preguntar de más que quedarse
+    callado y perder el dato)."""
+    fecha = fecha or _hoy()
+    try:
+        filas = await sheets.get_dicts(HOJA)
+    except Exception:
+        logger.exception("ya_registro_primera_comida: no pude leer Diario")
+        return False
+    fila = next((f for f in filas if str(f.get("Fecha", "")).strip() == fecha), None)
+    return bool(fila and str(fila.get(COLS["primera_comida"], "")).strip())
+
+
 _EVENTO_NULO = {"no", "nada", "no pasó nada", "no paso nada", "ninguna", "ninguno", "todo normal", "nada raro"}
 
 

@@ -32,6 +32,14 @@ POOLS = {
         "Fuera de lo tuyo: ¿algo hoy que se cruzó y no controlabas?",
         "¿Algo externo hoy que te haya movido el ánimo o los planes?",
     ],
+    # Primera comida: se sacó del panel del cierre (22:00) porque a esa hora ya se le había
+    # olvidado — se pregunta a mediodía, cuando ya pasó y todavía se acuerda (Fase 3).
+    "primera_comida_mediodia": [
+        "¿A qué hora comiste hoy por primera vez?",
+        "Tu primera comida de hoy, ¿a qué hora fue?",
+        "¿Cuándo rompiste el ayuno hoy?",
+        "Dime la hora de tu primera comida de hoy.",
+    ],
     # Peso: pasó de cada noche a UNA vez por semana (domingo) — se mueve lento, preguntarlo a
     # diario era mucha fricción para poca señal nueva.
     "peso_semanal": [

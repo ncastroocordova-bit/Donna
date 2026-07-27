@@ -59,9 +59,11 @@ def test_registrar_animo_pasa_la_fecha(monkeypatch):
 
 # ───────────────────────── C3 · captura de sueño/ventanas ─────────────────────────
 
-def test_teclado_cierre_tiene_fila_de_primera_comida():
+def test_teclado_cierre_ya_no_pregunta_primera_comida():
+    """Se sacó del panel del cierre (Fase 3): a las 22:00 ya se le había olvidado a Nico. Ahora
+    vive en su propio aviso de mediodía (test_teclado_primera_comida_* más abajo)."""
     cbs = _cbs(flows.teclado_cierre(fecha="2026-07-01"))
-    assert any(c.startswith("pcom:") for c in cbs)
+    assert not any(c.startswith("pcom:") for c in cbs)
 
 
 def test_teclado_cierre_ya_no_tiene_agua_ni_proteina():
@@ -82,11 +84,16 @@ def test_teclado_cierre_ultima_comida_cubre_18_a_01():
     assert any(t.endswith(" 01") for t in textos)                  # llega hasta la 01:00
 
 
-def test_teclado_cierre_primera_comida_cubre_6_a_12():
-    kb = flows.teclado_cierre(fecha="2026-07-01").inline_keyboard
-    filas = [row for row in kb if any("🍳" in b.text for b in row)]
-    textos = [b.text for row in filas for b in row]
+def test_teclado_primera_comida_cubre_6_a_12():
+    kb = flows.teclado_primera_comida().inline_keyboard
+    textos = [b.text for row in kb for b in row]
     assert len(textos) == 7 and textos[0].endswith(" 6") and textos[-1].endswith(" 12")
+
+
+def test_teclado_primera_comida_callbacks_van_a_pcom():
+    cbs = _cbs(flows.teclado_primera_comida())
+    assert all(c.startswith("pcom:") for c in cbs)
+    assert cbs[0] == "pcom:06:00" and cbs[-1] == "pcom:12:00"
 
 
 def test_chips_de_hora_dormi_y_despertar():

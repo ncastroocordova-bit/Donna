@@ -153,21 +153,60 @@ async def _texto_cierre() -> str:
     return await brain.generar(prompt)
 
 
+async def _paso_cierre(nombre: str, fecha: str, accion) -> None:
+    """Cada pieza VISIBLE del cierre (ingesta, panel, digest, inferencia) se manda como máximo
+    una vez por día — antes, un fallo a mitad de camino (ej. `fin_aplicar_correlacion` truena
+    dentro de la ingesta de correo) tumbaba TODO lo que venía después sin marcar `jobs_log`, así
+    que un reinicio de Railway en esa ventana volvía a correr el cierre completo desde cero: el
+    digest nunca llegaba (se caía antes de esa línea) y lo que sí alcanzaba a mandarse antes del
+    fallo (ej. la inferencia pendiente) se repetía en cada reintento. Ahora cada pieza que YA se
+    mandó queda marcada por separado; un reintento solo repite la que de verdad no salió."""
+    clave = f"cierre:{nombre}"
+    if await memory.job_ya_corrio(clave, fecha):
+        return
+    try:
+        await accion()
+        await memory.marcar_job(clave, fecha)
+    except Exception as e:
+        logger.exception("job_cierre: paso '%s' falló", nombre)
+        await diagnostico.registrar(
+            f"job_cierre:{nombre}", "tool_excepcion",
+            f"El cierre no pudo completar el paso «{nombre}»", error_texto=repr(e),
+        )
+
+
 async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = settings.nico_telegram_id
+    fecha = _hoy_str()
+
     # 0) Sincroniza correos de gasto al buffer para que el digest de las 22:00 esté completo.
-    await finanzas.ingerir_gastos_email()
-    intro = await _texto_cierre()
-    # 1) Panel único de toques (hábitos + ánimo + MIT).
-    await flows.enviar_panel_cierre(context.bot, chat, intro)
+    await _paso_cierre("ingesta", fecha, finanzas.ingerir_gastos_email)
+
+    # 1) Panel único de toques (hábitos + ánimo + MIT). El texto de intro se arma acá adentro
+    # (no en un paso aparte): si `_texto_cierre` (LLM) truena, todo el paso 'panel' se reintenta
+    # completo la próxima vez, en vez de quedar con un intro genérico cacheado de un intento viejo.
+    async def _panel():
+        intro = await _texto_cierre() or "Cerremos el día."
+        await flows.enviar_panel_cierre(context.bot, chat, intro)
+    await _paso_cierre("panel", fecha, _panel)
+
     # 2) Cadena de preguntas abiertas: MITs → evento contextual → peso (solo domingo). UNA a la
     # vez. Antes las tres salían de corrido y `esperando_mits` se tragaba cualquier nota de voz:
     # contestar el peso por audio lo guardaba como MIT. La cadena la avanza main._procesar_entrada
     # (el punto por el que pasan texto Y voz), así cada respuesta cae donde corresponde.
-    context.bot_data["cierre_cadena"] = {"paso": "mits", "fecha": _hoy_str()}
-    await context.bot.send_message(chat, frases.frase("mits"))
+    # Sin gate de `jobs_log` a propósito: `context.bot_data` vive solo en memoria del proceso, así
+    # que un reinicio de Railway la borra igual — si esto quedara gateado, un reinicio a mitad de
+    # camino dejaría la cadena marcada "ya mandada" pero sin `cierre_cadena` en el proceso nuevo,
+    # y la próxima respuesta de Nico caería al vacío. Mejor un mensaje de más que un estado roto.
+    context.bot_data["cierre_cadena"] = {"paso": "mits", "fecha": fecha}
+    try:
+        await context.bot.send_message(chat, frases.frase("mits"))
+    except Exception:
+        logger.exception("No pude abrir la cadena de preguntas del cierre")
+
     # 3) Digest financiero del día.
-    await flows.enviar_digest(context.bot, chat)
+    await _paso_cierre("digest", fecha, lambda: flows.enviar_digest(context.bot, chat))
+
     # 3.5) La espina aprende de la plata (perfil + inferencia de deuda con su dato).
     try:
         await finanzas.sembrar_espina()
@@ -178,8 +217,10 @@ async def job_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
         await correlador.correr()
     except Exception:
         logger.exception("No pude correr el correlador")
+
     # 4) Inferencia pendiente, si hay (puede ser la que acaba de sembrar la espina).
-    await flows.preguntar_inferencia_pendiente(context.bot, chat)
+    await _paso_cierre("inferencia", fecha, lambda: flows.preguntar_inferencia_pendiente(context.bot, chat))
+
     try:
         await salud.marcar_cierre()
     except Exception:
@@ -264,6 +305,31 @@ async def job_proactividad(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def job_decay(context: ContextTypes.DEFAULT_TYPE) -> None:
     silenciados = await aprendizaje.aplicar_decay()
     logger.info("Decay aplicado; %d patrón(es) silenciado(s).", silenciados)
+
+
+# ───────────────────────── Primera comida (Fase 3, mediodía) ─────────────────────────
+# Antes se preguntaba en el panel del cierre (22:00) — a esa hora ya se le había olvidado a
+# Nico (comió 14 horas antes). Se saca de ahí y se pregunta sola a las 12:30, ya pasada pero
+# todavía fresca. 12:30 y no 12:00 a propósito: Proactividad ya ocupa las 12:00 en punto.
+
+async def job_primera_comida(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await memory.job_ya_corrio("primera_comida"):
+        return
+    try:
+        if await salud.ya_registro_primera_comida():
+            await memory.marcar_job("primera_comida")  # ya la dijo por su cuenta; no insistir
+            return
+        await context.bot.send_message(
+            settings.nico_telegram_id, frases.frase("primera_comida_mediodia"),
+            reply_markup=flows.teclado_primera_comida(),
+        )
+        await memory.marcar_job("primera_comida")
+    except Exception as e:
+        logger.exception("job_primera_comida falló")
+        await diagnostico.registrar(
+            "job_primera_comida", "tool_excepcion",
+            "no pude mandar el aviso de mediodía de primera comida", error_texto=repr(e),
+        )
 
 
 # ───────────────────────── Correo: gastos (sync) + spam (digest) ─────────────────────────
@@ -410,6 +476,7 @@ def setup_scheduler(app: Application) -> None:
     tz = settings.tz
     jq.run_daily(job_brief, time=time(8, 0, tzinfo=tz))
     jq.run_daily(job_proactividad, time=time(12, 0, tzinfo=tz))
+    jq.run_daily(job_primera_comida, time=time(12, 30, tzinfo=tz))  # 12:30, no 12:00: no chocar con proactividad
     jq.run_daily(job_cierre, time=time(22, 0, tzinfo=tz))
     jq.run_daily(job_resumen_semanal, time=time(22, 30, tzinfo=tz), days=(0,))  # domingo (PTB: 0=domingo)
     jq.run_repeating(job_decay, interval=timedelta(days=7), first=timedelta(hours=1))
@@ -423,7 +490,7 @@ def setup_scheduler(app: Application) -> None:
     jq.run_once(check_pendientes, when=10)  # recupera el toque perdido tras un reinicio
     jq.run_once(job_verificar_schema, when=15)  # guardián de schema (autodiagnóstico)
     logger.info(
-        "Scheduler listo (%s): brief 8:00, proactividad 12:00, cierre 22:00 (+digest), "
-        "resumen semanal domingo 22:30, decay semanal, guardián de schema + resiliencia.",
+        "Scheduler listo (%s): brief 8:00, proactividad 12:00, primera comida 12:30, cierre 22:00 "
+        "(+digest), resumen semanal domingo 22:30, decay semanal, guardián de schema + resiliencia.",
         settings.timezone,
     )
